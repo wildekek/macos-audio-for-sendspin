@@ -301,6 +301,9 @@ final class BridgeController {
     private func updateCapture() {
         if isCaptureWanted, capture == nil, !isStartingCapture, let device = AudioDevice.sendspin {
             isStartingCapture = true
+            let streamingChanged: @Sendable (Bool) async -> Void = { [weak self] streaming in
+                await self?.setStreaming(streaming)
+            }
             Task {
                 // Creating and starting the queue waits on coreaudiod, for a freshly loaded
                 // device noticeably: keep it off the main thread. Capture at the device's own
@@ -322,9 +325,6 @@ final class BridgeController {
                         return
                     }
                     self.capture = capture
-                    let streamingChanged: @Sendable (Bool) async -> Void = { [weak self] streaming in
-                        await self?.setStreaming(streaming)
-                    }
                     pumpTask = Task.detached { [group] in
                         await Self.pump(capture.blocks, into: group, streamingChanged: streamingChanged)
                     }
