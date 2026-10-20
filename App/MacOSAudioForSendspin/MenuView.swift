@@ -11,13 +11,8 @@ struct MenuView: View {
             header
             warnings
             if bridge.driverInstalled {
-                groupVolume
                 Divider()
                 speakers
-                if bridge.hasConnectedPlayers || bridge.isMacOutput {
-                    Divider()
-                    output
-                }
             }
             Divider()
             VStack(alignment: .leading, spacing: 8) {
@@ -36,25 +31,39 @@ struct MenuView: View {
         .frame(width: 320)
     }
 
+    /// Where the Mac's sound plays, and the one switch between Sendspin and the other output.
     private var header: some View {
-        HStack {
-            Text("Sendspin").font(.headline)
-            Spacer()
-            Label(statusText, systemImage: "circle.fill")
-                .labelStyle(StatusLabelStyle(color: statusColor))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Playing on \(bridge.isMacOutput ? "Sendspin" : bridge.currentOutputName ?? "this Mac")")
+                    .font(.headline)
+                    .lineLimit(2)
+                Spacer()
+                // Green while audio is going out to the speakers.
+                if bridge.isStreaming {
+                    HStack(spacing: 4) {
+                        Image(systemName: "circle.fill").foregroundStyle(.green).font(.system(size: 6))
+                        Text("Streaming")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            if let action = switchAction {
+                Button(action.title) { Task { await bridge.setMacOutput(action.toSendspin) } }
+                    .disabled(bridge.isSwitchingOutput)
+            }
         }
     }
 
-    private var statusText: String {
-        if bridge.isStreaming { return "Streaming" }
-        if bridge.hasConnectedPlayers { return "Idle" }
-        return bridge.selected.isEmpty ? "No speakers selected" : "Connecting"
-    }
-
-    private var statusColor: Color {
-        bridge.isStreaming ? .green : bridge.hasConnectedPlayers ? .secondary : .orange
+    /// Switching to Sendspin needs a connected speaker, or the Mac would go silent;
+    /// switching back is always offered.
+    private var switchAction: (title: String, toSendspin: Bool)? {
+        if bridge.isMacOutput {
+            return bridge.returnOutputName.map { ("Use \($0)", false) }
+        }
+        guard bridge.driverInstalled, bridge.hasConnectedPlayers else { return nil }
+        return ("Use Sendspin", true)
     }
 
     @ViewBuilder private var warnings: some View {
@@ -68,37 +77,7 @@ struct MenuView: View {
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }
             }
-        } else if bridge.isMacOutput && !bridge.hasConnectedPlayers {
-            // The sound goes nowhere: offer the way back instead of silence.
-            Notice(text: "The Mac's sound goes to Sendspin, but no speaker is connected.",
-                   systemImage: "speaker.slash.fill") {
-                Button("Use Previous Output") { Task { await bridge.setMacOutput(false) } }
-                    .disabled(bridge.isSwitchingOutput)
-            }
-        } else if !bridge.isMacOutput && bridge.hasConnectedPlayers {
-            Notice(text: "The Mac's sound isn't going to Sendspin.", systemImage: "speaker.slash.fill") {
-                Button("Use Sendspin") { Task { await bridge.setMacOutput(true) } }
-                    .disabled(bridge.isSwitchingOutput)
-            }
         }
-    }
-
-    private var groupVolume: some View {
-        HStack(spacing: 8) {
-            Button {
-                bridge.setGroupMuted(!bridge.deviceMuted)
-            } label: {
-                Image(systemName: bridge.deviceMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .frame(width: 18)
-            }
-            .buttonStyle(.plain)
-            .help(bridge.deviceMuted ? "Unmute" : "Mute")
-            Slider(value: Binding(get: { Double(bridge.deviceVolume) },
-                                  set: { bridge.setGroupVolume(Float($0)) }),
-                   in: 0...1)
-                .controlSize(.small)
-        }
-        .disabled(!bridge.hasConnectedPlayers)
     }
 
     private var speakers: some View {
@@ -111,28 +90,6 @@ struct MenuView: View {
             }
             ForEach(bridge.players) { player in
                 PlayerRow(player: player, bridge: bridge)
-            }
-        }
-    }
-
-    private var output: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Switching to Sendspin without a connected speaker would silence the Mac;
-            // switching back must always be possible.
-            if bridge.hasConnectedPlayers || bridge.isMacOutput {
-                Toggle("Use as Mac sound output", isOn: Binding(
-                    get: { bridge.isMacOutput }, set: { enabled in Task { await bridge.setMacOutput(enabled) } }))
-                    .disabled(bridge.isSwitchingOutput)
-            }
-            if let active = bridge.activeFormat {
-                // Only formats a selected speaker supports; others get it converted.
-                Picker("Format", selection: Binding(get: { active }, set: { bridge.selectFormat($0) })) {
-                    ForEach(bridge.availableFormats) { format in
-                        Text(format.label).tag(format)
-                    }
-                }
-                .pickerStyle(.menu)
-                .disabled(bridge.availableFormats.count < 2)
             }
         }
     }
@@ -223,16 +180,5 @@ private struct Notice<Actions: View>: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct StatusLabelStyle: LabelStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon.foregroundStyle(color).font(.system(size: 6))
-            configuration.title
-        }
     }
 }

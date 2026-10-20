@@ -10,6 +10,27 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
+                if let active = bridge.activeFormat {
+                    // Only formats a connected speaker supports; others get it converted.
+                    Picker("Audio format", selection: Binding(get: { active }, set: { bridge.selectFormat($0) })) {
+                        ForEach(bridge.availableFormats) { format in
+                            Text(format.label).tag(format)
+                        }
+                    }
+                    .disabled(bridge.availableFormats.count < 2)
+                } else {
+                    LabeledContent("Audio format", value: bridge.selectedFormat.label)
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text(bridge.activeFormat == nil
+                     ? "Connect a speaker to choose from the formats it supports."
+                     : "Speakers that can't play this format get the closest one they support.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Picker("Speaker buffer", selection: Binding(get: { bridge.lead }, set: { bridge.setLead($0) })) {
                     Text("300 ms").tag(BridgeController.Lead.low)
                     Text("600 ms").tag(BridgeController.Lead.normal)

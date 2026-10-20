@@ -54,9 +54,14 @@ final class BridgeController {
     private(set) var driverInstalled = false
     private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
     private(set) var isMacOutput = false
+    /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
+    private(set) var currentOutputName: String?
+    /// Name of the output switching away from Sendspin goes to.
+    private(set) var returnOutputName: String?
     private(set) var isSwitchingOutput = false
-    private(set) var deviceVolume: Float = 1
-    private(set) var deviceMuted = false
+    /// The Sendspin device's volume and mute, linked to the speakers (volume keys, Control Center).
+    private var deviceVolume: Float = 1
+    private var deviceMuted = false
     private(set) var lead: Lead
     /// The lead the group and the device latency currently use (see `effectiveLeadMs`).
     private var appliedLeadMs: Int
@@ -372,7 +377,34 @@ final class BridgeController {
     }
 
     private func refreshDefaultOutput() {
-        isMacOutput = AudioDevice.defaultOutput?.uid == AudioDevice.sendspinUID
+        apply(Self.readOutput(previousUID: defaults.string(forKey: "previousOutputUID")))
+    }
+
+    /// What the Mac's output is, and where leaving Sendspin would go.
+    struct OutputState: Sendable {
+        var isSendspin: Bool
+        var currentUID: String?
+        var currentName: String?
+        var returnName: String?
+    }
+
+    nonisolated private static func readOutput(previousUID: String?) -> OutputState {
+        let output = AudioDevice.defaultOutput
+        let isSendspin = output?.uid == AudioDevice.sendspinUID
+        // The current output, unless it's Sendspin, is where leaving Sendspin later goes back to.
+        let returnUID = isSendspin ? previousUID : output?.uid
+        return OutputState(isSendspin: isSendspin, currentUID: output?.uid, currentName: output?.name,
+                           returnName: returnTarget(previousUID: returnUID)?.name)
+    }
+
+    private func apply(_ state: OutputState) {
+        isMacOutput = state.isSendspin
+        currentOutputName = state.currentName
+        returnOutputName = state.returnName
+        // Remember the last other output, also when it was chosen in Control Center.
+        if let uid = state.currentUID, !state.isSendspin {
+            defaults.set(uid, forKey: "previousOutputUID")
+        }
     }
 
     /// Volume keys / Control Center / our group slider changed the device volume.
@@ -426,14 +458,6 @@ final class BridgeController {
     }
 
     // MARK: Menu actions
-
-    func setGroupVolume(_ volume: Float) {
-        AudioDevice.sendspin?.volume = volume
-    }
-
-    func setGroupMuted(_ muted: Bool) {
-        AudioDevice.sendspin?.isMuted = muted
-    }
 
     func setPlayerVolume(_ instanceName: String, _ volume: Int) {
         Task { await sessions[instanceName]?.setVolume(volume) }
@@ -508,36 +532,31 @@ final class BridgeController {
         isSwitchingOutput = true
         defer { isSwitchingOutput = false }
         let previousUID = defaults.string(forKey: "previousOutputUID")
-        let result = await Task.detached { Self.switchOutput(enabled, previousUID: previousUID) }.value
-        if let uid = result.replacedUID {
-            defaults.set(uid, forKey: "previousOutputUID")
-        }
-        isMacOutput = result.isMacOutput
+        apply(await Task.detached { Self.switchOutput(enabled, previousUID: previousUID) }.value)
     }
 
-    /// Returns the output Sendspin replaced (to switch back to later) and the new state.
-    nonisolated private static func switchOutput(_ enabled: Bool, previousUID: String?)
-        -> (replacedUID: String?, isMacOutput: Bool) {
-        var replacedUID: String?
+    /// Switch, then read back the new state. The output Sendspin replaces is remembered by
+    /// `apply` before this runs, so switching back can find it.
+    nonisolated private static func switchOutput(_ enabled: Bool, previousUID: String?) -> OutputState {
         if let sendspin = AudioDevice.sendspin {
             do {
                 if enabled {
-                    if let current = AudioDevice.defaultOutput, current.uid != AudioDevice.sendspinUID {
-                        replacedUID = current.uid
-                    }
                     try AudioDevice.setDefaultOutput(sendspin)
                 } else {
-                    let previous = previousUID.flatMap(AudioDevice.find(uid:))
-                    let fallback = AudioDevice.all().first {
-                        $0.uid != AudioDevice.sendspinUID && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
-                    }
-                    if let target = previous ?? fallback { try AudioDevice.setDefaultOutput(target) }
+                    if let target = returnTarget(previousUID: previousUID) { try AudioDevice.setDefaultOutput(target) }
                 }
             } catch {
                 Log.error("Couldn't change the Mac's output: \(error)")
             }
         }
-        return (replacedUID, AudioDevice.defaultOutput?.uid == AudioDevice.sendspinUID)
+        return readOutput(previousUID: previousUID)
+    }
+
+    /// The output to leave Sendspin for: the previous one, or else the first other output.
+    nonisolated private static func returnTarget(previousUID: String?) -> AudioDevice? {
+        previousUID.flatMap(AudioDevice.find(uid:)) ?? AudioDevice.all().first {
+            $0.uid != AudioDevice.sendspinUID && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
+        }
     }
 
     /// Remove the driver and the app. Returns false if the user cancelled.
