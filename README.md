@@ -11,8 +11,7 @@ choose speakers and control their volume.
 
 Download the `.pkg` from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases)
 and open it. Then pick **Sendspin** as the output in the Sound menu or Control Center, and choose
-your speakers in the menu bar app. (There's no release yet: the first one waits for signing and
-notarization.)
+your speakers in the menu bar app. The current release is a beta.
 
 ## How it fits together
 
