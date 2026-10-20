@@ -15,29 +15,35 @@ struct MenuView: View {
                 speakers
             }
             Divider()
-            VStack(alignment: .leading, spacing: 8) {
-                Button("Settings…") {
+            HStack {
+                Button("Quit") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q")
+                Spacer()
+                Button {
                     // A menu bar app isn't active, so the window would open behind other apps.
                     NSApp.activate()
                     openSettings()
+                } label: {
+                    Image(systemName: "gearshape")
                 }
                 .keyboardShortcut(",")
-                Button("Quit macOS Audio for Sendspin") { NSApp.terminate(nil) }
-                    .keyboardShortcut("q")
+                .help("Settings")
+                .accessibilityLabel("Settings")
             }
             .buttonStyle(.plain)
         }
         .padding(14)
-        .frame(width: 320)
+        .frame(width: 340)
     }
 
     /// Where the Mac's sound plays, and the one switch between Sendspin and the other output.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            // Centred, not on the baseline: a caption on a headline's baseline looks low.
+            HStack(alignment: .center) {
                 Text("Playing on \(bridge.isMacOutput ? "Sendspin" : bridge.currentOutputName ?? "this Mac")")
                     .font(.headline)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 Spacer()
                 // Green while audio is going out to the speakers.
                 if bridge.isStreaming {
@@ -80,13 +86,14 @@ struct MenuView: View {
         }
     }
 
+    /// One row per speaker, after Apple Music's AirPlay list.
     private var speakers: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Speakers").font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
             if bridge.players.isEmpty {
                 Text("Looking for Sendspin speakers…")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
             }
             ForEach(bridge.players) { player in
                 PlayerRow(player: player, bridge: bridge)
@@ -95,48 +102,77 @@ struct MenuView: View {
     }
 }
 
+/// Name, then the volume slider (selected and connected) or a status, then a checkbox.
+/// There are no device icons: Sendspin doesn't say what kind of device a speaker is.
 private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
+    @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: Binding(get: { player.isSelected },
-                                 set: { bridge.setSelected(player.instanceName, $0) })) {
-                HStack {
-                    Text(player.name).lineLimit(1)
-                    Spacer()
-                    Text(statusText).font(.caption).foregroundStyle(.secondary)
-                        .help(statusHelp)
-                }
-            }
-            .toggleStyle(.checkbox)
-
-            if player.isSelected, player.status?.connection == .connected, player.status?.canSetVolume == true,
-               let volume = player.status?.volume {
-                HStack(spacing: 6) {
-                    Image(systemName: player.status?.muted == true ? "speaker.slash" : "speaker.wave.1")
-                        .font(.caption)
+        HStack(spacing: 10) {
+            // Clicking the name toggles the speaker, as in Apple Music. The slider sits
+            // outside this area, so dragging it never toggles.
+            HStack(spacing: 6) {
+                Text(player.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                // The format this speaker receives, while hovering a streaming row.
+                if hovering, let format = formatLabel {
+                    Text(format)
                         .foregroundStyle(.secondary)
-                        .frame(width: 16)
-                    Slider(value: Binding(get: { Double(volume) },
-                                          set: { bridge.setPlayerVolume(player.instanceName, Int($0.rounded())) }),
-                           in: 0...100)
-                        .controlSize(.mini)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
-                .padding(.leading, 20)
+                Spacer(minLength: 8)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { bridge.setSelected(player.instanceName, !player.isSelected) }
+
+            trailing
+
+            Toggle(player.name, isOn: Binding(get: { player.isSelected },
+                                              set: { bridge.setSelected(player.instanceName, $0) }))
+                .toggleStyle(RoundedCheckboxStyle(name: player.name))
+                .labelsHidden()
+        }
+        .frame(height: 30)
+        .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if player.isSelected, let status = player.status, status.connection == .connected {
+            if status.canSetVolume, let volume = status.volume {
+                Slider(value: Binding(get: { Double(volume) },
+                                      set: { bridge.setPlayerVolume(player.instanceName, Int($0.rounded())) }),
+                       in: 0...100)
+                    .controlSize(.small)
+                    // Neutral like Apple Music's AirPlay sliders, not the accent colour.
+                    .tint(.primary.opacity(0.8))
+                    .frame(width: 90)
+                    .accessibilityLabel("\(player.name) volume")
+            }
+        } else if let statusText {
+            Text(statusText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .help(statusHelp)
         }
     }
 
-    private var statusText: String {
-        guard player.isSelected else { return player.isDiscovered ? "" : "Offline" }
+    private var formatLabel: String? {
+        guard let format = player.status?.streamFormat else { return nil }
+        return BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
+    }
+
+    /// Only for what needs attention; a connected speaker shows its slider instead.
+    private var statusText: String? {
         guard player.isDiscovered else { return "Offline" }
+        guard player.isSelected else { return nil }
         switch player.status?.connection {
-        case .connected:
-            // While streaming, show what this speaker actually receives.
-            guard let format = player.status?.streamFormat else { return "Connected" }
-            return BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
+        case .connected: return nil
         case .taken: return "In use elsewhere"
         case .pairingRequired: return "Needs pairing"
         case .notApproved: return "Identity changed"
@@ -156,6 +192,31 @@ private struct PlayerRow: View {
         default:
             ""
         }
+    }
+}
+
+/// Apple Music's AirPlay checkbox: a rounded grey square, with a white check when on.
+private struct RoundedCheckboxStyle: ToggleStyle {
+    /// For VoiceOver: the style draws no label.
+    let name: String
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(.secondary.opacity(configuration.isOn ? 0.55 : 0.22))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    if configuration.isOn {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
+        .accessibilityValue(configuration.isOn ? "on" : "off")
+        .accessibilityAddTraits(configuration.isOn ? [.isButton, .isSelected] : .isButton)
     }
 }
 
