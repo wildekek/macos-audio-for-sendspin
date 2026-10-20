@@ -9,17 +9,25 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
    Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
    show "Needs pairing". Not started; deliberately left until a speaker needs it.
+2. **The other roles.** "All servers MUST implement all versions of these roles": besides
+   `player`, that's `controller` (play/pause/next, group volume by the spec's algorithm,
+   `switch`), `metadata` and `artwork` (what's playing; needs macOS's Now Playing info),
+   `color` (derived colours, with contrast rules), `visualizer` (loudness, beat, spectrum from
+   the captured audio) and `source` (audio from capture devices). A server may decline to
+   activate a role, so speakers that offer them play fine today; this is conformance, not a
+   bug. `controller` and `visualizer` fit the app best. Also log requests for roles we don't
+   implement (a SHOULD: it's how a server notices it's out of date).
 
 ## The app
 
-2. **Capture without the microphone permission.** The welcome window explains it (nothing is
+3. **Capture without the microphone permission.** The welcome window explains it (nothing is
    recorded), but a capture method that doesn't need it would be one prompt fewer.
-3. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
+4. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
    it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
-4. **README for end users.** Install and the screenshot lead now; the protocol, build and
+5. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
-5. **Play through Music Assistant** (for people who already run it). The Mac becomes a Sendspin
+6. **Play through Music Assistant** (for people who already run it). The Mac becomes a Sendspin
    client with the `source@v1` role, and MA shows it as a Live Input that it can play on any of
    its players, so the app stops competing with MA for the same speakers. MA starts the stream
    (`start` → `client-stream/start` → type-12 chunks of at most 150 ms; FLAC at 48 kHz/16-bit is
@@ -31,10 +39,10 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 
 ## Audio: recommended or optional
 
-6. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+7. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
-7. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
-8. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+8. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+9. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
    a per-speaker delay for external amplifiers).
 
 ## Loose ends
