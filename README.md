@@ -89,11 +89,17 @@ Installer/build-pkg.sh
 
 ## How it works
 
+- **Connection.** Sendspin 1: every connection is end-to-end encrypted with Noise
+  (`KKpsk2`, ChaChaPoly or AES-GCM, whichever the speaker picks). The app identifies itself
+  with a Curve25519 key kept in the Keychain. Speakers are unpaired: ticking one in the menu
+  allows it, bound to the identity it presents then, so another device using its name gets
+  no audio until you allow it again (untick and tick).
 - **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
   Its volume and mute controls aren't applied to the audio: the app forwards them to the
   speakers, so the volume keys and Control Center control the speakers.
 - **Timing.** Each captured block is scheduled at its capture host time plus the *speaker
-  buffer* (300 ms / 600 ms / 1 s). Capture timestamps equal the output timestamps apps see
+  buffer* (300 ms / 600 ms / 1 s), or more when a connected speaker asks for it
+  (its `min_buffer_ms` plus `output_delay_ms`; Settings then shows why). Capture timestamps equal the output timestamps apps see
   (`sendspin-bridge --measure-latency` reports 0.00 ms), so the driver reports exactly the
   buffer as output latency, and video players keep lip sync.
   Verified acoustically on an HA Connect AUX-2 (`sendspin-bridge --measure-sync`): +0.5 ms.
@@ -115,7 +121,8 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 
 ## Status
 
-Current HA Connect AUX-2 firmware speaks only the legacy unencrypted protocol, and that is
-what's implemented. Not yet done: Noise encryption and pairing, FLAC/Opus, sample-rate
-conversion for 44.1 kHz-only speakers, the client-initiated listener, and signed and
-notarized releases.
+Implements Sendspin 1 (release candidate) with unpaired access, tested against aiosendspin
+10.2.1 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol isn't
+supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
+pairing, FLAC/Opus, sample-rate conversion for 44.1 kHz-only speakers, and the
+client-initiated listener.

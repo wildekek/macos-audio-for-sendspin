@@ -11,17 +11,15 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    device hasn't appeared a few seconds after installing, advise restarting the Mac.
    - The Developer ID certificates (G2) expire on 19 November 2027. Before then, create new
      ones and replace the `DEVELOPER_ID_P12` and `P12_PASSWORD` secrets (README → Release).
-2. **Encrypted connections (Noise) and pairing**, next to the unencrypted protocol. Speakers on
-   recent firmware (the AUX-2 since October 2026) only accept Noise, older ones only the
-   unencrypted protocol, and a speaker can switch with a firmware update. Support both, and
-   pick per speaker.
+2. **Pairing.** Sendspin 1 playback works unpaired (Noise on the Sentinel PSK, allowed by
+   ticking the speaker). Speakers that only admit paired servers show "Needs pairing".
+   Pairing would add a mutually authenticated connection: first the pairing PSK token
+   (`SP:0…`), later the pairing codes (CPace). Not started.
 3. **Explain the permissions.** AirPlay never asks for the microphone. On first launch,
    explain why it's needed (to pick up the audio sent to the Sendspin device; nothing is
    recorded). Later, look into a capture method that doesn't need the permission.
    Without Local Network access the app looks for speakers forever: detect it (Bonjour reports
    "policy denied") and show a notice with a button to the settings.
-   A speaker that needs something the app can't do (encryption, for now) should say so in its
-   row instead of "Can't connect".
 4. **README for end users.** Lead with: install, pick **Sendspin** in the Sound menu, choose your
    speakers. Move the protocol, build and `defaults write` details to a "For developers" section.
 5. **Speaker selection front and centre.** macOS can't show speakers as sub-items of one output
