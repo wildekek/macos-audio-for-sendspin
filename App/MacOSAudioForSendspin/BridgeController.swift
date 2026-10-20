@@ -116,6 +116,7 @@ final class BridgeController {
     private let identity: ServerIdentity
     private var sessions: [String: PlayerSession] = [:]
     private var capture: AudioCapture?
+    private var isStartingCapture = false
     private var pumpTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var systemObservations: [PropertyObservation] = []
@@ -295,25 +296,44 @@ final class BridgeController {
 
     // MARK: Capture
 
+    private var isCaptureWanted: Bool { !sessions.isEmpty && microphoneAccess == .authorized }
+
     private func updateCapture() {
-        let wanted = !sessions.isEmpty && microphoneAccess == .authorized
-        if wanted, capture == nil, let device = AudioDevice.sendspin {
-            // Capture at the device's own rate: no conversion before the speakers.
-            do {
-                let capture = try AudioCapture(device: device)
-                try capture.start()
-                self.capture = capture
-                let streamingChanged: @Sendable (Bool) async -> Void = { [weak self] streaming in
-                    await self?.setStreaming(streaming)
+        if isCaptureWanted, capture == nil, !isStartingCapture, let device = AudioDevice.sendspin {
+            isStartingCapture = true
+            Task {
+                // Creating and starting the queue waits on coreaudiod, for a freshly loaded
+                // device noticeably: keep it off the main thread. Capture at the device's own
+                // rate: no conversion before the speakers.
+                let started = await Task.detached {
+                    Result { () throws -> AudioCapture in
+                        let capture = try AudioCapture(device: device)
+                        try capture.start()
+                        return capture
+                    }
+                }.value
+                isStartingCapture = false
+                switch started {
+                case .success(let capture):
+                    // The selection may have changed while it started.
+                    guard isCaptureWanted, self.capture == nil else {
+                        Task.detached { capture.stop() }
+                        updateCapture()
+                        return
+                    }
+                    self.capture = capture
+                    let streamingChanged: @Sendable (Bool) async -> Void = { [weak self] streaming in
+                        await self?.setStreaming(streaming)
+                    }
+                    pumpTask = Task.detached { [group] in
+                        await Self.pump(capture.blocks, into: group, streamingChanged: streamingChanged)
+                    }
+                    Log.info("Capturing from \(capture.deviceName) at \(capture.sampleRate) Hz")
+                case .failure(let error):
+                    Log.error("Capture failed: \(error)")
                 }
-                pumpTask = Task.detached { [group] in
-                    await Self.pump(capture.blocks, into: group, streamingChanged: streamingChanged)
-                }
-                Log.info("Capturing from \(capture.deviceName) at \(capture.sampleRate) Hz")
-            } catch {
-                Log.error("Capture failed: \(error)")
             }
-        } else if !wanted, capture != nil {
+        } else if !isCaptureWanted, capture != nil {
             stopCapture()
             isStreaming = false
             Task { await group.setPlaying(false) }
@@ -323,7 +343,7 @@ final class BridgeController {
 
     private func stopCapture() {
         pumpTask?.cancel()
-        capture?.stop()
+        if let capture { Task.detached { capture.stop() } }  // stopping waits on coreaudiod too
         capture = nil
     }
 
@@ -381,6 +401,12 @@ final class BridgeController {
 
     /// (Re)attach to the Sendspin device, e.g. at launch or after the driver was installed.
     private func refreshDevice() {
+        let started = ContinuousClock.now
+        defer {
+            // Still on the main thread (TODO): say when it's slow enough to be felt.
+            let elapsed = ContinuousClock.now - started
+            if elapsed > .milliseconds(100) { Log.warning("Reading the Sendspin device took \(elapsed)") }
+        }
         let device = AudioDevice.sendspin
         driverInstalled = device != nil
         driverState = DriverInstaller.state
