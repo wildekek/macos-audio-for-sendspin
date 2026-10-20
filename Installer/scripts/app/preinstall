@@ -1,0 +1,5 @@
+#!/bin/bash
+# Stop a running copy, so postinstall starts the new version instead of finding the old one.
+# (pkill -x can't match: process names are cut off at 16 characters.)
+pkill -f "/Contents/MacOS/macOS Audio for Sendspin$" || true
+exit 0

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Start the app for the logged-in user. The installer runs as root, so open it in the
+# user's session and as that user. Skipped when nobody is logged in (a headless install).
+user=$(stat -f %Su /dev/console)
+if [[ -n "$user" && "$user" != "root" && "$user" != "loginwindow" ]]; then
+    uid=$(id -u "$user")
+    launchctl asuser "$uid" sudo -u "$user" /usr/bin/open "/Applications/macOS Audio for Sendspin.app" || true
+fi
+exit 0

@@ -70,8 +70,8 @@ component() {
     pkgbuild --root "$root" --component-plist "$plist" --install-location / \
         --identifier "$PKG_ID.$name" --version "$VERSION" "$@" "$OUT/components/$name.pkg"
 }
-component app "$OUT/stage/app"
-component driver "$OUT/stage/driver" --scripts "$ROOT/Installer/scripts"
+component app "$OUT/stage/app" --scripts "$ROOT/Installer/scripts/app"
+component driver "$OUT/stage/driver" --scripts "$ROOT/Installer/scripts/driver"
 
 PKG="$OUT/macOS-Audio-for-Sendspin-$VERSION.pkg"
 product_args=(--distribution "$ROOT/Installer/distribution.xml" --package-path "$OUT/components")
