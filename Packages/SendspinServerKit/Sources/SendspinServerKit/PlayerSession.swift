@@ -1,15 +1,5 @@
+import CryptoKit
 import Foundation
-
-/// Identity this server presents to players.
-public struct ServerIdentity: Sendable {
-    public var id: String
-    public var name: String
-
-    public init(id: String, name: String) {
-        self.id = id
-        self.name = name
-    }
-}
 
 public struct PlayerStatus: Sendable, Equatable {
     public enum Connection: Sendable, Equatable {
@@ -17,14 +7,22 @@ public struct PlayerStatus: Sendable, Equatable {
         case connected
         /// Another server took the player over (goodbye `another_server`).
         case taken
+        /// The player only admits paired servers, and pairing isn't implemented.
+        case pairingRequired
+        /// The player presents a different identity than the one approved for it.
+        case notApproved
         case disconnected(reason: String?)
         case failed(String)
     }
 
     public var connection: Connection = .connecting
     public var name: String?
+    /// The player's `client_id`: its Curve25519 public key, base64url.
+    public var clientID: String?
     public var volume: Int?
     public var muted: Bool?
+    public var canSetVolume = false
+    public var canMute = false
     /// PCM formats the player accepts (from its hello).
     public var supportedFormats: [AudioFormatSpec] = []
     /// Format currently streamed to the player, while streaming.
@@ -33,22 +31,28 @@ public struct PlayerStatus: Sendable, Equatable {
     public init() {}
 }
 
-/// One dialed player: owns the WebSocket, runs the handshake, answers time sync,
-/// tracks player state and delivers the group's audio in the negotiated format.
+/// One dialed player: runs the Noise handshake, answers time sync, tracks player state
+/// and delivers the group's audio in the negotiated format (Sendspin 1, server-initiated).
 public actor PlayerSession {
+    /// Asked once per connection with the player's `client_id`: may it play unpaired?
+    public typealias Approval = @Sendable (_ clientID: String) async -> Bool
+
     public nonisolated let url: URL
     public nonisolated let updates: AsyncStream<PlayerStatus>
 
     private let identity: ServerIdentity
+    private let approve: Approval
     private let updatesContinuation: AsyncStream<PlayerStatus>.Continuation
     private var status = PlayerStatus() {
         didSet { if status != oldValue { updatesContinuation.yield(status) } }
     }
 
     private var socket: WebSocketConnection?
+    private var channel: SecureChannel?
     private var hello: ClientHello?
-    private var available = true
-    /// Handshake done and initial client/state received (or waited for long enough).
+    private var activated = false
+    private var available = false
+    /// The first client/state arrived: only then may streams start and commands go out.
     private var ready = false
     /// Converts group audio to the player's format; rebuilt when the source or the
     /// preferred bit depth changes.
@@ -57,16 +61,14 @@ public actor PlayerSession {
     private var unsupportedSourceWarned = false
     private var streaming = false
     private var droppedChunks = 0
-    private var reportedError = false
-    private var lastErrorRestart: ContinuousClock.Instant?
 
     private var group: (id: String, name: String)?
     private var playing = false
-    private var isFirstConnection = true
 
-    public init(url: URL, identity: ServerIdentity) {
+    public init(url: URL, identity: ServerIdentity, approve: @escaping Approval) {
         self.url = url
         self.identity = identity
+        self.approve = approve
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
     }
 
@@ -74,8 +76,7 @@ public actor PlayerSession {
 
     // MARK: Connection lifecycle
 
-    /// Connect and keep the player connected until cancelled, the player leaves for
-    /// good (goodbye other than `restart`), or another server takes it over.
+    /// Connect and keep the player connected until cancelled or the player leaves for good.
     public func run() async {
         defer {
             socket?.close()
@@ -84,104 +85,203 @@ public actor PlayerSession {
         var backoff: Duration = .seconds(1)
         while !Task.isCancelled {
             status.connection = .connecting
-            let goodbye: String?
+            var outcome: SessionEnd
             do {
-                goodbye = try await connectAndServe()
+                outcome = try await connectAndServe()
                 backoff = .seconds(1)
             } catch is CancellationError {
                 break
             } catch {
                 Log.warning("\(url): \(error)")
                 status.connection = .failed(String(describing: error))
-                goodbye = nil
+                outcome = .reconnect
             }
             resetConnectionState()
             if Task.isCancelled { break }
 
-            switch goodbye {
-            case "another_server":
-                Log.info("\(status.name ?? url.absoluteString): taken over by another server")
-                status.connection = .taken
-                return
-            case nil, "restart":
+            switch outcome {
+            case .reconnect:
                 break
-            default:
-                Log.info("\(status.name ?? url.absoluteString): left (\(goodbye!))")
-                status.connection = .disconnected(reason: goodbye)
+            case .stop(let connection):
+                status.connection = connection
                 return
             }
+            // Also the backoff for repeated handshake failures, which the spec asks for.
             try? await Task.sleep(for: backoff)
             backoff = min(backoff * 2, .seconds(30))
         }
     }
 
-    /// Returns the client's goodbye reason, or nil when the connection just dropped.
-    private func connectAndServe() async throws -> String? {
+    private enum SessionEnd {
+        case reconnect
+        case stop(PlayerStatus.Connection)
+    }
+
+    private func connectAndServe() async throws -> SessionEnd {
         let socket = WebSocketConnection(url: url)
         self.socket = socket
         defer { socket.close() }
         try await socket.open()
         Log.debug("\(url): connected")
 
-        var goodbye: String?
-        let stateTimeout = Task { [weak self] in
-            try await Task.sleep(for: .seconds(5))
-            await self?.markReady(reason: "no client/state within 5 s")
-        }
-        defer { stateTimeout.cancel() }
+        var frames = socket.frames.makeAsyncIterator()
+        var timeout = Self.closeAfterTimeout(socket)
+        defer { timeout?.cancel() }
 
-        for try await frame in socket.frames {
-            guard case let .text(data, receivedAtUs) = frame else { continue }
-            if let reason = try handle(data, receivedAtUs: receivedAtUs) {
-                goodbye = reason
-                break
+        // client/init, then server/init and Noise message 1 back to back.
+        guard case let .text(clientInitData, _)? = try await frames.next() else {
+            reject(socket, reason: "malformed")
+            throw SessionError.handshake("expected client/init")
+        }
+        let (clientInit, suite, clientKey) = try parseClientInit(clientInitData, socket: socket)
+        let serverInitData = try MessageCoding.encode(type: "server/init", payload: ServerInit(serverID: identity.id))
+        var handshake = NoiseInitiatorHandshake(
+            suite: suite, prologue: clientInitData + serverInitData, localStatic: identity.privateKey,
+            remoteStatic: clientKey, psk: SendspinPSK.sentinel)
+        let message1Payload = try JSONEncoder().encode(
+            NoiseMessage1Payload(pskID: SendspinPSK.id(for: SendspinPSK.sentinel), pskCategory: "sn"))
+        let message1 = try handshake.writeMessage1(payload: message1Payload)
+        socket.send(text: serverInitData)
+        socket.send(text: try MessageCoding.encode(type: "noise/handshake",
+                                                   payload: NoiseHandshakeMessage(data: Base64URL.encode(message1))))
+        timeout?.cancel()
+        timeout = Self.closeAfterTimeout(socket)
+
+        // Noise message 2 completes the handshake. Failures from here on are silent: close.
+        guard case let .text(message2Data, _)? = try await frames.next(),
+              try MessageCoding.type(of: message2Data) == "noise/handshake",
+              let message2 = Base64URL.decode(try MessageCoding.payload(NoiseHandshakeMessage.self,
+                                                                         from: message2Data).data)
+        else { throw SessionError.handshake("expected Noise message 2") }
+        let (payload, transport) = try handshake.readMessage2(message2)
+        guard (try? JSONSerialization.jsonObject(with: payload)) is [String: Any] else {
+            throw SessionError.handshake("Noise message 2 payload isn't a JSON object")
+        }
+        channel = SecureChannel(transport: transport)
+        status.clientID = clientInit.clientID
+        Log.debug("\(url): Noise handshake done (\(suite.rawValue))")
+
+        sendMessage("server/hello", ServerHello(name: identity.name))
+        timeout?.cancel()
+        timeout = Self.closeAfterTimeout(socket)
+
+        while let frame = try await frames.next() {
+            // After the handshake, a cleartext message is a silent failure.
+            guard case let .binary(ciphertext, receivedAtUs) = frame,
+                  let message = try channel?.open(ciphertext)
+            else {
+                if case .text = frame { throw SessionError.handshake("cleartext message after the handshake") }
+                continue
+            }
+            guard message.type == SecureChannel.jsonType else { continue }
+            if let end = try await handle(message.payload, receivedAtUs: receivedAtUs) {
+                return end
+            }
+            if hello != nil {
+                timeout?.cancel()
+                timeout = nil
             }
         }
-        if status.connection == .connected {
-            status.connection = .disconnected(reason: goodbye)
+        if status.connection == .connected { status.connection = .disconnected(reason: nil) }
+        // A drop without client/goodbye: assume `restart` (messaging.md, client/goodbye).
+        return .reconnect
+    }
+
+    /// Validate client/init; on an init failure, answer with server/error first.
+    private func parseClientInit(_ data: Data, socket: WebSocketConnection)
+        throws -> (ClientInit, NoiseSuite, Curve25519.KeyAgreement.PublicKey) {
+        guard (try? MessageCoding.type(of: data)) == "client/init",
+              let clientInit = try? MessageCoding.payload(ClientInit.self, from: data)
+        else {
+            reject(socket, reason: "malformed")
+            throw SessionError.handshake("expected client/init")
         }
-        return goodbye
+        guard clientInit.version == 1 else {
+            reject(socket, reason: "unsupported_version")
+            throw SessionError.handshake("unsupported version \(clientInit.version)")
+        }
+        guard let suite = NoiseSuite(rawValue: clientInit.suite) else {
+            reject(socket, reason: "unsupported_suite")
+            throw SessionError.handshake("unsupported suite \(clientInit.suite)")
+        }
+        guard let keyData = Base64URL.decode(clientInit.clientID), keyData.count == 32,
+              let key = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: keyData)
+        else {
+            reject(socket, reason: "malformed")
+            throw SessionError.handshake("client_id isn't a Curve25519 key")
+        }
+        return (clientInit, suite, key)
+    }
+
+    private func reject(_ socket: WebSocketConnection, reason: String) {
+        if let message = try? MessageCoding.encode(type: "server/error", payload: ServerError(reason: reason)) {
+            socket.send(text: message)
+        }
+    }
+
+    /// Each handshake step must arrive within 30 s (connection.md, Failure Handling).
+    private static func closeAfterTimeout(_ socket: WebSocketConnection) -> Task<Void, Never>? {
+        Task {
+            try? await Task.sleep(for: .seconds(30))
+            if !Task.isCancelled { socket.close() }
+        }
     }
 
     private func resetConnectionState() {
         socket = nil
+        channel = nil
         hello = nil
+        activated = false
+        available = false
         ready = false
         stopStreaming()
-        available = true
     }
 
     // MARK: Inbound messages
 
-    /// Handle one text message; returns a goodbye reason when the client leaves.
-    private func handle(_ data: Data, receivedAtUs: Int64) throws -> String? {
+    /// Handle one JSON message; returns how the session ends when the client leaves.
+    private func handle(_ data: Data, receivedAtUs: Int64) async throws -> SessionEnd? {
         let type = try MessageCoding.type(of: data)
-        if hello == nil, type != "client/hello" {
-            if type == "client/init" {
-                throw SessionError.encryptionUnsupported
-            }
-            throw SessionError.unexpectedFirstMessage(type)
-        }
-
         switch type {
-        case "client/hello":
-            try handleHello(MessageCoding.payload(ClientHello.self, from: data))
+        case "client/goodbye":
+            return goodbye(try MessageCoding.payload(ClientGoodbye.self, from: data).reason)
+        case "client/hello" where hello == nil:
+            return try await handleHello(MessageCoding.payload(ClientHello.self, from: data))
+        case _ where !activated:
+            // Before server/activate the client may send nothing but goodbye.
+            Log.debug("\(status.name ?? "?"): ignoring \(type) before activation")
         case "client/time":
             let time = try MessageCoding.payload(ClientTime.self, from: data)
-            send("server/time", ServerTime(clientTransmitted: time.clientTransmitted,
-                                           serverReceived: receivedAtUs,
-                                           serverTransmitted: ServerClock.nowMicros()))
+            sendMessage("server/time", ServerTime(clientTransmitted: time.clientTransmitted,
+                                                  serverReceived: receivedAtUs,
+                                                  serverTransmitted: ServerClock.nowMicros()))
         case "client/state":
             handleState(try MessageCoding.payload(ClientState.self, from: data))
-        case "client/goodbye":
-            return try MessageCoding.payload(ClientGoodbye.self, from: data).reason
         default:
             Log.debug("\(status.name ?? "?"): ignoring \(type)")
         }
         return nil
     }
 
-    private func handleHello(_ hello: ClientHello) {
+    private func goodbye(_ reason: String) -> SessionEnd {
+        let name = status.name ?? url.absoluteString
+        switch reason {
+        case "restart", "concurrent_attempt":
+            Log.info("\(name): goodbye (\(reason)), reconnecting")
+            return .reconnect
+        case "another_server":
+            Log.info("\(name): taken over by another server")
+            return .stop(.taken)
+        case "pairing_required":
+            Log.info("\(name): requires pairing")
+            return .stop(.pairingRequired)
+        default:
+            Log.info("\(name): left (\(reason))")
+            return .stop(.disconnected(reason: reason))
+        }
+    }
+
+    private func handleHello(_ hello: ClientHello) async -> SessionEnd? {
         self.hello = hello
         status.name = hello.name
         status.supportedFormats = (hello.playerSupport?.supportedFormats ?? [])
@@ -189,66 +289,72 @@ public actor PlayerSession {
         Log.info("\(hello.name): hello (\(hello.deviceInfo?.productName ?? "unknown device"), "
             + "software \(hello.deviceInfo?.softwareVersion ?? "?"))")
 
-        let roles = hello.supportedRoles.contains("player@v1") ? ["player@v1"] : []
-        // Ask for playback only on the first connection, so a reconnect doesn't pull the
-        // player away from a server the user switched to in the meantime.
-        let reason = isFirstConnection ? "playback" : "discovery"
-        isFirstConnection = false
-        send("server/hello", LegacyServerHello(serverID: identity.id, name: identity.name,
-                                               connectionReason: reason, activeRoles: roles))
+        guard hello.supportedRoles.contains("player@v1"), hello.playerSupport != nil else {
+            sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+            return .stop(.failed("not a player"))
+        }
+        // There's no pairing record, so this is an unpaired session on the Sentinel PSK:
+        // the player must admit unpaired access and the user must have approved it.
+        guard hello.unpairedAccess?.enabled == true else {
+            Log.info("\(hello.name): doesn't admit unpaired access; it needs pairing")
+            return .stop(.pairingRequired)
+        }
+        guard let clientID = status.clientID, await approve(clientID) else {
+            Log.warning("\(hello.name): identity \(status.clientID ?? "?") isn't the approved one")
+            return .stop(.notApproved)
+        }
+        sendMessage("server/activate", ServerActivate(activities: ["playback"], activeRoles: ["player@v1"]))
+        activated = true
         sendGroupUpdate()
         status.connection = .connected
+        return nil
     }
 
     private func handleState(_ state: ClientState) {
         let wasAvailable = available
-        available = state.isAvailable
+        available = state.available
         if let player = state.player {
             if let volume = player.volume { status.volume = volume }
             if let muted = player.muted { status.muted = muted }
+            let commands = player.supportedCommands ?? []
+            status.canSetVolume = commands.contains("volume")
+            status.canMute = commands.contains("mute")
         }
-        if wasAvailable && !available {
-            Log.info("\(status.name ?? "?"): unavailable (\(state.state ?? "available=false"))")
+        if wasAvailable && !available && ready {
+            Log.info("\(status.name ?? "?"): unavailable")
+            if streaming { sendMessage("stream/end", StreamEnd(roles: ["player"])) }
             stopStreaming()
         }
-        // On an error report, give the player a fresh stream (a new stream/start with the
-        // next chunk), at most every 10 s so a player that keeps failing can't make us loop.
-        if state.reportsError && !reportedError {
-            let now = ContinuousClock.now
-            if streaming, lastErrorRestart.map({ now - $0 > .seconds(10) }) ?? true {
-                Log.warning("\(status.name ?? "?"): reports an error; restarting its stream")
-                lastErrorRestart = now
-                send("stream/end", StreamEnd(roles: ["player"]))
-                stopStreaming()
-            } else {
-                Log.warning("\(status.name ?? "?"): reports an error")
-            }
-        }
-        if state.state != nil { reportedError = state.reportsError }
-        markReady(reason: nil)
-    }
-
-    private func markReady(reason: String?) {
-        guard hello != nil, !ready else { return }
-        if let reason { Log.debug("\(status.name ?? "?"): ready (\(reason))") }
         ready = true
     }
 
     // MARK: Outbound
 
-    private func send<P: Encodable>(_ type: String, _ payload: P) {
-        guard let socket else { return }
+    private func sendMessage<P: Encodable>(_ type: String, _ payload: P) {
         do {
-            socket.send(text: try MessageCoding.encode(type: type, payload: payload))
+            send(SecureChannel.jsonType, try MessageCoding.encode(type: type, payload: payload))
         } catch {
             Log.error("encoding \(type): \(error)")
         }
     }
 
+    /// Encrypt and send in one step: Noise nonces must follow the send order.
+    private func send(_ type: UInt8, _ payload: Data) {
+        guard let socket, channel != nil else { return }
+        do {
+            for message in try channel!.seal(type: type, payload: payload) {
+                socket.send(binary: message)
+            }
+        } catch {
+            Log.error("\(status.name ?? "?"): encrypting: \(error)")
+            socket.close()
+        }
+    }
+
     private func sendGroupUpdate() {
-        guard let group else { return }
-        send("group/update", GroupUpdate(playbackState: playing ? "playing" : "stopped",
-                                         groupID: group.id, groupName: group.name))
+        guard activated, let group else { return }
+        sendMessage("group/update", GroupUpdate(playbackState: playing ? "playing" : "stopped",
+                                                groupID: group.id, groupName: group.name))
     }
 
     // MARK: Group interface
@@ -263,7 +369,7 @@ public actor PlayerSession {
         self.playing = playing
         sendGroupUpdate()
         if !playing, streaming {
-            send("stream/end", StreamEnd(roles: ["player"]))
+            sendMessage("stream/end", StreamEnd(roles: ["player"]))
         }
         if !playing { stopStreaming() }
     }
@@ -277,7 +383,7 @@ public actor PlayerSession {
     /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
     /// The player gets the format closest to the source (see `FormatChoice`).
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int) {
-        guard let socket, ready, available else { return }
+        guard let socket, activated, ready, available else { return }
         if pipeline == nil || !pipeline!.accepts(pcm) || pipelineBitDepthPreference != preferredBitDepth {
             guard startPipeline(for: pcm, preferredBitDepth: preferredBitDepth) else { return }
         }
@@ -291,8 +397,10 @@ public actor PlayerSession {
             return
         }
         guard let (playAtUs, payload) = pipeline?.process(pcm, timestampUs: timestampUs) else { return }
-        // Legacy clients get the 9-byte header without send-ahead.
-        socket.send(binary: AudioFrame.pack(timestampUs: playAtUs, sendAheadUs: nil, payload: payload))
+        // send_ahead is taken as late as possible: right before encrypting.
+        let frame = AudioFrame.pack(timestampUs: playAtUs, sendAheadUs: playAtUs - ServerClock.nowMicros(),
+                                    payload: payload)
+        send(frame[frame.startIndex], Data(frame.dropFirst()))
     }
 
     /// Choose the stream format for this source and (re)start the stream in it.
@@ -314,9 +422,10 @@ public actor PlayerSession {
         pipelineBitDepthPreference = preferredBitDepth
         if !streaming || changed {
             // stream/start again on a format change: the player reconfigures its decoder.
-            send("stream/start", StreamStart(player: StreamStartPlayer(
-                codec: format.codec, sampleRate: format.sampleRate,
-                channels: format.channels, bitDepth: format.bitDepth)))
+            sendMessage("stream/start", StreamStart(
+                serverTransmitted: ServerClock.nowMicros(),
+                player: StreamStartPlayer(codec: format.codec, sampleRate: format.sampleRate,
+                                          channels: format.channels, bitDepth: format.bitDepth)))
             streaming = true
             status.streamFormat = format
             let conversion = format.sampleRate == pcm.sampleRate ? "" : " (resampled from \(pcm.sampleRate) Hz)"
@@ -328,12 +437,15 @@ public actor PlayerSession {
 
     // MARK: Player control
 
+    /// Only sent when the player offers the command, and after its first client/state.
     public func setVolume(_ volume: Int) {
-        send("server/command", ServerCommand(player: .volume(max(0, min(100, volume)))))
+        guard ready, status.canSetVolume else { return }
+        sendMessage("server/command", ServerCommand(player: .volume(max(0, min(100, volume)))))
     }
 
     public func setMuted(_ muted: Bool) {
-        send("server/command", ServerCommand(player: .mute(muted)))
+        guard ready, status.canMute else { return }
+        sendMessage("server/command", ServerCommand(player: .mute(muted)))
     }
 
     /// End the stream and close the connection.
@@ -344,15 +456,11 @@ public actor PlayerSession {
 }
 
 enum SessionError: Error, CustomStringConvertible {
-    case encryptionUnsupported
-    case unexpectedFirstMessage(String)
+    case handshake(String)
 
     var description: String {
         switch self {
-        case .encryptionUnsupported:
-            "player requires an encrypted (Noise) connection, which is not implemented yet"
-        case .unexpectedFirstMessage(let type):
-            "unexpected first message \(type)"
+        case .handshake(let detail): "handshake failed: \(detail)"
         }
     }
 }

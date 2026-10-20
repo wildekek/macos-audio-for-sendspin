@@ -150,11 +150,13 @@ private struct PlayerRow: View {
                     Text(player.name).lineLimit(1)
                     Spacer()
                     Text(statusText).font(.caption).foregroundStyle(.secondary)
+                        .help(statusHelp)
                 }
             }
             .toggleStyle(.checkbox)
 
-            if player.isSelected, player.status?.connection == .connected, let volume = player.status?.volume {
+            if player.isSelected, player.status?.connection == .connected, player.status?.canSetVolume == true,
+               let volume = player.status?.volume {
                 HStack(spacing: 6) {
                     Image(systemName: player.status?.muted == true ? "speaker.slash" : "speaker.wave.1")
                         .font(.caption)
@@ -179,9 +181,23 @@ private struct PlayerRow: View {
             guard let format = player.status?.streamFormat else { return "Connected" }
             return BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
         case .taken: return "In use elsewhere"
+        case .pairingRequired: return "Needs pairing"
+        case .notApproved: return "Identity changed"
         case .disconnected: return "Disconnected"
         case .failed: return "Can't connect"
         case .connecting, nil: return "Connecting…"
+        }
+    }
+
+    private var statusHelp: String {
+        switch player.status?.connection {
+        case .pairingRequired:
+            "This speaker only plays for paired servers, and pairing isn't supported yet."
+        case .notApproved:
+            "This speaker presents a different identity than the one you allowed. "
+                + "If you trust it, untick and tick it again."
+        default:
+            ""
         }
     }
 }

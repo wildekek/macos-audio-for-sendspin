@@ -98,8 +98,9 @@ final class WebSocketConnection: @unchecked Sendable {
         }
     }
 
-    func send(text: String) {
-        send(Data(text.utf8), opcode: .text)
+    /// A text message: UTF-8 JSON, sent as these exact bytes.
+    func send(text: Data) {
+        send(text, opcode: .text)
     }
 
     func send(binary: Data) {

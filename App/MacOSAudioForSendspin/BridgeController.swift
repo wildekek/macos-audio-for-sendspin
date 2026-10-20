@@ -113,12 +113,9 @@ final class BridgeController {
     init() {
         let defaults = UserDefaults.standard
         let lead = Lead(rawValue: defaults.integer(forKey: "leadMs")) ?? .low
-        let serverID = defaults.string(forKey: "serverID") ?? {
-            let id = "macos-audio-for-sendspin-\(UUID().uuidString.lowercased())"
-            defaults.set(id, forKey: "serverID")
-            return id
-        }()
-        let identity = ServerIdentity(id: serverID, name: Host.current().localizedName ?? "Mac")
+        // The pre-1.0 server ID; Sendspin 1 identifies the server by its Noise key.
+        defaults.removeObject(forKey: "serverID")
+        let identity = IdentityStore.load(name: Host.current().localizedName ?? "Mac")
         selected = Set(defaults.stringArray(forKey: "selectedPlayers") ?? [])
         selectedFormat = StreamFormat(sampleRate: defaults.object(forKey: "sampleRate") as? Int ?? 48_000,
                                       bitDepth: defaults.object(forKey: "bitDepth") as? Int ?? 16)
@@ -182,9 +179,31 @@ final class BridgeController {
             if let status = statuses[instanceName], status.connection.isFinal { dropSession(instanceName) }
         } else {
             selected.remove(instanceName)
+            // Unticking withdraws the approval; ticking again approves whatever identity shows up.
+            var approved = approvedPlayers
+            approved[instanceName] = nil
+            defaults.set(approved, forKey: "approvedPlayers")
         }
         defaults.set(Array(selected), forKey: "selectedPlayers")
         reconcile()
+    }
+
+    /// Approved players: instance name → the `client_id` approved for it.
+    private var approvedPlayers: [String: String] {
+        defaults.dictionary(forKey: "approvedPlayers") as? [String: String] ?? [:]
+    }
+
+    /// Ticking a player is the user's approval for unpaired playback (pairing.md, Unpaired
+    /// Access), bound to the identity the player first presents. A different identity under
+    /// the same name isn't approved: a new device can't pass for a known one by its name.
+    private func approve(_ instanceName: String, clientID: String) -> Bool {
+        guard selected.contains(instanceName) else { return false }
+        var approved = approvedPlayers
+        if let known = approved[instanceName] { return known == clientID }
+        approved[instanceName] = clientID
+        defaults.set(approved, forKey: "approvedPlayers")
+        Log.info("\(instanceName): approved (\(clientID))")
+        return true
     }
 
     /// Bring sessions in line with the selection and what's discoverable.
@@ -204,7 +223,9 @@ final class BridgeController {
 
     private func addSession(for player: DiscoveredPlayer) {
         let name = player.instanceName
-        let session = PlayerSession(url: player.url, identity: identity)
+        let session = PlayerSession(url: player.url, identity: identity) { [weak self] clientID in
+            await self?.approve(name, clientID: clientID) ?? false
+        }
         sessions[name] = session
         statuses[name] = PlayerStatus()
         Task { [weak self] in
@@ -514,7 +535,7 @@ extension PlayerStatus.Connection {
     /// The session stopped by itself and won't reconnect.
     var isFinal: Bool {
         switch self {
-        case .taken, .disconnected: true
+        case .taken, .disconnected, .pairingRequired, .notApproved: true
         default: false
         }
     }

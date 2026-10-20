@@ -1,8 +1,8 @@
 import Foundation
 
+// Sendspin 1 messages (github.com/Sendspin/spec, messaging.md and roles/player/v1.md).
 // JSON messages are `{"type": "...", "payload": {...}}`. Decoders ignore unknown
-// fields, as the spec requires. Field spellings follow the wire format, including
-// the pre-1.0 ("legacy", unencrypted) variants that current players still send.
+// fields, as the spec requires.
 
 public enum AudioCodec: String, Codable, Sendable {
     case pcm, flac, opus
@@ -28,6 +28,49 @@ public struct AudioFormatSpec: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Handshake (cleartext)
+
+public struct ClientInit: Decodable, Sendable {
+    public var clientID: String
+    public var version: Int
+    public var suite: String
+
+    enum CodingKeys: String, CodingKey {
+        case version, suite
+        case clientID = "client_id"
+    }
+}
+
+public struct ServerInit: Encodable, Sendable {
+    public var serverID: String
+    public var version = 1
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case serverID = "server_id"
+    }
+}
+
+public struct ServerError: Encodable, Sendable {
+    public var reason: String
+}
+
+public struct NoiseHandshakeMessage: Codable, Sendable {
+    /// base64url Noise handshake bytes.
+    public var data: String
+}
+
+/// The encrypted payload of Noise message 1: which PSK the server mixes in.
+struct NoiseMessage1Payload: Encodable {
+    var pskID: String
+    var pskCategory: String
+
+    enum CodingKeys: String, CodingKey {
+        case pskID = "psk_id"
+        case pskCategory = "psk_category"
+    }
+}
+
 // MARK: - Client -> server
 
 public struct DeviceInfo: Codable, Sendable {
@@ -44,43 +87,31 @@ public struct DeviceInfo: Codable, Sendable {
 
 public struct PlayerSupport: Codable, Sendable {
     public var supportedFormats: [AudioFormatSpec]
-    public var bufferCapacity: Int?
-    public var supportedCommands: [String]?
+    public var bufferCapacity: Int
 
     enum CodingKeys: String, CodingKey {
         case supportedFormats = "supported_formats"
         case bufferCapacity = "buffer_capacity"
-        case supportedCommands = "supported_commands"
     }
 }
 
+public struct UnpairedAccess: Codable, Sendable {
+    public var enabled: Bool
+}
+
 public struct ClientHello: Decodable, Sendable {
-    /// Present on legacy connections; encrypted clients are identified by their Noise key.
-    public var clientID: String?
     public var name: String
-    public var version: Int?
-    public var supportedRoles: [String]
     public var deviceInfo: DeviceInfo?
+    public var supportedRoles: [String]
     public var playerSupport: PlayerSupport?
+    public var unpairedAccess: UnpairedAccess?
 
     enum CodingKeys: String, CodingKey {
-        case name, version
-        case clientID = "client_id"
-        case supportedRoles = "supported_roles"
+        case name
         case deviceInfo = "device_info"
+        case supportedRoles = "supported_roles"
         case playerSupport = "player@v1_support"
-        case legacyPlayerSupport = "player_support"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        clientID = try c.decodeIfPresent(String.self, forKey: .clientID)
-        name = try c.decode(String.self, forKey: .name)
-        version = try c.decodeIfPresent(Int.self, forKey: .version)
-        supportedRoles = try c.decode([String].self, forKey: .supportedRoles)
-        deviceInfo = try c.decodeIfPresent(DeviceInfo.self, forKey: .deviceInfo)
-        playerSupport = try c.decodeIfPresent(PlayerSupport.self, forKey: .playerSupport)
-            ?? c.decodeIfPresent(PlayerSupport.self, forKey: .legacyPlayerSupport)
+        case unpairedAccess = "unpaired_access"
     }
 }
 
@@ -92,34 +123,29 @@ public struct ClientTime: Codable, Sendable {
     }
 }
 
+/// The `player` object of client/state.
 public struct PlayerState: Decodable, Sendable {
     public var volume: Int?
     public var muted: Bool?
+    public var outputDelayMs: Int?
+    public var requiredLeadTimeMs: Int?
     public var minBufferMs: Int?
+    /// Commands the server may send: "volume", "mute", "set_output_delay".
+    public var supportedCommands: [String]?
 
     enum CodingKeys: String, CodingKey {
         case volume, muted
+        case outputDelayMs = "output_delay_ms"
+        case requiredLeadTimeMs = "required_lead_time_ms"
         case minBufferMs = "min_buffer_ms"
+        case supportedCommands = "supported_commands"
     }
 }
 
 public struct ClientState: Decodable, Sendable {
-    /// Spec field; `false` means the player can't take a stream right now.
-    public var available: Bool?
-    /// Legacy field: "synchronized", "error" or "external_source".
-    public var state: String?
+    /// `false` while the player is in use by something else and won't yield.
+    public var available: Bool
     public var player: PlayerState?
-
-    /// Whether the client can currently play a stream. A legacy "error" state doesn't
-    /// count against it (aiosendspin keeps streaming then too): only "external_source",
-    /// a player busy with another source, does.
-    public var isAvailable: Bool {
-        if let available { return available }
-        return state != "external_source"
-    }
-
-    /// Legacy players report "error" when something went wrong on their side.
-    public var reportsError: Bool { state == "error" }
 }
 
 public struct ClientGoodbye: Decodable, Sendable {
@@ -128,18 +154,16 @@ public struct ClientGoodbye: Decodable, Sendable {
 
 // MARK: - Server -> client
 
-/// server/hello for legacy (unencrypted) clients; it doubles as the activation.
-public struct LegacyServerHello: Encodable, Sendable {
-    public var serverID: String
+public struct ServerHello: Encodable, Sendable {
     public var name: String
-    public var version = 1
-    public var connectionReason: String
+}
+
+public struct ServerActivate: Encodable, Sendable {
+    public var activities: [String]
     public var activeRoles: [String]
 
     enum CodingKeys: String, CodingKey {
-        case name, version
-        case serverID = "server_id"
-        case connectionReason = "connection_reason"
+        case activities
         case activeRoles = "active_roles"
     }
 }
@@ -184,7 +208,13 @@ public struct StreamStartPlayer: Encodable, Sendable {
 }
 
 public struct StreamStart: Encodable, Sendable {
+    public var serverTransmitted: Int64
     public var player: StreamStartPlayer
+
+    enum CodingKeys: String, CodingKey {
+        case player
+        case serverTransmitted = "server_transmitted"
+    }
 }
 
 public struct StreamEnd: Encodable, Sendable {
@@ -233,9 +263,10 @@ enum MessageCoding {
         try JSONDecoder().decode(Incoming<P>.self, from: data).payload
     }
 
-    static func encode<P: Encodable>(type: String, payload: P) throws -> String {
+    /// The UTF-8 JSON bytes, exactly as they go on the wire.
+    static func encode<P: Encodable>(type: String, payload: P) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes
-        return String(decoding: try encoder.encode(Outgoing(type: type, payload: payload)), as: UTF8.self)
+        return try encoder.encode(Outgoing(type: type, payload: payload))
     }
 }

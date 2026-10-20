@@ -76,17 +76,20 @@ func fail(_ message: String) -> Never {
 }
 
 /// A stable server id, so players see the same server across restarts.
-func loadServerID() -> String {
+/// The server's Noise identity, kept across runs so players see the same server.
+func loadIdentity(name: String) -> ServerIdentity {
     let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge")
-    let file = dir.appending(path: "server-id")
-    if let id = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-       !id.isEmpty {
-        return id
+    let file = dir.appending(path: "server-key")
+    if let text = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+       let key = Data(base64Encoded: text), let identity = try? ServerIdentity(privateKeyData: key, name: name) {
+        return identity
     }
-    let id = "sendspin-bridge-\(UUID().uuidString.lowercased())"
+    let identity = ServerIdentity.generate(name: name)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    try? id.write(to: file, atomically: true, encoding: .utf8)
-    return id
+    // The private key: readable by this user only.
+    FileManager.default.createFile(atPath: file.path, contents: Data(identity.privateKeyData.base64EncodedString().utf8),
+                                   attributes: [.posixPermissions: 0o600])
+    return identity
 }
 
 func resolvePlayers(_ queries: [String]) async -> [URL] {
@@ -159,10 +162,11 @@ func run() async {
         }
     }
 
-    let identity = ServerIdentity(id: loadServerID(), name: options.name)
+    let identity = loadIdentity(name: options.name)
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
     for url in urls {
-        let session = PlayerSession(url: url, identity: identity)
+        // Players named on the command line are the user's explicit choice: approved.
+        let session = PlayerSession(url: url, identity: identity, approve: { _ in true })
         Task {
             for await status in session.updates {
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
