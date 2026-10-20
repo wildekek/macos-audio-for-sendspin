@@ -59,6 +59,8 @@ final class BridgeController {
     /// Installed, but the device didn't appear: coreaudiod didn't load it, a restart will.
     private(set) var driverNeedsRestart = false
     private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
+    /// macOS refuses Local Network access: no speaker can be found or reached.
+    private(set) var localNetworkDenied = false
     private(set) var isMacOutput = false
     /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
     private(set) var currentOutputName: String?
@@ -188,8 +190,15 @@ final class BridgeController {
     func startDiscovery() {
         guard discoveryTask == nil else { return }
         startListening()
+        let denied: @Sendable (Bool) -> Void = { [weak self] denied in
+            Task { @MainActor in
+                guard let self, self.localNetworkDenied != denied else { return }
+                Log.info("Local Network access \(denied ? "denied" : "allowed")")
+                self.localNetworkDenied = denied
+            }
+        }
         discoveryTask = Task { [weak self] in
-            for await players in PlayerBrowser.browse() {
+            for await players in PlayerBrowser.browse(localNetworkDenied: denied) {
                 guard let self else { return }
                 Log.debug("Discovered: \(players.map { "\($0.instanceName) \($0.url.absoluteString)" })")
                 discovered = players + manualPlayers()

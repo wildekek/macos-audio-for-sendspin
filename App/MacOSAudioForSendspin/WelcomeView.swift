@@ -91,6 +91,12 @@ struct WelcomeView: View {
     private var networkStep: Step.State {
         guard bridge.driverState == .current, bridge.microphoneAccess != .notDetermined else { return .waiting }
         guard bridge.isDiscovering else { return .action("Allow…") { bridge.startDiscovery() } }
+        if bridge.localNetworkDenied {
+            return .action("Open Settings…") {
+                NSWorkspace.shared.open(URL(string:
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!)
+            }
+        }
         let found = foundSpeakers
         return found == 0 ? .note("Looking for speakers…")
             : .done(found == 1 ? "Found 1 speaker" : "Found \(found) speakers")

@@ -51,15 +51,14 @@ public enum PlayerBrowser {
     }
 
     /// Browse continuously; yields the full list of resolved players whenever it changes.
-    /// Browsing stops when the consuming task is cancelled.
-    public static func browse() -> AsyncStream<[DiscoveredPlayer]> {
+    /// Browsing stops when the consuming task is cancelled. `localNetworkDenied` reports
+    /// whether macOS refuses the app Local Network access.
+    public static func browse(localNetworkDenied: (@Sendable (Bool) -> Void)? = nil) -> AsyncStream<[DiscoveredPlayer]> {
         AsyncStream { continuation in
-            let browser = NWBrowser(for: .bonjourWithTXTRecord(type: serviceType, domain: nil),
-                                    using: NWParameters())
             let (snapshots, snapshotContinuation) = AsyncStream.makeStream(
                 of: Set<NWBrowser.Result>.self, bufferingPolicy: .bufferingNewest(1))
-            browser.browseResultsChangedHandler = { results, _ in snapshotContinuation.yield(results) }
-            browser.start(queue: DispatchQueue(label: "sendspin.browser"))
+            let browsing = Browsing(snapshots: snapshotContinuation, report: localNetworkDenied)
+            browsing.start()
 
             let task = Task {
                 var resolved: [String: DiscoveredPlayer] = [:]
@@ -77,9 +76,117 @@ public enum PlayerBrowser {
             }
             continuation.onTermination = { _ in
                 task.cancel()
-                browser.cancel()
+                browsing.cancel()
                 snapshotContinuation.finish()
             }
+        }
+    }
+
+    /// The browser, and whether Local Network access is denied. A browser started without
+    /// access waits with "policy denied" straight away (TN3179), and stays that way after access
+    /// is granted. Revoking access later doesn't change a running browser's state at all. The
+    /// network path does change both times, without saying which way, so each change starts a
+    /// short-lived probe browser to find out, and the browser restarts once access is back.
+    /// Granting access doesn't always take effect by the time the path changes, so while it's
+    /// denied the probe also repeats every few seconds. Everything runs on `queue`.
+    private final class Browsing: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "sendspin.browser")
+        private let snapshots: AsyncStream<Set<NWBrowser.Result>>.Continuation
+        private let report: (@Sendable (Bool) -> Void)?
+        private let monitor = NWPathMonitor()
+        private var browser: NWBrowser?
+        private var probe: NWBrowser?
+        private var denied: Bool?
+        private var retryScheduled = false
+
+        init(snapshots: AsyncStream<Set<NWBrowser.Result>>.Continuation, report: (@Sendable (Bool) -> Void)?) {
+            self.snapshots = snapshots
+            self.report = report
+        }
+
+        func start() {
+            queue.async { [self] in
+                startBrowser()
+                monitor.pathUpdateHandler = { [weak self] _ in self?.startProbe() }
+                monitor.start(queue: queue)
+            }
+        }
+
+        func cancel() {
+            queue.async { [self] in
+                monitor.cancel()
+                browser?.cancel()
+                probe?.cancel()
+                browser = nil
+                probe = nil
+            }
+        }
+
+        private func startBrowser() {
+            browser?.cancel()
+            let browser = PlayerBrowser.makeBrowser()
+            browser.browseResultsChangedHandler = { [snapshots] results, _ in snapshots.yield(results) }
+            browser.stateUpdateHandler = { [weak self, weak browser] state in
+                guard let self, self.browser === browser, PlayerBrowser.isPolicyDenied(state) else { return }
+                setDenied(true)
+            }
+            self.browser = browser
+            browser.start(queue: queue)
+        }
+
+        private func startProbe() {
+            probe?.cancel()
+            let probe = PlayerBrowser.makeBrowser()
+            probe.stateUpdateHandler = { [weak self, weak probe] state in
+                guard let self, self.probe === probe, PlayerBrowser.isPolicyDenied(state) else { return }
+                finishProbe(denied: true)
+            }
+            self.probe = probe
+            probe.start(queue: queue)
+            // With access, nothing happens: no "policy denied" by now means allowed.
+            queue.asyncAfter(deadline: .now() + 2) { [weak self, weak probe] in
+                guard let self, self.probe === probe else { return }
+                finishProbe(denied: false)
+            }
+        }
+
+        private func finishProbe(denied: Bool) {
+            probe?.cancel()
+            probe = nil
+            if !denied && self.denied == true { startBrowser() }
+            setDenied(denied)
+        }
+
+        private func setDenied(_ denied: Bool) {
+            if denied { retryWhileDenied() }
+            guard denied != self.denied else { return }
+            Log.debug("Local Network access \(denied ? "denied" : "allowed")")
+            self.denied = denied
+            report?(denied)
+        }
+
+        private func retryWhileDenied() {
+            guard !retryScheduled else { return }
+            retryScheduled = true
+            queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self else { return }
+                retryScheduled = false
+                if denied == true && probe == nil { startProbe() }
+            }
+        }
+    }
+
+    private static func makeBrowser() -> NWBrowser {
+        NWBrowser(for: .bonjourWithTXTRecord(type: serviceType, domain: nil), using: NWParameters())
+    }
+
+    private static func isPolicyDenied(_ state: NWBrowser.State) -> Bool {
+        switch state {
+        case .waiting(let error), .failed(let error):
+            if case .dns(let code) = error { return code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied) }
+            return false
+        default:
+            return false
         }
     }
 

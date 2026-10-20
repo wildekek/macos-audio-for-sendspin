@@ -13,10 +13,8 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 ## The app
 
 2. **Start at login.** After a restart of the Mac the app doesn't come back by itself.
-3. **Missing permissions.** The welcome window explains the microphone (nothing is recorded)
-   and the local network. Without Local Network access the app still looks for speakers forever:
-   detect it (Bonjour reports "policy denied") and show a notice with a button to the settings.
-   Later, look into a capture method that doesn't need the microphone permission.
+3. **Capture without the microphone permission.** The welcome window explains it (nothing is
+   recorded), but a capture method that doesn't need it would be one prompt fewer.
 4. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
    it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
    is slow (for minutes after many restarts without a reboot), that freezes the menu.

@@ -95,6 +95,14 @@ struct MenuView: View {
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }
             }
+        } else if bridge.localNetworkDenied {
+            Notice(text: "Allow Local Network access so the app can find your speakers.",
+                   systemImage: "network.slash") {
+                Button("Open Privacy Settings") {
+                    NSWorkspace.shared.open(URL(string:
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!)
+                }
+            }
         }
     }
 
