@@ -6,13 +6,16 @@
 
 <p align="center">Play your Mac's audio on <a href="https://www.sendspin-audio.com/">Sendspin</a> speakers, in sync.</p>
 
+Sendspin enables wireless, lossless and hi-res music streaming to your speakers. Wireless
+bit-perfect playback is finally possible on your Mac.
+
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
-choose speakers and control their volume.
+choose speakers and control their volume:
 
 <img src="docs/menu.png" width="443" alt="The speaker icon in the menu bar, with its menu open: Playing on Sendspin, streaming, with a button to switch back to the MacBook Pro Speakers, and a Home Assistant Connect AUX-2 ticked with its volume slider.">
 
-> Sendspin is a protocol of the Open Home Foundation; this project is not affiliated with
-> or endorsed by it.
+> Sendspin is a protocol of the Open Home Foundation;
+> this project is not affiliated with or endorsed by it.
 
 ## Install
 
@@ -20,6 +23,31 @@ Download the disk image from [Releases](https://github.com/wildekek/macos-audio-
 open it and drag the app to Applications. On first launch it installs its audio driver (your
 password once) and asks for the microphone and local network. Then tick your speakers in the
 menu bar app and click **Use Sendspin**. The current release is a beta.
+
+## Why not just AirPlay?
+
+If your speakers have AirPlay, it is the easier choice: it's built into every Mac, needs
+no driver or permissions, and works from your iPhone too. This app is for Sendspin speakers,
+and if sound quality matters to you, it has a few things going for it:
+
+- **Lossless up to 24-bit/192 kHz.** AirPlay 2 streams at 16-bit/44.1 kHz. With Sendspin,
+  every speaker gets PCM or FLAC at the best sample rate and bit depth it supports.
+- **No conversion to 44.1 kHz.** Most Mac audio is 48 kHz: video, games, browsers. AirPlay
+  has to resample it; a 48 kHz Sendspin speaker gets it as it is.
+- **Bit-perfect.** Measured: test files at 48 and 96 kHz, 16 and 24 bit, over PCM and FLAC,
+  reach the speaker sample for sample. Volume sets the speakers' volume instead of scaling
+  the audio.
+- **Every speaker its own format.** A hi-res DAC isn't held back by a 16-bit speaker in the
+  same group.
+- **Tight sync, little delay.** Sendspin requires every speaker to stay within ±1 ms of the
+  shared clock. The speaker buffer is 300 ms to 1 s, and macOS knows it, so video keeps lip
+  sync (measured +0.5 ms on an HA Connect AUX-2).
+- **Fast.** AirPlay can feel sluggish when changing volume or skipping a track. Sendspin is
+  snappy.
+- **Open hardware.** No licence or certification: a Raspberry Pi with a DAC board, an ESP32
+  build, or a Home Assistant speaker.
+
+Most Sendspin speakers today play 48 kHz/16-bit; for hi-res you need a hi-res player.
 
 ## How it fits together
 
@@ -124,9 +152,10 @@ Release/build-dmg.sh
   sample rate and bit depth (16/24) combinations the selected speakers support; picking
   one switches the device rate and the stream. A speaker that can't take the active format
   gets the closest one it supports: resampled (96 → 48 kHz, 88.2 → 44.1 kHz) and/or at its
-  own bit depth, with TPDF dither for 16-bit. Each speaker gets PCM or FLAC (20 ms frames,
-  AudioToolbox's encoder), in its own order of preference, as long as our buffer of it fits
-  the speaker's `buffer_capacity`; that limit is also enforced when sending.
+  own bit depth, with TPDF dither for 16-bit (only on samples that aren't 16-bit values
+  already, so 16-bit sources and silence pass bit-perfect). Each speaker gets PCM or FLAC
+  (20 ms frames, AudioToolbox's encoder), in its own order of preference, as long as our
+  buffer of it fits the speaker's `buffer_capacity`; that limit is also enforced when sending.
 - **Idle.** After 3 s of digital silence the speakers get `stream/end`. The stream restarts
   with the next sound.
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker
