@@ -46,11 +46,13 @@ struct MenuView: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
-                // Green while audio is going out to the speakers.
-                if bridge.isStreaming {
+                // With a connected speaker: green while audio goes out to it, grey while silent.
+                if bridge.hasConnectedPlayers {
                     HStack(spacing: 4) {
-                        Image(systemName: "circle.fill").foregroundStyle(.green).font(.system(size: 6))
-                        Text("Streaming")
+                        Image(systemName: "circle.fill")
+                            .foregroundStyle(bridge.isStreaming ? Color.green : Color.secondary)
+                            .font(.system(size: 6))
+                        Text(bridge.isStreaming ? "Streaming" : "Idle")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
