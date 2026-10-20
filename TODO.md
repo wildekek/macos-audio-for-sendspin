@@ -3,29 +3,45 @@
 Goal: people who use AirPlay, and don't know Home Assistant or Music Assistant, can use Sendspin
 speakers just as easily. If AirPlay doesn't make the user do something, this app shouldn't either.
 
-1. **Signed, notarized disk image** (in progress). Drag the app to Applications; on first launch a
-   welcome window installs the driver the app carries and asks for the permissions, each
-   explained. `Release/build-dmg.sh` builds it, and `.github/workflows/release.yml` signs and
-   notarizes it for each `v*` tag (the workflow's DMG step is untested until the next tag).
-   Settings → Uninstall removes the driver and the app. Neither needs a restart: both restart
-   coreaudiod, as SoundSource and Loopback do. Follow-up: start at login.
-   - The Developer ID certificates (G2) expire on 19 November 2027. Before then, create new
-     ones and replace the `DEVELOPER_ID_P12` and `P12_PASSWORD` secrets (README → Release).
-2. **Pairing.** Sendspin 1 playback works unpaired (Noise on the Sentinel PSK, allowed by
-   ticking the speaker). Speakers that only admit paired servers show "Needs pairing".
-   Pairing would add a mutually authenticated connection: first the pairing PSK token
-   (`SP:0…`), later the pairing codes (CPace). Not started.
-3. **Missing permissions.** The welcome window explains the microphone (nothing is recorded)
+## Sendspin 1: required, not done
+
+1. **Client-initiated connections** (in progress). Servers must support both ways of
+   connecting (connection.md). We only dial speakers that advertise `_sendspin._tcp`; speakers
+   that look for a server themselves need us to advertise `_sendspin-server._tcp` and accept
+   their connection.
+2. **Pairing.** Servers must implement all three methods: the pairing PSK token (`SP:0…`), the
+   static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
+   Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
+   show "Needs pairing". Not started; deliberately left until a speaker needs it.
+
+## The app
+
+3. **Start at login.** After a restart of the Mac the app doesn't come back by itself.
+4. **Missing permissions.** The welcome window explains the microphone (nothing is recorded)
    and the local network. Without Local Network access the app still looks for speakers forever:
    detect it (Bonjour reports "policy denied") and show a notice with a button to the settings.
    Later, look into a capture method that doesn't need the microphone permission.
-4. **README for end users.** Lead with: install, pick **Sendspin** in the Sound menu, choose your
-   speakers. Move the protocol, build and `defaults write` details to a "For developers" section.
-5. **Speaker selection front and centre.** macOS can't show speakers as sub-items of one output
-   device in Control Center, so the menu bar app's speaker list has to be the obvious place to
-   pick them.
-6. **No CoreAudio calls on the main thread.** Switching the output already runs off it; the
-   reads after device, volume and format changes still don't. When coreaudiod is slow (for
-   minutes after many restarts without a reboot), each of those freezes the menu.
+5. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
+   it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
+   is slow (for minutes after many restarts without a reboot), that freezes the menu.
+6. **README for end users.** Install and the screenshot lead now; the protocol, build and
+   `defaults write` details should move to a "For developers" section.
 
-Other protocol work (Opus, …) is listed under Status in the README.
+## Audio: recommended or optional
+
+7. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+   can produce it.
+8. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+9. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+   a per-speaker delay for external amplifiers).
+
+## Loose ends
+
+- The Developer ID certificates (G2) expire on 19 November 2027. Before then, create new ones and
+  replace the `DEVELOPER_ID_P12` and `P12_PASSWORD` secrets (README → Release).
+- The app icon uses the Sendspin logo; that needs the Open Home Foundation's OK.
+- Release builds print a harmless "failed with exit code 0" line from an Xcode build step.
+- "Move to Applications" now copies in the background ("Moving…"); not yet tested by hand.
+
+Done: the signed, notarized disk image with a welcome window that installs the driver (each
+`v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, and Sendspin 1 over Noise.
