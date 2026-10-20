@@ -58,6 +58,8 @@ final class BridgeController {
     private(set) var deviceVolume: Float = 1
     private(set) var deviceMuted = false
     private(set) var lead: Lead
+    /// The lead the group and the device latency currently use (see `effectiveLeadMs`).
+    private var appliedLeadMs: Int
     /// The format chosen in the menu; `activeFormat` is what's applied.
     private(set) var selectedFormat: StreamFormat
     private(set) var deviceSampleRate = 48_000
@@ -120,6 +122,7 @@ final class BridgeController {
         selectedFormat = StreamFormat(sampleRate: defaults.object(forKey: "sampleRate") as? Int ?? 48_000,
                                       bitDepth: defaults.object(forKey: "bitDepth") as? Int ?? 16)
         self.lead = lead
+        appliedLeadMs = lead.rawValue
         self.identity = identity
         group = PlaybackGroup(name: identity.name, leadMs: lead.rawValue)
 
@@ -248,6 +251,7 @@ final class BridgeController {
             || statuses[name]?.connection != status.connection
         statuses[name] = status
         syncDeviceToPlayers()
+        applyLead()
         if formatsChanged { applyFormat() }
     }
 
@@ -459,8 +463,30 @@ final class BridgeController {
     func setLead(_ lead: Lead) {
         self.lead = lead
         defaults.set(lead.rawValue, forKey: "leadMs")
+        applyLead()
+    }
+
+    /// The connected speaker that needs the most buffer, if it needs more than the setting.
+    var leadRequirement: (name: String, ms: Int)? {
+        let need = statuses.values.filter { $0.connection == .connected }
+            .max { $0.requiredBufferMs < $1.requiredBufferMs }
+        guard let need, need.requiredBufferMs > lead.rawValue else { return nil }
+        return (need.name ?? "A speaker", need.requiredBufferMs)
+    }
+
+    /// The setting, raised to what connected speakers need: the spec requires keeping at
+    /// least each player's min_buffer_ms + output_delay_ms queued.
+    var effectiveLeadMs: Int { leadRequirement?.ms ?? lead.rawValue }
+
+    private func applyLead() {
+        let ms = effectiveLeadMs
+        guard ms != appliedLeadMs else { return }
+        appliedLeadMs = ms
+        if let requirement = leadRequirement {
+            Log.info("Speaker buffer \(ms) ms: \(requirement.name) needs more than the \(lead.rawValue) ms setting")
+        }
         applyPresentationLatency()
-        Task { await group.setLead(ms: lead.rawValue) }
+        Task { await group.setLead(ms: ms) }
     }
 
     /// Report the lead as the device's output latency, so video players keep lip sync.
@@ -468,7 +494,7 @@ final class BridgeController {
     /// `sendspin-bridge --measure-latency`), so the lead is the entire latency.
     private func applyPresentationLatency() {
         do {
-            try AudioDevice.sendspin?.setPresentationLatency(frames: lead.rawValue * deviceSampleRate / 1000)
+            try AudioDevice.sendspin?.setPresentationLatency(frames: appliedLeadMs * deviceSampleRate / 1000)
         } catch {
             Log.warning("Couldn't set presentation latency: \(error)")
         }

@@ -168,10 +168,16 @@ func run() async {
         // Players named on the command line are the user's explicit choice: approved.
         let session = PlayerSession(url: url, identity: identity, approve: { _ in true })
         Task {
+            var bufferWarned = false
             for await status in session.updates {
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
                     + (status.volume.map { ", volume \($0)" } ?? "")
                     + (status.muted == true ? ", muted" : ""))
+                if status.requiredBufferMs > options.leadMs, !bufferWarned {
+                    bufferWarned = true
+                    Log.warning("\(status.name ?? url.absoluteString) needs \(status.requiredBufferMs) ms of buffer; "
+                        + "use --lead-ms \(status.requiredBufferMs) or more")
+                }
             }
         }
         Log.info("Connecting to \(url.absoluteString)")

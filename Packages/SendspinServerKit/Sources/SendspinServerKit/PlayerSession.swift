@@ -23,6 +23,9 @@ public struct PlayerStatus: Sendable, Equatable {
     public var muted: Bool?
     public var canSetVolume = false
     public var canMute = false
+    /// What the player needs queued: its min_buffer_ms plus output_delay_ms. The server
+    /// must schedule audio at least this far ahead (player/v1.md, Server Audio Send Constraints).
+    public var requiredBufferMs = 0
     /// PCM formats the player accepts (from its hello).
     public var supportedFormats: [AudioFormatSpec] = []
     /// Format currently streamed to the player, while streaming.
@@ -319,6 +322,7 @@ public actor PlayerSession {
             let commands = player.supportedCommands ?? []
             status.canSetVolume = commands.contains("volume")
             status.canMute = commands.contains("mute")
+            status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
         }
         if wasAvailable && !available && ready {
             Log.info("\(status.name ?? "?"): unavailable")

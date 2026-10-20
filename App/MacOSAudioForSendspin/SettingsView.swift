@@ -17,9 +17,14 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
             } footer: {
-                Text("Longer buffers survive Wi-Fi hiccups. Video apps are told the delay to keep lip sync.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Longer buffers survive Wi-Fi hiccups. Video apps are told the delay to keep lip sync.")
+                    if let requirement = bridge.leadRequirement {
+                        Text("Using \(requirement.ms) ms: \(requirement.name) needs at least that much.")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section {
