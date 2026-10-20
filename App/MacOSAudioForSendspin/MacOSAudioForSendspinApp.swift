@@ -12,5 +12,9 @@ struct MacOSAudioForSendspinApp: App {
                 .accessibilityLabel(bridge.isStreaming ? "Sendspin, streaming" : "Sendspin")
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(bridge: bridge)
+        }
     }
 }

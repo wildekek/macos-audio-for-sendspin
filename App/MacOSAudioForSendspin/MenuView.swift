@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MenuView: View {
     @Bindable var bridge: BridgeController
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -14,12 +15,20 @@ struct MenuView: View {
                 Divider()
                 speakers
                 Divider()
-                settings
+                output
             }
             Divider()
-            Button("Quit macOS Audio for Sendspin") { NSApp.terminate(nil) }
-                .buttonStyle(.plain)
-                .keyboardShortcut("q")
+            VStack(alignment: .leading, spacing: 8) {
+                Button("Settings…") {
+                    // A menu bar app isn't active, so the window would open behind other apps.
+                    NSApp.activate()
+                    openSettings()
+                }
+                .keyboardShortcut(",")
+                Button("Quit macOS Audio for Sendspin") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q")
+            }
+            .buttonStyle(.plain)
         }
         .padding(14)
         .frame(width: 320)
@@ -96,7 +105,7 @@ struct MenuView: View {
         }
     }
 
-    private var settings: some View {
+    private var output: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Use as Mac sound output", isOn: Binding(
                 get: { bridge.isMacOutput }, set: { bridge.setMacOutput($0) }))
@@ -110,16 +119,6 @@ struct MenuView: View {
                 .pickerStyle(.menu)
                 .disabled(bridge.availableFormats.count < 2)
             }
-            Picker("Speaker buffer", selection: Binding(get: { bridge.lead }, set: { bridge.setLead($0) })) {
-                Text("300 ms").tag(BridgeController.Lead.low)
-                Text("600 ms").tag(BridgeController.Lead.normal)
-                Text("1 s").tag(BridgeController.Lead.robust)
-            }
-            .pickerStyle(.segmented)
-            Text("Longer buffers survive Wi-Fi hiccups. Video apps are told the delay to keep lip sync.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

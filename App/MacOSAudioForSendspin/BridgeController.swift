@@ -472,6 +472,22 @@ final class BridgeController {
         }
         refreshDefaultOutput()
     }
+
+    /// Remove the driver and the app. Returns false if the user cancelled.
+    func uninstall() async throws -> Bool {
+        // Hand the Mac's sound back to the previous output before the device disappears.
+        let wasMacOutput = isMacOutput
+        if wasMacOutput { setMacOutput(false) }
+        let removed: Bool
+        do {
+            removed = try await Uninstaller.run()
+        } catch {
+            if wasMacOutput { setMacOutput(true) }
+            throw error
+        }
+        if !removed && wasMacOutput { setMacOutput(true) }
+        return removed
+    }
 }
 
 extension PlayerStatus.Connection {
