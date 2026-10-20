@@ -6,7 +6,9 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 1. **Signed, notarized installer** (in progress). A `.pkg` with the app and the driver, published
    on GitHub Releases, so nobody has to build anything. `Installer/build-pkg.sh` builds it, and
    `.github/workflows/release.yml` signs and notarizes it for each `v*` tag. The app starts after
-   installing, and Settings → Uninstall removes the driver and the app. Follow-up: start at login.
+   installing, and Settings → Uninstall removes the driver and the app. Neither needs a restart:
+   both restart coreaudiod, as SoundSource and Loopback do. Follow-ups: start at login; if the
+   device hasn't appeared a few seconds after installing, advise restarting the Mac.
    - The Developer ID certificates (G2) expire on 19 November 2027. Before then, create new
      ones and replace the `DEVELOPER_ID_P12` and `P12_PASSWORD` secrets (README → Release).
 2. **Encrypted connections (Noise) and pairing**, next to the unencrypted protocol. Speakers on
