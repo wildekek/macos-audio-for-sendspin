@@ -30,8 +30,9 @@ If your speakers have AirPlay, it is the easier choice: it's built into every Ma
 no driver or permissions, and works from your iPhone too. This app is for Sendspin speakers,
 and if sound quality matters to you, it has a few things going for it:
 
-- **Lossless up to 24-bit/192 kHz.** AirPlay 2 streams at 16-bit/44.1 kHz. With Sendspin,
-  every speaker gets PCM or FLAC at the best sample rate and bit depth it supports.
+- **Lossless up to 24-bit/192 kHz.** AirPlay from the Music app or an iPhone is lossy (AAC);
+  only the Mac's system-wide AirPlay output is lossless, and only at 16-bit/44.1 kHz. With
+  Sendspin, every speaker gets PCM or FLAC at the best sample rate and bit depth it supports.
 - **No conversion to 44.1 kHz.** Most Mac audio is 48 kHz: video, games, browsers. AirPlay
   has to resample it; a 48 kHz Sendspin speaker gets it as it is.
 - **Bit-perfect.** Measured: test files at 48 and 96 kHz, 16 and 24 bit, over PCM and FLAC,
@@ -42,8 +43,9 @@ and if sound quality matters to you, it has a few things going for it:
 - **Tight sync, little delay.** Sendspin requires every speaker to stay within ±1 ms of the
   shared clock. The speaker buffer is 300 ms to 1 s, and macOS knows it, so video keeps lip
   sync (measured +0.5 ms on an HA Connect AUX-2).
-- **Fast.** AirPlay can feel sluggish when changing volume or skipping a track. Sendspin is
-  snappy.
+- **Fast.** AirPlay can feel sluggish when changing volume or skipping a track: the Mac's
+  system-wide AirPlay output runs about 2 s behind. Sendspin is snappy: volume reaches the
+  speakers at once, and a skipped track starts after the speaker buffer, 300 ms by default.
 - **Open hardware.** No licence or certification: a Raspberry Pi with a DAC board, an ESP32
   build, or a Home Assistant speaker.
 
