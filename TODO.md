@@ -49,4 +49,5 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 Done: the signed, notarized disk image with a welcome window that installs the driver (each
 `v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, Sendspin 1 over Noise,
 client-initiated connections (speakers that connect to us wait, unticked, until allowed), a
-notice when Local Network access is denied, and opening at login.
+notice when Local Network access is denied, opening at login, and speakers that leave the
+group (unavailable or `client/leave`) staying out until the user ticks them again.

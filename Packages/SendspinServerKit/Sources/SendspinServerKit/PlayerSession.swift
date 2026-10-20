@@ -13,6 +13,10 @@ public struct PlayerStatus: Sendable, Equatable {
         case notApproved
         /// A player that connected to us, held until the user allows it (ticks it).
         case awaitingApproval
+        /// The player left the group: it's in use by something else (`available: false`) or
+        /// sent `client/leave`. It stays connected in a stopped group of its own until the
+        /// user selects it again (`rejoin()`): the spec doesn't let us take it back by ourselves.
+        case left
         case disconnected(reason: String?)
         case failed(String)
     }
@@ -72,15 +76,17 @@ public actor PlayerSession {
     private var unsupportedSourceWarned = false
     private var streaming = false
     private var droppedChunks = 0
-    /// Chunks the player may still hold (player/v1.md, Player Buffer Accounting): their
-    /// wire size, and when their playback ends on the server clock.
-    private var inFlight: [(endUs: Int64, bytes: Int)] = []
-    private var inFlightBytes = 0
+    private var buffer = PlayerBufferAccount()
     private var outputDelayUs: Int64 = 0
     private var capacityDrops = 0
 
     private var group: (id: String, name: String)?
     private var playing = false
+    /// The player left the group (see `PlayerStatus.Connection.left`).
+    private var left = false
+    /// The stopped group of its own a held player, or one that left, is in.
+    private var soloGroupID: String?
+    private var lastGroupUpdate: GroupUpdate?
 
     /// A player we dial and keep connected.
     public init(url: URL, identity: ServerIdentity, approve: @escaping Approval) {
@@ -236,19 +242,12 @@ public actor PlayerSession {
     /// Validate client/init; on an init failure, answer with server/error first.
     private func parseClientInit(_ data: Data, socket: WebSocketConnection)
         throws -> (ClientInit, NoiseSuite, Curve25519.KeyAgreement.PublicKey) {
-        guard (try? MessageCoding.type(of: data)) == "client/init",
-              let clientInit = try? MessageCoding.payload(ClientInit.self, from: data)
-        else {
-            reject(socket, reason: "malformed")
-            throw SessionError.handshake("expected client/init")
-        }
-        guard clientInit.version == 1 else {
-            reject(socket, reason: "unsupported_version")
-            throw SessionError.handshake("unsupported version \(clientInit.version)")
-        }
-        guard let suite = NoiseSuite(rawValue: clientInit.suite) else {
-            reject(socket, reason: "unsupported_suite")
-            throw SessionError.handshake("unsupported suite \(clientInit.suite)")
+        let clientInit: ClientInit, suite: NoiseSuite
+        do {
+            (clientInit, suite) = try ClientInit.parse(data)
+        } catch {
+            reject(socket, reason: error.rawValue)
+            throw SessionError.handshake("client/init: \(error.rawValue)")
         }
         guard let keyData = Base64URL.decode(clientInit.clientID), keyData.count == 32,
               let key = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: keyData)
@@ -281,6 +280,9 @@ public actor PlayerSession {
         sentActivation = false
         available = false
         ready = false
+        left = false
+        soloGroupID = nil
+        lastGroupUpdate = nil
         stopStreaming()
     }
 
@@ -304,6 +306,8 @@ public actor PlayerSession {
                                                   serverTransmitted: ServerClock.nowMicros()))
         case "client/state":
             handleState(try MessageCoding.payload(ClientState.self, from: data))
+        case "client/leave":
+            leaveGroup("left the group")
         default:
             Log.debug("\(status.name ?? "?"): ignoring \(type)")
         }
@@ -351,6 +355,7 @@ public actor PlayerSession {
                 // Hold it with no activities, as the spec allows, until the user allows it.
                 sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
                 sentActivation = true
+                sendGroupUpdate()
                 status.connection = .awaitingApproval
                 return nil
             }
@@ -377,6 +382,36 @@ public actor PlayerSession {
         activatePlayback()
     }
 
+    /// The user selected a player that left: back into the group, if it's available again.
+    /// Its stream restarts with the next chunk.
+    public func rejoin() {
+        guard left else { return }
+        guard available else {
+            Log.info("\(status.name ?? "?"): still in use elsewhere")
+            return
+        }
+        Log.info("\(status.name ?? "?"): back in the group")
+        left = false
+        soloGroupID = nil
+        sendGroupUpdate()
+        status.connection = .connected
+    }
+
+    /// The player stops taking part, being in use by something else or having sent
+    /// `client/leave`: move it to a stopped group of its own and end its stream. It stays
+    /// there, even once available again, until the user selects it (messaging.md,
+    /// External Source Handling).
+    private func leaveGroup(_ reason: String) {
+        guard activated, !left else { return }
+        Log.info("\(status.name ?? "?"): \(reason); out of the group until it's selected again")
+        left = true
+        soloGroupID = UUID().uuidString
+        sendGroupUpdate()
+        if streaming { sendMessage("stream/end", StreamEnd(roles: ["player"])) }
+        stopStreaming()
+        status.connection = .left
+    }
+
     private func handleState(_ state: ClientState) {
         let wasAvailable = available
         available = state.available
@@ -390,9 +425,7 @@ public actor PlayerSession {
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
         }
         if wasAvailable && !available && ready {
-            Log.info("\(status.name ?? "?"): unavailable")
-            if streaming { sendMessage("stream/end", StreamEnd(roles: ["player"])) }
-            stopStreaming()
+            leaveGroup("in use elsewhere")
         }
         ready = true
     }
@@ -420,10 +453,22 @@ public actor PlayerSession {
         }
     }
 
+    /// Send the player its group when it changed: ours while it plays with us, and a
+    /// stopped group of its own while it's held or has left. Every connection gets one
+    /// after its first server/activate (messaging.md, group/update).
     private func sendGroupUpdate() {
-        guard activated, let group else { return }
-        sendMessage("group/update", GroupUpdate(playbackState: playing ? "playing" : "stopped",
-                                                groupID: group.id, groupName: group.name))
+        guard sentActivation else { return }
+        let update: GroupUpdate
+        if activated && !left {
+            guard let group else { return }
+            update = GroupUpdate(playbackState: playing ? "playing" : "stopped", groupID: group.id, groupName: group.name)
+        } else {
+            if soloGroupID == nil { soloGroupID = UUID().uuidString }
+            update = GroupUpdate(playbackState: "stopped", groupID: soloGroupID!, groupName: status.name ?? "")
+        }
+        guard update != lastGroupUpdate else { return }
+        lastGroupUpdate = update
+        sendMessage("group/update", update)
     }
 
     // MARK: Group interface
@@ -448,14 +493,13 @@ public actor PlayerSession {
         pipeline = nil
         status.streamFormat = nil
         // stream/end empties the player's buffer accounting.
-        inFlight.removeAll()
-        inFlightBytes = 0
+        buffer = PlayerBufferAccount()
     }
 
     /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
     /// The player gets the format closest to the source (see `FormatChoice`).
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int) {
-        guard let socket, activated, ready, available else { return }
+        guard let socket, activated, !left, ready, available else { return }
         if pipeline == nil || !pipeline!.accepts(pcm) || pipelineBitDepthPreference != preferredBitDepth {
             guard startPipeline(for: pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth) else { return }
         }
@@ -485,20 +529,16 @@ public actor PlayerSession {
     /// The player's buffer_capacity is a hard limit: a chunk is only sent if it fits next
     /// to the chunks whose playback hasn't ended yet. Format choice keeps this rare.
     private func fitsBuffer(_ bytes: Int, playAtUs: Int64, durationUs: Int64) -> Bool {
-        let now = ServerClock.nowMicros()
-        while let first = inFlight.first, first.endUs - outputDelayUs <= now {
-            inFlightBytes -= first.bytes
-            inFlight.removeFirst()
-        }
-        if let capacity = hello?.playerSupport?.bufferCapacity, inFlightBytes + bytes > capacity {
+        let capacity = hello?.playerSupport?.bufferCapacity ?? .max
+        guard buffer.admit(bytes: bytes, endUs: playAtUs + durationUs, nowUs: ServerClock.nowMicros(),
+                           outputDelayUs: outputDelayUs, capacity: capacity)
+        else {
             capacityDrops += 1
             if capacityDrops == 1 || capacityDrops.isMultiple(of: 50) {
                 Log.warning("\(status.name ?? "?"): buffer_capacity \(capacity) bytes full, dropped \(capacityDrops) chunks")
             }
             return false
         }
-        inFlight.append((playAtUs + durationUs, bytes))
-        inFlightBytes += bytes
         return true
     }
 
@@ -556,6 +596,25 @@ public actor PlayerSession {
     func shutdown() {
         setPlaying(false)
         socket?.close()
+    }
+}
+
+/// The audio a player may still hold (player/v1.md, Player Buffer Accounting): each chunk
+/// counts from when it's sent until its completion time, its end minus the player's output
+/// delay. Chunks stay listed until they've ended outright, so a lower output delay counts
+/// them again.
+struct PlayerBufferAccount {
+    /// Wire size, and when playback ends on the server clock, in send order.
+    private var chunks: [(endUs: Int64, bytes: Int)] = []
+
+    /// Count a chunk in if it fits within `capacity` next to the counted ones.
+    mutating func admit(bytes: Int, endUs: Int64, nowUs: Int64, outputDelayUs: Int64, capacity: Int) -> Bool {
+        // A chunk that has ended can't count again: the output delay is never negative.
+        while let first = chunks.first, first.endUs <= nowUs { chunks.removeFirst() }
+        let counted = chunks.reduce(0) { $1.endUs - outputDelayUs > nowUs ? $0 + $1.bytes : $0 }
+        guard counted + bytes <= capacity else { return false }
+        chunks.append((endUs, bytes))
+        return true
     }
 }
 

@@ -85,7 +85,8 @@ final class BridgeController {
             let discovery = discovered.first { $0.instanceName == name }
             return Player(instanceName: name,
                           name: statuses[name]?.name ?? discovery?.displayName ?? incomingNames[name] ?? name,
-                          isSelected: selected.contains(name),
+                          // A speaker that left shows unticked, as AirPlay does: ticking takes it back.
+                          isSelected: selected.contains(name) && statuses[name]?.connection != .left,
                           status: statuses[name],
                           // A player that connected to us is "discovered" while it's connected.
                           isDiscovered: discovery != nil || (Self.isIncoming(name) && sessions[name] != nil))
@@ -231,6 +232,10 @@ final class BridgeController {
             selected.insert(instanceName)
             // Re-selecting a player that left or was taken over reconnects it.
             if let status = statuses[instanceName], status.connection.isFinal { dropSession(instanceName) }
+            // A player that left the group for something else comes back on the same connection.
+            if statuses[instanceName]?.connection == .left, let session = sessions[instanceName] {
+                Task { await session.rejoin() }
+            }
             // A player that connected to us and waits: allow it on the same connection.
             if Self.isIncoming(instanceName), let session = sessions[instanceName] {
                 Task { await session.reevaluateApproval() }

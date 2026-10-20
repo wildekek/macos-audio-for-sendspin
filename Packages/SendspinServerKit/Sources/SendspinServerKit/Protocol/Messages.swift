@@ -39,6 +39,30 @@ public struct ClientInit: Decodable, Sendable {
         case version, suite
         case clientID = "client_id"
     }
+
+    /// Why a client/init isn't accepted: the `server/error` reason.
+    enum Failure: String, Error {
+        case malformed
+        case unsupportedVersion = "unsupported_version"
+        case unsupportedSuite = "unsupported_suite"
+    }
+
+    private struct VersionField: Decodable { var version: Int }
+    private struct SuiteField: Decodable { var suite: String }
+
+    /// Parse client/init, checking `version` first, then `suite`, then the rest: a version
+    /// other than 1 is `unsupported_version` whatever the other fields hold
+    /// (connection.md, Failure Handling).
+    static func parse(_ data: Data) throws(Failure) -> (ClientInit, NoiseSuite) {
+        guard (try? MessageCoding.type(of: data)) == "client/init",
+              let version = try? MessageCoding.payload(VersionField.self, from: data).version
+        else { throw .malformed }
+        guard version == 1 else { throw .unsupportedVersion }
+        guard let suiteName = try? MessageCoding.payload(SuiteField.self, from: data).suite else { throw .malformed }
+        guard let suite = NoiseSuite(rawValue: suiteName) else { throw .unsupportedSuite }
+        guard let clientInit = try? MessageCoding.payload(ClientInit.self, from: data) else { throw .malformed }
+        return (clientInit, suite)
+    }
 }
 
 public struct ServerInit: Encodable, Sendable {
@@ -180,7 +204,7 @@ public struct ServerTime: Encodable, Sendable {
     }
 }
 
-public struct GroupUpdate: Encodable, Sendable {
+public struct GroupUpdate: Encodable, Equatable, Sendable {
     public var playbackState: String
     public var groupID: String
     public var groupName: String

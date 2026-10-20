@@ -202,10 +202,10 @@ private struct PlayerRow: View {
     /// Only for what needs attention; a connected speaker shows its slider instead.
     private var statusText: String? {
         guard player.isDiscovered else { return "Offline" }
-        guard player.isSelected else { return nil }
+        guard player.isSelected || player.status?.connection == .left else { return nil }
         switch player.status?.connection {
         case .connected: return nil
-        case .taken: return "In use elsewhere"
+        case .taken, .left: return "In use elsewhere"
         case .pairingRequired: return "Needs pairing"
         case .notApproved: return "Identity changed"
         case .disconnected: return "Disconnected"
@@ -216,6 +216,8 @@ private struct PlayerRow: View {
 
     private var statusHelp: String {
         switch player.status?.connection {
+        case .left:
+            "This speaker is playing something else. Tick it to play your Mac's sound on it again."
         case .pairingRequired:
             "This speaker only plays for paired servers, and pairing isn't supported yet."
         case .notApproved:

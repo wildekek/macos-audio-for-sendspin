@@ -54,6 +54,28 @@ struct MessageTests {
         #expect(Base64URL.decode(clientInit.clientID)?.count == 32)
     }
 
+    /// Version first, then suite, then the rest (connection.md, Failure Handling).
+    @Test(arguments: [
+        (#"{"type":"client/init","payload":{"version":2}}"#, ClientInit.Failure.unsupportedVersion),
+        (#"{"type":"client/init","payload":{"version":2,"suite":7}}"#, .unsupportedVersion),
+        (#"{"type":"client/init","payload":{"version":"1","suite":"25519_ChaChaPoly_SHA256"}}"#, .malformed),
+        (#"{"type":"client/init","payload":{"suite":"25519_ChaChaPoly_SHA256"}}"#, .malformed),
+        (#"{"type":"client/init","payload":{"version":1,"suite":"448_ChaChaPoly_BLAKE2b"}}"#, .unsupportedSuite),
+        (#"{"type":"client/init","payload":{"version":1,"suite":"25519_AESGCM_SHA256"}}"#, .malformed),
+        (#"{"type":"client/hello","payload":{"version":1}}"#, .malformed),
+        ("not json", .malformed),
+    ])
+    func rejectsClientInit(json: String, failure: ClientInit.Failure) {
+        #expect(throws: failure) { try ClientInit.parse(Data(json.utf8)) }
+    }
+
+    @Test func acceptsClientInit() throws {
+        let data = Data(#"{"type":"client/init","payload":{"client_id":"zlv4WNt6J7ohdTFO5SoA_6Y-Xe4uPSHsNT3lXmhS91A","version":1,"suite":"25519_AESGCM_SHA256"}}"#.utf8)
+        let (clientInit, suite) = try ClientInit.parse(data)
+        #expect(suite == .aesGCM)
+        #expect(clientInit.clientID == "zlv4WNt6J7ohdTFO5SoA_6Y-Xe4uPSHsNT3lXmhS91A")
+    }
+
     @Test func decodesPlayerState() throws {
         let data = Data(#"{"type":"client/state","payload":{"available":true,"player":{"volume":40,"muted":false,"output_delay_ms":0,"required_lead_time_ms":120,"min_buffer_ms":200,"supported_commands":["volume","mute"]}}}"#.utf8)
         let state = try MessageCoding.payload(ClientState.self, from: data)
@@ -154,5 +176,30 @@ struct SecureChannelTests {
         (server, client) = Self.pair()
         // Reserved flag bits.
         #expect(throws: (any Error).self) { try server.open(client.encrypt(Data([1, 0b111, 0, 0x41]))) }
+    }
+}
+
+struct PlayerBufferAccountTests {
+    /// Capacity 1000 bytes; returns whether each chunk was admitted.
+    private func admits(_ chunks: [(bytes: Int, endUs: Int64, nowUs: Int64, delayUs: Int64)]) -> [Bool] {
+        var buffer = PlayerBufferAccount()
+        return chunks.map {
+            buffer.admit(bytes: $0.bytes, endUs: $0.endUs, nowUs: $0.nowUs, outputDelayUs: $0.delayUs, capacity: 1_000)
+        }
+    }
+
+    @Test func countsChunksUntilTheirCompletionTime() {
+        // The second doesn't fit next to the first; at 1000 the first has completed.
+        #expect(admits([(600, 1_000, 0, 0), (600, 2_000, 0, 0), (600, 2_000, 1_000, 0)]) == [true, false, true])
+    }
+
+    @Test func outputDelayMovesCompletionEarlier() {
+        // With 500 µs of output delay the first chunk completes at 500.
+        #expect(admits([(600, 1_000, 0, 0), (600, 2_000, 600, 500)]) == [true, true])
+    }
+
+    @Test func lowerOutputDelayCountsChunksAgain() {
+        // Back to no delay at 700: the first chunk (completing at 1000) counts again.
+        #expect(admits([(600, 1_000, 0, 0), (300, 2_000, 600, 500), (300, 3_000, 700, 0)]) == [true, true, false])
     }
 }
