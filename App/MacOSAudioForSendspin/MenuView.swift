@@ -14,8 +14,10 @@ struct MenuView: View {
                 groupVolume
                 Divider()
                 speakers
-                Divider()
-                output
+                if bridge.hasConnectedPlayers || bridge.isMacOutput {
+                    Divider()
+                    output
+                }
             }
             Divider()
             VStack(alignment: .leading, spacing: 8) {
@@ -66,7 +68,13 @@ struct MenuView: View {
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }
             }
-        } else if !bridge.isMacOutput && !bridge.selected.isEmpty {
+        } else if bridge.isMacOutput && !bridge.hasConnectedPlayers {
+            // The sound goes nowhere: offer the way back instead of silence.
+            Notice(text: "The Mac's sound goes to Sendspin, but no speaker is connected.",
+                   systemImage: "speaker.slash.fill") {
+                Button("Use Previous Output") { bridge.setMacOutput(false) }
+            }
+        } else if !bridge.isMacOutput && bridge.hasConnectedPlayers {
             Notice(text: "The Mac's sound isn't going to Sendspin.", systemImage: "speaker.slash.fill") {
                 Button("Use Sendspin") { bridge.setMacOutput(true) }
             }
@@ -107,8 +115,12 @@ struct MenuView: View {
 
     private var output: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("Use as Mac sound output", isOn: Binding(
-                get: { bridge.isMacOutput }, set: { bridge.setMacOutput($0) }))
+            // Switching to Sendspin without a connected speaker would silence the Mac;
+            // switching back must always be possible.
+            if bridge.hasConnectedPlayers || bridge.isMacOutput {
+                Toggle("Use as Mac sound output", isOn: Binding(
+                    get: { bridge.isMacOutput }, set: { bridge.setMacOutput($0) }))
+            }
             if let active = bridge.activeFormat {
                 // Only formats a selected speaker supports; others get it converted.
                 Picker("Format", selection: Binding(get: { active }, set: { bridge.selectFormat($0) })) {
