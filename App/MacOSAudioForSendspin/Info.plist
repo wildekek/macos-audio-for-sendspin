@@ -27,6 +27,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_sendspin._tcp</string>
+		<string>_sendspin-server._tcp</string>
 	</array>
 	<key>NSHumanReadableCopyright</key>
 	<string>Licensed under the Apache License, Version 2.0</string>

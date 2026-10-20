@@ -50,7 +50,10 @@ driver alone, `Driver/install.sh` installs a CMake build directly.
 
 Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`),
 with their own settings and permissions, so they don't mix with an installed release. Both use
-the same driver; don't run them at the same time.
+the same driver; don't run them at the same time. A dev build run from the build folder can't
+advertise itself to speakers: mDNSResponder can't read its Info.plist inside your home folder,
+and refuses the announcement (`NoAuth`). To test client-initiated connections, copy the dev
+app to /Applications and run it from there.
 
 ## Release
 
@@ -94,7 +97,11 @@ Release/build-dmg.sh
   (`KKpsk2`, ChaChaPoly or AES-GCM, whichever the speaker picks). The app identifies itself
   with a Curve25519 key kept in the Keychain. Speakers are unpaired: ticking one in the menu
   allows it, bound to the identity it presents then, so another device using its name gets
-  no audio until you allow it again (untick and tick).
+  no audio until you allow it again (untick and tick). Both ways of connecting work: the app
+  dials speakers that advertise `_sendspin._tcp`, and advertises itself as
+  `_sendspin-server._tcp` (port 8927, or a free one) for speakers that look for a server. Those
+  appear unticked and wait, with no activities, until you tick them; unticking one closes its
+  connection, and it comes back unticked when it reconnects.
 - **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
   Its volume and mute controls aren't applied to the audio: the app forwards them to the
   speakers, so the volume keys and Control Center control the speakers.
@@ -127,5 +134,4 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 Implements Sendspin 1 (release candidate) with unpaired access, tested against aiosendspin
 10.2.1 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol isn't
 supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
-pairing, Opus, a test of 44.1 kHz-only speakers (the resampler should already handle them),
-and the client-initiated listener.
+pairing, Opus, and a test of 44.1 kHz-only speakers (the resampler should already handle them).

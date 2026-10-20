@@ -11,6 +11,8 @@ public struct PlayerStatus: Sendable, Equatable {
         case pairingRequired
         /// The player presents a different identity than the one approved for it.
         case notApproved
+        /// A player that connected to us, held until the user allows it (ticks it).
+        case awaitingApproval
         case disconnected(reason: String?)
         case failed(String)
     }
@@ -45,6 +47,9 @@ public actor PlayerSession {
 
     private let identity: ServerIdentity
     private let approve: Approval
+    /// The player connected to us (client-initiated); otherwise we dial `url`.
+    private let incoming: WebSocketConnection?
+    public nonisolated let isIncoming: Bool
     private let updatesContinuation: AsyncStream<PlayerStatus>.Continuation
     private var status = PlayerStatus() {
         didSet { if status != oldValue { updatesContinuation.yield(status) } }
@@ -53,7 +58,10 @@ public actor PlayerSession {
     private var socket: WebSocketConnection?
     private var channel: SecureChannel?
     private var hello: ClientHello?
+    /// server/activate declared playback.
     private var activated = false
+    /// Any server/activate went out, so the player may send its other messages.
+    private var sentActivation = false
     private var available = false
     /// The first client/state arrived: only then may streams start and commands go out.
     private var ready = false
@@ -74,10 +82,23 @@ public actor PlayerSession {
     private var group: (id: String, name: String)?
     private var playing = false
 
+    /// A player we dial and keep connected.
     public init(url: URL, identity: ServerIdentity, approve: @escaping Approval) {
         self.url = url
         self.identity = identity
         self.approve = approve
+        incoming = nil
+        isIncoming = false
+        (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
+    }
+
+    /// A player that connected to us. It's served once: we can't reconnect to it.
+    public init(incoming connection: IncomingConnection, identity: ServerIdentity, approve: @escaping Approval) {
+        url = URL(string: "ws://\(connection.remoteDescription)") ?? URL(string: "ws://incoming")!
+        self.identity = identity
+        self.approve = approve
+        incoming = connection.socket
+        isIncoming = true
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
     }
 
@@ -90,6 +111,22 @@ public actor PlayerSession {
         defer {
             socket?.close()
             updatesContinuation.finish()
+        }
+        if isIncoming {
+            // A player that connected to us comes back by itself; we can't dial it.
+            status.connection = .connecting
+            do {
+                if case .stop(let connection) = try await connectAndServe() {
+                    status.connection = connection
+                } else {
+                    status.connection = .disconnected(reason: nil)
+                }
+            } catch {
+                Log.warning("\(url): \(error)")
+                status.connection = .failed(String(describing: error))
+            }
+            resetConnectionState()
+            return
         }
         var backoff: Duration = .seconds(1)
         while !Task.isCancelled {
@@ -127,7 +164,7 @@ public actor PlayerSession {
     }
 
     private func connectAndServe() async throws -> SessionEnd {
-        let socket = WebSocketConnection(url: url)
+        let socket = incoming ?? WebSocketConnection(url: url)
         self.socket = socket
         defer { socket.close() }
         try await socket.open()
@@ -241,6 +278,7 @@ public actor PlayerSession {
         channel = nil
         hello = nil
         activated = false
+        sentActivation = false
         available = false
         ready = false
         stopStreaming()
@@ -256,7 +294,7 @@ public actor PlayerSession {
             return goodbye(try MessageCoding.payload(ClientGoodbye.self, from: data).reason)
         case "client/hello" where hello == nil:
             return try await handleHello(MessageCoding.payload(ClientHello.self, from: data))
-        case _ where !activated:
+        case _ where !sentActivation:
             // Before server/activate the client may send nothing but goodbye.
             Log.debug("\(status.name ?? "?"): ignoring \(type) before activation")
         case "client/time":
@@ -309,14 +347,34 @@ public actor PlayerSession {
             return .stop(.pairingRequired)
         }
         guard let clientID = status.clientID, await approve(clientID) else {
+            if isIncoming {
+                // Hold it with no activities, as the spec allows, until the user allows it.
+                sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+                sentActivation = true
+                status.connection = .awaitingApproval
+                return nil
+            }
             Log.warning("\(hello.name): identity \(status.clientID ?? "?") isn't the approved one")
             return .stop(.notApproved)
         }
+        activatePlayback()
+        return nil
+    }
+
+    private func activatePlayback() {
         sendMessage("server/activate", ServerActivate(activities: ["playback"], activeRoles: ["player@v1"]))
+        sentActivation = true
         activated = true
         sendGroupUpdate()
         status.connection = .connected
-        return nil
+    }
+
+    /// The user allowed a held player (ticked it): activate playback on the same connection.
+    public func reevaluateApproval() async {
+        guard status.connection == .awaitingApproval, let clientID = status.clientID, await approve(clientID)
+        else { return }
+        Log.info("\(status.name ?? "?"): allowed")
+        activatePlayback()
     }
 
     private func handleState(_ state: ClientState) {

@@ -202,7 +202,7 @@ private struct PlayerRow: View {
         case .notApproved: return "Identity changed"
         case .disconnected: return "Disconnected"
         case .failed: return "Can't connect"
-        case .connecting, nil: return "Connecting…"
+        case .connecting, .awaitingApproval, nil: return "Connecting…"
         }
     }
 

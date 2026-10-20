@@ -65,6 +65,7 @@ targets:
           macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.
         NSBonjourServices:
           - _sendspin._tcp
+          - _sendspin-server._tcp
     entitlements:
       path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
       properties:

@@ -23,7 +23,20 @@ final class WebSocketConnection: @unchecked Sendable {
     // Guarded by `queue`.
     private var pendingSends = 0
 
-    init(url: URL) {
+    /// Dial a player.
+    convenience init(url: URL) {
+        self.init(connection: NWConnection(to: .url(url), using: Self.parameters()), label: url.host() ?? "?")
+    }
+
+    /// Wrap a connection a client opened to our listener (already a WebSocket); `open()` starts it.
+    init(connection: NWConnection, label: String) {
+        self.connection = connection
+        queue = DispatchQueue(label: "sendspin.ws.\(label)", qos: .userInteractive)
+        (frames, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    /// WebSocket over TCP without Nagle's delay, for both dialing and listening.
+    static func parameters() -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         let parameters = NWParameters(tls: nil, tcp: tcp)
@@ -31,10 +44,13 @@ final class WebSocketConnection: @unchecked Sendable {
         websocket.autoReplyPing = true
         websocket.maximumMessageSize = 4 * 1024 * 1024
         parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+        return parameters
+    }
 
-        connection = NWConnection(to: .url(url), using: parameters)
-        queue = DispatchQueue(label: "sendspin.ws.\(url.host() ?? "?")", qos: .userInteractive)
-        (frames, continuation) = AsyncThrowingStream.makeStream()
+    /// The peer's address, e.g. "192.168.1.183:51234".
+    var remoteDescription: String {
+        if case let .hostPort(host, port) = connection.endpoint { return "\(host):\(port)" }
+        return "\(connection.endpoint)"
     }
 
     /// Open the connection; returns once the WebSocket upgrade completed.

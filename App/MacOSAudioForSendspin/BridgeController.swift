@@ -82,10 +82,11 @@ final class BridgeController {
         return names.sorted().map { name in
             let discovery = discovered.first { $0.instanceName == name }
             return Player(instanceName: name,
-                          name: statuses[name]?.name ?? discovery?.displayName ?? name,
+                          name: statuses[name]?.name ?? discovery?.displayName ?? incomingNames[name] ?? name,
                           isSelected: selected.contains(name),
                           status: statuses[name],
-                          isDiscovered: discovery != nil)
+                          // A player that connected to us is "discovered" while it's connected.
+                          isDiscovered: discovery != nil || (Self.isIncoming(name) && sessions[name] != nil))
         }
     }
 
@@ -119,6 +120,7 @@ final class BridgeController {
     private var isStartingCapture = false
     private var pumpTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
+    private var listener: ServerListener?
     private var systemObservations: [PropertyObservation] = []
     private var deviceObservations: [PropertyObservation] = []
     /// Volume we just wrote to the device ourselves; its change notification is not a user action.
@@ -185,6 +187,7 @@ final class BridgeController {
     /// Browsing for speakers is what triggers the Local Network prompt.
     func startDiscovery() {
         guard discoveryTask == nil else { return }
+        startListening()
         discoveryTask = Task { [weak self] in
             for await players in PlayerBrowser.browse() {
                 guard let self else { return }
@@ -219,12 +222,18 @@ final class BridgeController {
             selected.insert(instanceName)
             // Re-selecting a player that left or was taken over reconnects it.
             if let status = statuses[instanceName], status.connection.isFinal { dropSession(instanceName) }
+            // A player that connected to us and waits: allow it on the same connection.
+            if Self.isIncoming(instanceName), let session = sessions[instanceName] {
+                Task { await session.reevaluateApproval() }
+            }
         } else {
             selected.remove(instanceName)
             // Unticking withdraws the approval; ticking again approves whatever identity shows up.
             var approved = approvedPlayers
             approved[instanceName] = nil
             defaults.set(approved, forKey: "approvedPlayers")
+            // A player that connected to us: close it; it reconnects and waits, unticked.
+            if Self.isIncoming(instanceName) { dropSession(instanceName) }
         }
         defaults.set(Array(selected), forKey: "selectedPlayers")
         reconcile()
@@ -250,7 +259,7 @@ final class BridgeController {
 
     /// Bring sessions in line with the selection and what's discoverable.
     private func reconcile() {
-        for (name, session) in sessions {
+        for (name, session) in sessions where !Self.isIncoming(name) {
             // Drop deselected players, and players that moved to another address.
             let currentURL = discovered.first { $0.instanceName == name }?.url
             if !selected.contains(name) || (currentURL != nil && currentURL != session.url) {
@@ -282,6 +291,75 @@ final class BridgeController {
         guard let session = sessions.removeValue(forKey: name) else { return }
         statuses[name] = nil
         Task { await group.remove(url: session.url) }
+    }
+
+    // MARK: Players that connect to us
+
+    /// Players that look for a server themselves (client-initiated connections) find this
+    /// Mac over mDNS and connect. They wait, unticked, until the user allows them.
+    private func startListening() {
+        guard listener == nil else { return }
+        let listener = ServerListener(name: identity.name)
+        self.listener = listener
+        listener.start()
+        Task { [weak self] in
+            for await connection in listener.connections {
+                self?.accept(connection)
+            }
+        }
+    }
+
+    /// Such a player has no mDNS name; its identity is its key.
+    static func incomingKey(_ clientID: String) -> String { "client:" + clientID }
+    static func isIncoming(_ name: String) -> Bool { name.hasPrefix("client:") }
+
+    /// Names of players that connected to us, to show a ticked one while it's away.
+    private var incomingNames: [String: String] {
+        get { defaults.dictionary(forKey: "incomingNames") as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: "incomingNames") }
+    }
+
+    private func accept(_ connection: IncomingConnection) {
+        let session = PlayerSession(incoming: connection, identity: identity) { [weak self] clientID in
+            await self?.approveIncoming(clientID) ?? false
+        }
+        Task { await group.add(session) }
+        Task { [weak self] in
+            var key: String?
+            for await status in session.updates {
+                guard let self else { return }
+                // Known once the handshake told its identity and the hello its name.
+                if key == nil, let clientID = status.clientID, let name = status.name {
+                    key = adoptIncoming(session, clientID: clientID, name: name)
+                }
+                if let key { playerStatusChanged(key, status) }
+            }
+            // It left: forget the connection (a ticked one shows as offline).
+            guard let self else { return }
+            if let key, sessions[key] === session { dropSession(key) } else { Task { await group.remove(url: session.url) } }
+        }
+    }
+
+    private func adoptIncoming(_ session: PlayerSession, clientID: String, name: String) -> String {
+        let key = Self.incomingKey(clientID)
+        // A reconnect replaces its earlier connection.
+        if let old = sessions[key], old !== session { dropSession(key) }
+        sessions[key] = session
+        statuses[key] = PlayerStatus()
+        incomingNames[key] = name
+        Log.info("\(name) connected to us (\(clientID))")
+        return key
+    }
+
+    /// Ticking a player that connected to us allows it; its key is its identity, so the
+    /// approval is bound to it by construction.
+    private func approveIncoming(_ clientID: String) -> Bool {
+        let key = Self.incomingKey(clientID)
+        guard selected.contains(key) else { return false }
+        var approved = approvedPlayers
+        approved[key] = clientID
+        defaults.set(approved, forKey: "approvedPlayers")
+        return true
     }
 
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
