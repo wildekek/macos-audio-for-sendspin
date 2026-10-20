@@ -60,7 +60,9 @@ app to /Applications and run it from there.
 Releases are built by GitHub Actions (`.github/workflows/release.yml`). Push a tag `v<version>`,
 and the workflow builds, signs and notarizes the disk image, then attaches it to a **draft** release.
 Check the draft and publish it by hand. The version comes from `MARKETING_VERSION` in
-`App/project.yml`, and must match the tag and `DRIVER_VERSION` in `Driver/CMakeLists.txt`.
+`App/project.yml` and must match the tag. Raise `DRIVER_VERSION` in `Driver/CMakeLists.txt` only
+when the driver changes: the app asks users with another driver version to update it, which needs
+their password.
 
 One-time setup, with a paid Apple Developer membership:
 1. On developer.apple.com → Certificates, create a *Developer ID Application* certificate with

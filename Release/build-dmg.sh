@@ -17,8 +17,10 @@ APP_NAME="macOS Audio for Sendspin"
 
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' "$ROOT/App/project.yml")
 DRIVER_VERSION=$(sed -n 's/^set(DRIVER_VERSION "\(.*\)")/\1/p' "$ROOT/Driver/CMakeLists.txt")
-if [[ -z "$VERSION" || "$VERSION" != "$DRIVER_VERSION" ]]; then
-    echo "Version mismatch: app '$VERSION' (App/project.yml), driver '$DRIVER_VERSION' (Driver/CMakeLists.txt)" >&2
+# The driver has its own version, changed only when the driver changes: the app offers to
+# update an installed driver whose version differs, which asks for a password.
+if [[ -z "$VERSION" || -z "$DRIVER_VERSION" ]]; then
+    echo "No version: app '$VERSION' (App/project.yml), driver '$DRIVER_VERSION' (Driver/CMakeLists.txt)" >&2
     exit 1
 fi
 if [[ -n "${NOTARY_PROFILE:-}" && -z "${DEVELOPER_ID_APP:-}" ]]; then
@@ -30,7 +32,7 @@ SIGN_ID="${DEVELOPER_ID_APP:--}"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-echo "==> App and driver ($VERSION)"
+echo "==> App $VERSION, driver $DRIVER_VERSION"
 (cd "$ROOT/App" && xcodegen generate --quiet)
 # No injected get-task-allow entitlement: notarization rejects it.
 sign_settings=(CODE_SIGN_IDENTITY="$SIGN_ID" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO)
