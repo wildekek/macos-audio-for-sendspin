@@ -28,4 +28,4 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    reads after device, volume and format changes still don't. When coreaudiod is slow (for
    minutes after many restarts without a reboot), each of those freezes the menu.
 
-Other protocol work (FLAC/Opus, …) is listed under Status in the README.
+Other protocol work (Opus, …) is listed under Status in the README.

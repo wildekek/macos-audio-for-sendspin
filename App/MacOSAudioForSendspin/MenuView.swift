@@ -187,7 +187,8 @@ private struct PlayerRow: View {
 
     private var formatLabel: String? {
         guard let format = player.status?.streamFormat else { return nil }
-        return BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
+        let rateAndDepth = BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
+        return "\(format.codec.uppercased()) · \(rateAndDepth)"
     }
 
     /// Only for what needs attention; a connected speaker shows its slider instead.

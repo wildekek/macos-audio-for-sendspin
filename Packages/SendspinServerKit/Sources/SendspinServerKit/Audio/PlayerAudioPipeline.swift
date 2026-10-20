@@ -3,19 +3,33 @@ import Foundation
 
 /// Converts the group's float audio into one player's stream format: channel mix,
 /// sample-rate conversion, and integer PCM at the player's bit depth (16-bit with TPDF
-/// dither), little-endian as Sendspin's PCM codec expects (24-bit packed in 3 bytes).
+/// dither), little-endian as Sendspin's PCM codec expects (24-bit packed in 3 bytes),
+/// then for the `flac` codec, FLAC frames of 20 ms.
 ///
 /// Output chunks are timestamped from a running frame count, so they stay
 /// sample-contiguous even though resampling changes chunk lengths. The timeline
 /// re-anchors to the input's timestamps only after a real gap in the input.
 struct PlayerAudioPipeline {
+    struct Chunk {
+        var timestampUs: Int64
+        var payload: Data
+        /// Samples per channel, for the chunk's duration.
+        var frames: Int
+    }
+
     let format: AudioFormatSpec
     private let sourceRate: Int
     private let sourceChannels: Int
     private var resampler: Resampler?
+    private var flac: FLACEncoder?
     private var anchorUs: Int64?
     private var framesOut: Int64 = 0
+    /// FLAC frames timestamped so far since the anchor.
+    private var flacFramesOut: Int64 = 0
     private var dither = Dither()
+
+    /// For stream/start: the FLAC stream header, or nil for PCM.
+    var codecHeader: Data? { flac?.codecHeader }
 
     /// Input that strays this far from the running timeline is treated as a new start.
     static let resyncThresholdUs: Int64 = 10_000
@@ -30,15 +44,24 @@ struct PlayerAudioPipeline {
             else { return nil }
             self.resampler = resampler
         }
+        if format.codec == AudioCodec.flac.rawValue {
+            guard let flac = Self.makeFLAC(format) else { return nil }
+            self.flac = flac
+        }
+    }
+
+    private static func makeFLAC(_ format: AudioFormatSpec) -> FLACEncoder? {
+        FLACEncoder(sampleRate: format.sampleRate, channels: format.channels, bitDepth: format.bitDepth,
+                    blockFrames: format.sampleRate / 50)
     }
 
     func accepts(_ pcm: PCMBuffer) -> Bool {
         pcm.sampleRate == sourceRate && pcm.channels == sourceChannels
     }
 
-    /// Convert one input chunk; returns the output's play timestamp and wire bytes,
-    /// or nil while the resampler is still filling up.
-    mutating func process(_ pcm: PCMBuffer, timestampUs: Int64) -> (timestampUs: Int64, payload: Data)? {
+    /// Convert one input chunk into the chunks to send: one for PCM, or the FLAC frames it
+    /// completed. Empty while the resampler or the FLAC encoder is still filling up.
+    mutating func process(_ pcm: PCMBuffer, timestampUs: Int64) -> [Chunk] {
         let rate = Int64(format.sampleRate)
         if let anchorUs {
             let expectedUs = anchorUs + framesOut * 1_000_000 / rate
@@ -50,17 +73,27 @@ struct PlayerAudioPipeline {
         var samples = Self.mix(pcm.samples, from: pcm.channels, to: format.channels)
         if let resampler { samples = resampler.process(samples) }
         let frames = samples.count / format.channels
-        guard frames > 0, let anchorUs else { return nil }
+        guard frames > 0, let anchorUs else { return [] }
 
         let outputTimestamp = anchorUs + framesOut * 1_000_000 / rate
         framesOut += Int64(frames)
-        return (outputTimestamp, quantize(samples))
+        let payload = quantize(samples)
+        guard let flac else { return [Chunk(timestampUs: outputTimestamp, payload: payload, frames: frames)] }
+        // The k-th FLAC frame out is the k-th block in, so count frames for their timestamps.
+        return flac.encode(payload).map { frame in
+            defer { flacFramesOut += Int64(flac.blockFrames) }
+            return Chunk(timestampUs: anchorUs + flacFramesOut * 1_000_000 / rate, payload: frame,
+                         frames: flac.blockFrames)
+        }
     }
 
     private mutating func restart(at timestampUs: Int64) {
         anchorUs = timestampUs
         framesOut = 0
+        flacFramesOut = 0
         resampler?.reset()
+        // A new encoder: the old one still holds a block from before the gap.
+        if flac != nil { flac = Self.makeFLAC(format) }
     }
 
     static func mix(_ samples: [Float], from inChannels: Int, to outChannels: Int) -> [Float] {

@@ -26,7 +26,7 @@ public struct PlayerStatus: Sendable, Equatable {
     /// What the player needs queued: its min_buffer_ms plus output_delay_ms. The server
     /// must schedule audio at least this far ahead (player/v1.md, Server Audio Send Constraints).
     public var requiredBufferMs = 0
-    /// PCM formats the player accepts (from its hello).
+    /// PCM and FLAC formats the player accepts (from its hello), its preference first.
     public var supportedFormats: [AudioFormatSpec] = []
     /// Format currently streamed to the player, while streaming.
     public var streamFormat: AudioFormatSpec?
@@ -64,6 +64,12 @@ public actor PlayerSession {
     private var unsupportedSourceWarned = false
     private var streaming = false
     private var droppedChunks = 0
+    /// Chunks the player may still hold (player/v1.md, Player Buffer Accounting): their
+    /// wire size, and when their playback ends on the server clock.
+    private var inFlight: [(endUs: Int64, bytes: Int)] = []
+    private var inFlightBytes = 0
+    private var outputDelayUs: Int64 = 0
+    private var capacityDrops = 0
 
     private var group: (id: String, name: String)?
     private var playing = false
@@ -288,7 +294,7 @@ public actor PlayerSession {
         self.hello = hello
         status.name = hello.name
         status.supportedFormats = (hello.playerSupport?.supportedFormats ?? [])
-            .filter { $0.codec == AudioCodec.pcm.rawValue }
+            .filter { $0.codec == AudioCodec.pcm.rawValue || $0.codec == AudioCodec.flac.rawValue }
         Log.info("\(hello.name): hello (\(hello.deviceInfo?.productName ?? "unknown device"), "
             + "software \(hello.deviceInfo?.softwareVersion ?? "?"))")
 
@@ -323,6 +329,7 @@ public actor PlayerSession {
             status.canSetVolume = commands.contains("volume")
             status.canMute = commands.contains("mute")
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
+            outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
         }
         if wasAvailable && !available && ready {
             Log.info("\(status.name ?? "?"): unavailable")
@@ -382,6 +389,9 @@ public actor PlayerSession {
         streaming = false
         pipeline = nil
         status.streamFormat = nil
+        // stream/end empties the player's buffer accounting.
+        inFlight.removeAll()
+        inFlightBytes = 0
     }
 
     /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
@@ -389,7 +399,7 @@ public actor PlayerSession {
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int) {
         guard let socket, activated, ready, available else { return }
         if pipeline == nil || !pipeline!.accepts(pcm) || pipelineBitDepthPreference != preferredBitDepth {
-            guard startPipeline(for: pcm, preferredBitDepth: preferredBitDepth) else { return }
+            guard startPipeline(for: pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth) else { return }
         }
 
         // A stalled player must not buffer unbounded audio in the network stack.
@@ -400,23 +410,53 @@ public actor PlayerSession {
             }
             return
         }
-        guard let (playAtUs, payload) = pipeline?.process(pcm, timestampUs: timestampUs) else { return }
-        // send_ahead is taken as late as possible: right before encrypting.
-        let frame = AudioFrame.pack(timestampUs: playAtUs, sendAheadUs: playAtUs - ServerClock.nowMicros(),
-                                    payload: payload)
-        send(frame[frame.startIndex], Data(frame.dropFirst()))
+        guard let chunks = pipeline?.process(pcm, timestampUs: timestampUs), !chunks.isEmpty,
+              let rate = pipeline.map({ Int64($0.format.sampleRate) })
+        else { return }
+        for chunk in chunks {
+            guard fitsBuffer(AudioFrame.headerSize + chunk.payload.count, playAtUs: chunk.timestampUs,
+                             durationUs: Int64(chunk.frames) * 1_000_000 / rate)
+            else { continue }
+            // send_ahead is taken as late as possible: right before encrypting.
+            let frame = AudioFrame.pack(timestampUs: chunk.timestampUs,
+                                        sendAheadUs: chunk.timestampUs - ServerClock.nowMicros(), payload: chunk.payload)
+            send(frame[frame.startIndex], Data(frame.dropFirst()))
+        }
+    }
+
+    /// The player's buffer_capacity is a hard limit: a chunk is only sent if it fits next
+    /// to the chunks whose playback hasn't ended yet. Format choice keeps this rare.
+    private func fitsBuffer(_ bytes: Int, playAtUs: Int64, durationUs: Int64) -> Bool {
+        let now = ServerClock.nowMicros()
+        while let first = inFlight.first, first.endUs - outputDelayUs <= now {
+            inFlightBytes -= first.bytes
+            inFlight.removeFirst()
+        }
+        if let capacity = hello?.playerSupport?.bufferCapacity, inFlightBytes + bytes > capacity {
+            capacityDrops += 1
+            if capacityDrops == 1 || capacityDrops.isMultiple(of: 50) {
+                Log.warning("\(status.name ?? "?"): buffer_capacity \(capacity) bytes full, dropped \(capacityDrops) chunks")
+            }
+            return false
+        }
+        inFlight.append((playAtUs + durationUs, bytes))
+        inFlightBytes += bytes
+        return true
     }
 
     /// Choose the stream format for this source and (re)start the stream in it.
-    private func startPipeline(for pcm: PCMBuffer, preferredBitDepth: Int) -> Bool {
+    private func startPipeline(for pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int) -> Bool {
+        // How far ahead audio goes, so the format fits the player's buffer_capacity.
+        let bufferMs = Int(max(0, timestampUs - ServerClock.nowMicros() - outputDelayUs) / 1_000)
         guard let format = FormatChoice.best(from: status.supportedFormats, sourceRate: pcm.sampleRate,
-                                             sourceChannels: pcm.channels, preferredBitDepth: preferredBitDepth),
+                                             sourceChannels: pcm.channels, preferredBitDepth: preferredBitDepth,
+                                             bufferCapacity: hello?.playerSupport?.bufferCapacity, bufferMs: bufferMs),
               let pipeline = PlayerAudioPipeline(format: format, sourceRate: pcm.sampleRate,
                                                  sourceChannels: pcm.channels)
         else {
             if !unsupportedSourceWarned {
                 unsupportedSourceWarned = true
-                Log.error("\(status.name ?? "?"): no usable PCM format for \(pcm.sampleRate) Hz audio")
+                Log.error("\(status.name ?? "?"): no usable PCM or FLAC format for \(pcm.sampleRate) Hz audio")
             }
             return false
         }
@@ -429,7 +469,9 @@ public actor PlayerSession {
             sendMessage("stream/start", StreamStart(
                 serverTransmitted: ServerClock.nowMicros(),
                 player: StreamStartPlayer(codec: format.codec, sampleRate: format.sampleRate,
-                                          channels: format.channels, bitDepth: format.bitDepth)))
+                                          channels: format.channels, bitDepth: format.bitDepth,
+                                          // Standard base64 with padding (player/v1.md).
+                                          codecHeader: pipeline.codecHeader?.base64EncodedString())))
             streaming = true
             status.streamFormat = format
             let conversion = format.sampleRate == pcm.sampleRate ? "" : " (resampled from \(pcm.sampleRate) Hz)"

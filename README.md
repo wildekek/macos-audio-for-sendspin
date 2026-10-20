@@ -104,11 +104,13 @@ Release/build-dmg.sh
   Verified acoustically on an HA Connect AUX-2 (`sendspin-bridge --measure-sync`): +0.5 ms.
   Safari honours it. Firefox reads the latency but doesn't delay video by it, as with
   Bluetooth headphones. Use Safari, a smaller buffer, or a video-delay extension there.
-- **Format.** The device runs at 44.1–192 kHz in 32-bit float. The menu offers the
+- **Format.** The device runs at 44.1–192 kHz in 32-bit float. Settings offers the
   sample rate and bit depth (16/24) combinations the selected speakers support; picking
   one switches the device rate and the stream. A speaker that can't take the active format
   gets the closest one it supports: resampled (96 → 48 kHz, 88.2 → 44.1 kHz) and/or at its
-  own bit depth, with TPDF dither for 16-bit.
+  own bit depth, with TPDF dither for 16-bit. Each speaker gets PCM or FLAC (20 ms frames,
+  AudioToolbox's encoder), in its own order of preference, as long as our buffer of it fits
+  the speaker's `buffer_capacity`; that limit is also enforced when sending.
 - **Idle.** After 3 s of digital silence the speakers get `stream/end`. The stream restarts
   with the next sound.
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker
@@ -123,5 +125,5 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 Implements Sendspin 1 (release candidate) with unpaired access, tested against aiosendspin
 10.2.1 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol isn't
 supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
-pairing, FLAC/Opus, sample-rate conversion for 44.1 kHz-only speakers, and the
-client-initiated listener.
+pairing, Opus, a test of 44.1 kHz-only speakers (the resampler should already handle them),
+and the client-initiated listener.
