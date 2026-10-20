@@ -12,21 +12,20 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 
 ## The app
 
-2. **Start at login.** After a restart of the Mac the app doesn't come back by itself.
-3. **Capture without the microphone permission.** The welcome window explains it (nothing is
+2. **Capture without the microphone permission.** The welcome window explains it (nothing is
    recorded), but a capture method that doesn't need it would be one prompt fewer.
-4. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
+3. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
    it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
-5. **README for end users.** Install and the screenshot lead now; the protocol, build and
+4. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
 
 ## Audio: recommended or optional
 
-6. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+5. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
-7. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
-8. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+6. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+7. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
    a per-speaker delay for external amplifiers).
 
 ## Loose ends
@@ -38,5 +37,6 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 - "Move to Applications" now copies in the background ("Moving…"); not yet tested by hand.
 
 Done: the signed, notarized disk image with a welcome window that installs the driver (each
-`v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, Sendspin 1 over Noise, and
-client-initiated connections (speakers that connect to us wait, unticked, until allowed).
+`v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, Sendspin 1 over Noise,
+client-initiated connections (speakers that connect to us wait, unticked, until allowed), a
+notice when Local Network access is denied, and opening at login.

@@ -1,4 +1,5 @@
 import AppKit
+import SendspinServerKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -6,6 +7,8 @@ struct SettingsView: View {
     @State private var confirmingUninstall = false
     @State private var uninstalling = false
     @State private var uninstallError: String?
+    @State private var openAtLogin = LoginItem.isEnabled
+    @State private var loginItemNeedsApproval = LoginItem.needsApproval
 
     var body: some View {
         Form {
@@ -49,6 +52,20 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
+            } footer: {
+                if loginItemNeedsApproval {
+                    HStack {
+                        Text("Switched off in System Settings.")
+                        Button("Open Login Items…") { LoginItem.openSettings() }
+                            .buttonStyle(.link)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
                 LabeledContent {
                     Button("Uninstall…", role: .destructive) { confirmingUninstall = true }
                         .disabled(uninstalling)
@@ -73,6 +90,16 @@ struct SettingsView: View {
         } message: {
             Text(uninstallError ?? "")
         }
+    }
+
+    private func setOpenAtLogin(_ enabled: Bool) {
+        do {
+            try LoginItem.set(enabled)
+        } catch {
+            Log.warning("Couldn't change the login item: \(error)")
+        }
+        openAtLogin = LoginItem.isEnabled
+        loginItemNeedsApproval = LoginItem.needsApproval
     }
 
     private func uninstall() {

@@ -7,6 +7,12 @@ enum Uninstaller {
 
     /// Returns false when the user cancels the administrator prompt.
     static func run() async throws -> Bool {
+        // The login item goes too. Before the prompt, while the app still exists; put back
+        // if the user cancels or the removal fails.
+        let wasLoginItem = LoginItem.isEnabled
+        try? LoginItem.set(false)
+        var removed = false
+        defer { if wasLoginItem && !removed { try? LoginItem.set(true) } }
         // Forget the microphone permission (privacy settings are per user, so as the user).
         // This has to happen while the app still exists: tccutil looks the bundle ID up.
         let bundleID = Bundle.main.bundleIdentifier ?? releaseBundleID
@@ -24,7 +30,8 @@ enum Uninstaller {
         if bundleID == releaseBundleID { packageIDs.append("\(releaseBundleID).pkg.app") }
         commands += packageIDs.map { "{ pkgutil --forget \($0) >/dev/null 2>&1 || true; }" }
         commands.append(AdminScript.restartCoreAudio)
-        return try await AdminScript.run(
+        removed = try await AdminScript.run(
             commands, prompt: "macOS Audio for Sendspin wants to remove its audio driver and the app.")
+        return removed
     }
 }

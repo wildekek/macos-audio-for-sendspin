@@ -1,4 +1,5 @@
 import AppKit
+import SendspinServerKit
 import SwiftUI
 
 /// First launch: the three things the app needs, each explained where it's asked for.
@@ -10,6 +11,12 @@ struct WelcomeView: View {
     @State private var needsMove = AppLocation.needsMove
     @State private var moveProgress: String?
     @State private var errorText: String?
+    // On by default for the app; a dev build shouldn't become a login item by accident.
+    #if DEBUG
+    @State private var openAtLogin = false
+    #else
+    @State private var openAtLogin = true
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -47,7 +54,10 @@ struct WelcomeView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Done", action: done)
+                Toggle("Open at login", isOn: $openAtLogin)
+                    .toggleStyle(.checkbox)
+                    .disabled(needsMove)
+                Button("Done") { finish() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(needsMove)
             }
@@ -100,6 +110,15 @@ struct WelcomeView: View {
         let found = foundSpeakers
         return found == 0 ? .note("Looking for speakers…")
             : .done(found == 1 ? "Found 1 speaker" : "Found \(found) speakers")
+    }
+
+    private func finish() {
+        do {
+            try LoginItem.set(openAtLogin)
+        } catch {
+            Log.warning("Couldn't change the login item: \(error)")
+        }
+        done()
     }
 
     private var foundSpeakers: Int { bridge.players.filter(\.isDiscovered).count }
