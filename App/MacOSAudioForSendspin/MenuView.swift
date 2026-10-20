@@ -17,7 +17,7 @@ struct MenuView: View {
                 settings
             }
             Divider()
-            Button("Quit Sendspin for Mac") { NSApp.terminate(nil) }
+            Button("Quit macOS Audio for Sendspin") { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
                 .keyboardShortcut("q")
         }
@@ -50,7 +50,7 @@ struct MenuView: View {
         if !bridge.driverInstalled {
             Notice(text: "The Sendspin audio driver isn't installed.", systemImage: "exclamationmark.triangle.fill")
         } else if bridge.microphoneAccess == .denied || bridge.microphoneAccess == .restricted {
-            Notice(text: "Allow microphone access so Sendspin for Mac can capture the Sendspin output.",
+            Notice(text: "Allow microphone access so macOS Audio for Sendspin can capture the Sendspin output.",
                    systemImage: "mic.slash.fill") {
                 Button("Open Privacy Settings") {
                     NSWorkspace.shared.open(URL(string:

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Install the Sendspin audio driver (or remove it with -u), then restart coreaudiod.
 #
-#   Driver/install.sh [path/to/SendspinForMac.driver]
+#   Driver/install.sh [path/to/MacOSAudioForSendspin.driver]
 #   Driver/install.sh -u
 #
 # Restarting coreaudiod briefly interrupts all audio on this Mac.
 set -euo pipefail
 
-BUNDLE_NAME="SendspinForMac.driver"
+BUNDLE_NAME="MacOSAudioForSendspin.driver"
 HAL_DIR="/Library/Audio/Plug-Ins/HAL"
 
 if [[ $EUID -ne 0 ]]; then

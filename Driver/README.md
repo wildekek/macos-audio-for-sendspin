@@ -3,7 +3,7 @@
 An Audio Server plug-in (HAL driver) built on [libASPL](https://github.com/gavv/libASPL)
 (MIT). It adds an output device named **Sendspin**: 48 kHz stereo float32, with volume and
 mute controls. Whatever is played into it is looped back to the device's input, where the
-Sendspin for Mac app captures it.
+macOS Audio for Sendspin app captures it.
 
 - The ring buffer is indexed by device sample time. Unwritten frames read as silence.
 - Volume and mute are **not** applied to the audio. The app forwards them to the players.

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Sendspin for Mac</string>
+	<string>macOS Audio for Sendspin</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Sendspin for Mac</string>
+	<string>macOS Audio for Sendspin</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,8 +31,8 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Licensed under the Apache License, Version 2.0</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Sendspin for Mac finds Sendspin speakers on your network and streams audio to them.</string>
+	<string>macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sendspin for Mac captures the audio played to the Sendspin output device, to stream it to your speakers.</string>
+	<string>macOS Audio for Sendspin captures the audio played to the Sendspin output device, to stream it to your speakers.</string>
 </dict>
 </plist>

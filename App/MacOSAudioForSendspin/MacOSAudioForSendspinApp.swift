@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct SendspinForMacApp: App {
+struct MacOSAudioForSendspinApp: App {
     @State private var bridge = BridgeController()
 
     var body: some Scene {

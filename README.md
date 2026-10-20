@@ -1,11 +1,11 @@
-# Sendspin for Mac
+# macOS Audio for Sendspin
 
 Play your Mac's audio on [Sendspin](https://www.sendspin-audio.com/) speakers, in sync.
-Sendspin for Mac adds an output device named **Sendspin**, plus a menu bar app to choose
-speakers and control their volume.
+macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
+choose speakers and control their volume.
 
-> Working name. Sendspin is a protocol of the Open Home Foundation; this project is not
-> affiliated with or endorsed by it.
+> Sendspin is a protocol of the Open Home Foundation; this project is not affiliated with
+> or endorsed by it.
 
 ```
 apps ─► "Sendspin" output device (Driver/, HAL plug-in)
@@ -29,8 +29,8 @@ cmake -S Driver -B Driver/build && cmake --build Driver/build
 Driver/install.sh                  # admin; restarts coreaudiod (audio drops for a moment)
 
 cd App && xcodegen generate
-xcodebuild -project SendspinForMac.xcodeproj -scheme SendspinForMac -derivedDataPath build build
-open "build/Build/Products/Debug/Sendspin for Mac.app"
+xcodebuild -project MacOSAudioForSendspin.xcodeproj -scheme MacOSAudioForSendspin -derivedDataPath build build
+open "build/Build/Products/Debug/macOS Audio for Sendspin.app"
 ```
 
 On first launch, allow microphone access (needed to read the Sendspin device's loopback)
@@ -58,7 +58,7 @@ and local network access (needed to find speakers).
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker
   equally, so their relative balance is kept (the same algorithm as aiosendspin).
 
-Hidden settings (`defaults write eu.vooijs.SendspinForMac …`):
+Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`):
 - `manualPlayers`: an array of `ws://host:port/path` URLs, for speakers mDNS can't find;
 - `verboseLogging`: debug logs on stderr.
 

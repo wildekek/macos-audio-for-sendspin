@@ -1,4 +1,4 @@
-// Copyright (c) Sendspin for Mac authors
+// Copyright (c) macOS Audio for Sendspin authors
 // Licensed under the Apache License, Version 2.0
 
 #include "LoopbackStream.hpp"

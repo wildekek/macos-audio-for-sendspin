@@ -1,9 +1,9 @@
-// Copyright (c) Sendspin for Mac authors
+// Copyright (c) macOS Audio for Sendspin authors
 // Licensed under the Apache License, Version 2.0
 //
 // Audio Server plug-in providing the "Sendspin" output device. Apps play into its
-// output; the Sendspin for Mac app captures the same audio from its input (loopback)
-// and streams it to Sendspin players.
+// output; the macOS Audio for Sendspin app captures the same audio from its input
+// (loopback) and streams it to Sendspin players.
 
 #include "LoopbackHandler.hpp"
 #include "LoopbackStream.hpp"
@@ -22,14 +22,14 @@ constexpr UInt32 DefaultSampleRate = 48000;
 constexpr UInt32 ChannelCount = 2;
 
 // Custom device property 'sslt': output presentation latency in frames (CFNumber),
-// set by the Sendspin for Mac app to the players' playback lead.
+// set by the macOS Audio for Sendspin app to the players' playback lead.
 constexpr AudioObjectPropertySelector PresentationLatencySelector = 'sslt';
 constexpr UInt32 MaxPresentationLatencySeconds = 5;
 
 // file:// URL of the device icon inside this plug-in's bundle, wherever it's installed.
 std::string IconURL()
 {
-    CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("eu.vooijs.SendspinForMac.Driver"));
+    CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("eu.vooijs.MacOSAudioForSendspin.Driver"));
     if (!bundle) {
         return "";
     }
@@ -51,11 +51,11 @@ std::shared_ptr<aspl::Driver> CreateDriver()
 
     aspl::DeviceParameters deviceParams;
     deviceParams.Name = "Sendspin";
-    deviceParams.Manufacturer = "Sendspin for Mac";
-    deviceParams.DeviceUID = "eu.vooijs.SendspinForMac.Device";
-    deviceParams.ModelUID = "eu.vooijs.SendspinForMac.Model";
+    deviceParams.Manufacturer = "macOS Audio for Sendspin";
+    deviceParams.DeviceUID = "eu.vooijs.MacOSAudioForSendspin.Device";
+    deviceParams.ModelUID = "eu.vooijs.MacOSAudioForSendspin.Model";
     deviceParams.FirmwareVersion = DRIVER_VERSION;
-    deviceParams.ConfigurationApplicationBundleID = "eu.vooijs.SendspinForMac";
+    deviceParams.ConfigurationApplicationBundleID = "eu.vooijs.MacOSAudioForSendspin";
     deviceParams.IconURL = IconURL();
     deviceParams.SampleRate = DefaultSampleRate;
     deviceParams.ChannelCount = ChannelCount;

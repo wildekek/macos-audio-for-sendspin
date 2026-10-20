@@ -1,4 +1,4 @@
-name: SendspinForMac
+name: MacOSAudioForSendspin
 options:
   bundleIdPrefix: eu.vooijs
   deploymentTarget:
@@ -18,42 +18,42 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
-  SendspinForMac:
+  MacOSAudioForSendspin:
     type: application
     platform: macOS
     sources:
-      - path: SendspinForMac
+      - path: MacOSAudioForSendspin
     dependencies:
       - package: SendspinServerKit
         product: SendspinServerKit
       - package: SendspinServerKit
         product: SendspinAudio
     info:
-      path: SendspinForMac/Info.plist
+      path: MacOSAudioForSendspin/Info.plist
       properties:
-        CFBundleName: Sendspin for Mac
-        CFBundleDisplayName: Sendspin for Mac
+        CFBundleName: macOS Audio for Sendspin
+        CFBundleDisplayName: macOS Audio for Sendspin
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.music
         NSHumanReadableCopyright: Licensed under the Apache License, Version 2.0
         NSMicrophoneUsageDescription: >-
-          Sendspin for Mac captures the audio played to the Sendspin output device,
+          macOS Audio for Sendspin captures the audio played to the Sendspin output device,
           to stream it to your speakers.
         NSLocalNetworkUsageDescription: >-
-          Sendspin for Mac finds Sendspin speakers on your network and streams audio to them.
+          macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.
         NSBonjourServices:
           - _sendspin._tcp
     entitlements:
-      path: SendspinForMac/SendspinForMac.entitlements
+      path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
       properties:
         com.apple.security.device.audio-input: true
     settings:
       base:
-        PRODUCT_NAME: Sendspin for Mac
-        PRODUCT_MODULE_NAME: SendspinForMac
-        PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.SendspinForMac
+        PRODUCT_NAME: macOS Audio for Sendspin
+        PRODUCT_MODULE_NAME: MacOSAudioForSendspin
+        PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin
         ENABLE_HARDENED_RUNTIME: YES
         # Ad-hoc signing for local builds; release builds pass a Developer ID.
         CODE_SIGN_STYLE: Manual

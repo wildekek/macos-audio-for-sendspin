@@ -113,7 +113,7 @@ final class BridgeController {
         let defaults = UserDefaults.standard
         let lead = Lead(rawValue: defaults.integer(forKey: "leadMs")) ?? .low
         let serverID = defaults.string(forKey: "serverID") ?? {
-            let id = "sendspin-for-mac-\(UUID().uuidString.lowercased())"
+            let id = "macos-audio-for-sendspin-\(UUID().uuidString.lowercased())"
             defaults.set(id, forKey: "serverID")
             return id
         }()
@@ -126,7 +126,7 @@ final class BridgeController {
         group = PlaybackGroup(name: identity.name, leadMs: lead.rawValue)
 
         Log.minimumLevel = defaults.bool(forKey: "verboseLogging") ? .debug : .info
-        let logger = Logger(subsystem: "eu.vooijs.SendspinForMac", category: "bridge")
+        let logger = Logger(subsystem: "eu.vooijs.MacOSAudioForSendspin", category: "bridge")
         Log.handler = { level, message in
             switch level {
             case .debug: logger.debug("\(message, privacy: .public)")
