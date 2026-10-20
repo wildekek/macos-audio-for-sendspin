@@ -19,13 +19,22 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
 4. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
+5. **Play through Music Assistant** (for people who already run it). The Mac becomes a Sendspin
+   client with the `source@v1` role, and MA shows it as a Live Input that it can play on any of
+   its players, so the app stops competing with MA for the same speakers. MA starts the stream
+   (`start` → `client-stream/start` → type-12 chunks of at most 150 ms; FLAC at 48 kHz/16-bit is
+   enough), and reporting `signal: present` while the Mac plays lets MA start it automatically.
+   New: the client side (advertise `_sendspin._tcp` and skip ourselves when browsing, Noise as
+   responder, `client/hello`, the time filter and capture times in server time) and client-side
+   pairing, because MA only admits paired sources. Do it after pairing (1), which shares the
+   CPace code. MA's buffering adds latency, so direct playback stays the default.
 
 ## Audio: recommended or optional
 
-5. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+6. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
-6. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
-7. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+7. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+8. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
    a per-speaker delay for external amplifiers).
 
 ## Loose ends
