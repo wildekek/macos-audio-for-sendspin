@@ -1,4 +1,4 @@
-# Build, sign and notarize the installer for a version tag, and attach it to a draft release.
+# Build, sign and notarize the disk image for a version tag, and attach it to a draft release.
 # Publishing the draft is a manual step. Setup: README → Release.
 name: Release
 
@@ -33,13 +33,13 @@ jobs:
 
       - name: Install tools
         run: |
-          brew install xcodegen
+          brew install xcodegen create-dmg
           xcodebuild -version
           cmake --version | head -1
 
       - name: Import signing certificates
         env:
-          # Both identities (Application and Installer) in one .p12.
+          # The Developer ID Application identity (an Installer one in the .p12 goes unused).
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
         run: |
@@ -63,13 +63,11 @@ jobs:
 
           identity() { security find-identity -v "$KEYCHAIN" | sed -n "s/.*\"\($1: .*\)\"$/\1/p" | head -1; }
           app_id=$(identity "Developer ID Application")
-          installer_id=$(identity "Developer ID Installer")
-          if [[ -z "$app_id" || -z "$installer_id" ]]; then
-            echo "::error::Developer ID Application or Installer identity missing"
+          if [[ -z "$app_id" ]]; then
+            echo "::error::Developer ID Application identity missing"
             exit 1
           fi
           echo "DEVELOPER_ID_APP=$app_id" >> "$GITHUB_ENV"
-          echo "DEVELOPER_ID_INSTALLER=$installer_id" >> "$GITHUB_ENV"
 
       - name: Store notarization credentials
         env:
@@ -86,20 +84,20 @@ jobs:
       - name: Build, sign and notarize
         env:
           NOTARY_PROFILE: notary
-        run: Installer/build-pkg.sh
+        run: Release/build-dmg.sh
 
       - name: Verify
         run: |
-          pkg="build/release/macOS-Audio-for-Sendspin-${VERSION}.pkg"
-          xcrun stapler validate "$pkg"
-          spctl --assess --type install -vv "$pkg"
-          echo "PKG=$pkg" >> "$GITHUB_ENV"
+          dmg="build/release/macOS-Audio-for-Sendspin-${VERSION}.dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature -vv "$dmg"
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
 
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$PKG" --draft --generate-notes \
+          gh release create "$GITHUB_REF_NAME" "$DMG" --draft --generate-notes \
             --title "macOS Audio for Sendspin ${VERSION}"
 
       - name: Remove keychain

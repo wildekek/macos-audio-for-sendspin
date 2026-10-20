@@ -1,4 +1,0 @@
-#!/bin/bash
-# Load the newly installed driver. Restarting coreaudiod briefly interrupts all audio on this Mac.
-launchctl kickstart -k system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod
-exit 0

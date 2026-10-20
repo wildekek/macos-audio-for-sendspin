@@ -9,9 +9,10 @@ choose speakers and control their volume.
 
 ## Install
 
-Download the `.pkg` from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases)
-and open it. Then pick **Sendspin** as the output in the Sound menu or Control Center, and choose
-your speakers in the menu bar app. The current release is a beta.
+Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases),
+open it and drag the app to Applications. On first launch it installs its audio driver (your
+password once) and asks for the microphone and local network. Then tick your speakers in the
+menu bar app and click **Use Sendspin**. The current release is a beta.
 
 ## How it fits together
 
@@ -26,24 +27,24 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
 | --- | --- |
 | `Driver/` | Audio Server plug-in on libASPL: the loopback device, with volume/mute and a reported latency. |
 | `Packages/SendspinServerKit/` | Sendspin server in Swift (`SendspinServerKit`), CoreAudio capture and device control (`SendspinAudio`), and the `sendspin-bridge` CLI. |
-| `App/` | SwiftUI menu bar app (XcodeGen project). |
-| `Installer/` | Builds the `.pkg` with the app and the driver; signs and notarizes it for releases. |
+| `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
+| `Release/` | Builds the disk image; signs and notarizes it for releases. |
 
 ## Build and run
 
 Requirements: macOS 14+, Xcode 26+, CMake, and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
-cmake -S Driver -B Driver/build && cmake --build Driver/build
-Driver/install.sh                  # admin; restarts coreaudiod (audio drops for a moment)
-
 cd App && xcodegen generate
 xcodebuild -project MacOSAudioForSendspin.xcodeproj -scheme MacOSAudioForSendspin -derivedDataPath build build
 open "build/Build/Products/Debug/macOS Audio for Sendspin (Dev).app"
 ```
 
-On first launch, allow microphone access (needed to read the Sendspin device's loopback)
-and local network access (needed to find speakers).
+The build compiles the driver with CMake and embeds it in the app
+(`Contents/Library/Audio/Plug-Ins/HAL`). On first launch the welcome window installs it, which
+restarts coreaudiod (audio drops for a moment), and asks for microphone access (to read the
+Sendspin device's loopback) and local network access (to find speakers). When working on the
+driver alone, `Driver/install.sh` installs a CMake build directly.
 
 Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`),
 with their own settings and permissions, so they don't mix with an installed release. Both use
@@ -52,15 +53,14 @@ the same driver; don't run them at the same time.
 ## Release
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`). Push a tag `v<version>`,
-and the workflow builds, signs and notarizes the `.pkg`, then attaches it to a **draft** release.
+and the workflow builds, signs and notarizes the disk image, then attaches it to a **draft** release.
 Check the draft and publish it by hand. The version comes from `MARKETING_VERSION` in
 `App/project.yml`, and must match the tag and `DRIVER_VERSION` in `Driver/CMakeLists.txt`.
 
 One-time setup, with a paid Apple Developer membership:
-1. On developer.apple.com → Certificates, create a *Developer ID Application* and a
-   *Developer ID Installer* certificate, both with the **G2 Sub-CA** profile type (the previous
-   sub-CA expires on 1 February 2027). Export both identities together as one `.p12`:
-   `security export -t identities -f pkcs12 -P <password> -o developer-id.p12`.
+1. On developer.apple.com → Certificates, create a *Developer ID Application* certificate with
+   the **G2 Sub-CA** profile type (the previous sub-CA expires on 1 February 2027). Export the
+   identity as a `.p12`: `security export -t identities -f pkcs12 -P <password> -o developer-id.p12`.
 2. App Store Connect → Users and Access → Integrations → Team Keys: create a key with the
    *Developer* role for notarization. Download the `.p8`, and note its Key ID and the Issuer ID.
 3. GitHub → Settings → Environments: create `release`, limited to tags `v*`, with these secrets:
@@ -74,17 +74,16 @@ One-time setup, with a paid Apple Developer membership:
 
 ### Local builds
 
-`Installer/build-pkg.sh` builds `build/release/macOS-Audio-for-Sendspin-<version>.pkg`. Without
-signing variables, the package is unsigned: install it on your own Mac with
-`sudo installer -pkg … -target /`, but don't distribute it. To sign and notarize locally, with
-the certificates from step 1 in your keychain and a notarytool profile
+`Release/build-dmg.sh` builds `build/release/macOS-Audio-for-Sendspin-<version>.dmg`; it needs
+[create-dmg](https://github.com/create-dmg/create-dmg) (`brew install create-dmg`). Without
+signing variables the app is signed ad hoc: fine on your own Mac, not for distribution. To sign
+and notarize locally, with the certificate from step 1 in your keychain and a notarytool profile
 (`xcrun notarytool store-credentials notary --key … --key-id … --issuer …`):
 
 ```sh
 DEVELOPER_ID_APP="Developer ID Application: <Name> (<TEAMID>)" \
-DEVELOPER_ID_INSTALLER="Developer ID Installer: <Name> (<TEAMID>)" \
 NOTARY_PROFILE=notary \
-Installer/build-pkg.sh
+Release/build-dmg.sh
 ```
 
 ## How it works
