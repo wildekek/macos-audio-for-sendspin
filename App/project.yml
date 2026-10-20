@@ -31,8 +31,8 @@ targets:
     info:
       path: MacOSAudioForSendspin/Info.plist
       properties:
-        CFBundleName: macOS Audio for Sendspin
-        CFBundleDisplayName: macOS Audio for Sendspin
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleDisplayName: $(PRODUCT_NAME)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
@@ -60,3 +60,9 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         SWIFT_STRICT_CONCURRENCY: complete
+      configs:
+        # Dev builds are a separate app: own settings, permissions and privacy entries,
+        # so they don't mix with an installed release. They share the one driver.
+        Debug:
+          PRODUCT_NAME: macOS Audio for Sendspin (Dev)
+          PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin.dev

@@ -39,11 +39,15 @@ Driver/install.sh                  # admin; restarts coreaudiod (audio drops for
 
 cd App && xcodegen generate
 xcodebuild -project MacOSAudioForSendspin.xcodeproj -scheme MacOSAudioForSendspin -derivedDataPath build build
-open "build/Build/Products/Debug/macOS Audio for Sendspin.app"
+open "build/Build/Products/Debug/macOS Audio for Sendspin (Dev).app"
 ```
 
 On first launch, allow microphone access (needed to read the Sendspin device's loopback)
 and local network access (needed to find speakers).
+
+Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`),
+with their own settings and permissions, so they don't mix with an installed release. Both use
+the same driver; don't run them at the same time.
 
 ## Release
 
@@ -105,7 +109,7 @@ Installer/build-pkg.sh
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker
   equally, so their relative balance is kept (the same algorithm as aiosendspin).
 
-Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`):
+Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….dev` for a dev build):
 - `manualPlayers`: an array of `ws://host:port/path` URLs, for speakers mDNS can't find;
 - `verboseLogging`: debug logs on stderr.
 

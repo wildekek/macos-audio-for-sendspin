@@ -4,7 +4,7 @@ import Foundation
 /// rights. Restarting coreaudiod unloads the driver, so the Mac doesn't need a restart.
 enum Uninstaller {
     static let driverPath = "/Library/Audio/Plug-Ins/HAL/MacOSAudioForSendspin.driver"
-    static let packageIDs = ["eu.vooijs.MacOSAudioForSendspin.pkg.app", "eu.vooijs.MacOSAudioForSendspin.pkg.driver"]
+    static let releaseBundleID = "eu.vooijs.MacOSAudioForSendspin"
 
     struct Failure: LocalizedError {
         let message: String
@@ -15,7 +15,7 @@ enum Uninstaller {
     static func run() async throws -> Bool {
         // Forget the microphone permission (privacy settings are per user, so as the user).
         // This has to happen while the app still exists: tccutil looks the bundle ID up.
-        let bundleID = Bundle.main.bundleIdentifier ?? "eu.vooijs.MacOSAudioForSendspin"
+        let bundleID = Bundle.main.bundleIdentifier ?? releaseBundleID
         var commands = [
             "{ launchctl asuser \(getuid()) sudo -u \(shellQuoted(NSUserName())) tccutil reset All \(shellQuoted(bundleID)) >/dev/null 2>&1 || true; }",
             "rm -rf \(shellQuoted(driverPath))",
@@ -24,7 +24,10 @@ enum Uninstaller {
         if app.pathExtension == "app" {
             commands.append("rm -rf \(shellQuoted(app.path))")
         }
-        // Not installed from the .pkg (a dev build): there are no receipts to forget.
+        // The driver's receipt goes with the driver. The app's receipt only when this is the
+        // installed release: a dev build uninstalling itself leaves an installed release alone.
+        var packageIDs = ["\(releaseBundleID).pkg.driver"]
+        if bundleID == releaseBundleID { packageIDs.append("\(releaseBundleID).pkg.app") }
         commands += packageIDs.map { "{ pkgutil --forget \($0) >/dev/null 2>&1 || true; }" }
         commands.append("{ launchctl kickstart -k system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod; }")
 
