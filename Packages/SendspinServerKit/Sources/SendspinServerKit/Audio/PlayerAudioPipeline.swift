@@ -122,9 +122,12 @@ struct PlayerAudioPipeline {
         var output = Data(count: samples.count * bytesPerSample)
         output.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
             for (i, sample) in samples.enumerated() {
-                // Dither only 16-bit: deeper formats are below the noise floor of any DAC.
-                let noise = format.bitDepth == 16 ? dither.next() : 0
-                let scaled = (sample * fullScale + noise).rounded()
+                let exact = sample * fullScale
+                // Dither only 16-bit: deeper formats are below the noise floor of any DAC. And
+                // only samples that aren't 16-bit values already, so 16-bit sources and digital
+                // silence pass bit-perfect: dither would only add noise to them.
+                let noise = format.bitDepth == 16 && exact != exact.rounded() ? dither.next() : 0
+                let scaled = (exact + noise).rounded()
                 let value = Int32(max(-fullScale, min(maxValue, scaled)))
                 let offset = i * bytesPerSample
                 for byte in 0..<bytesPerSample {

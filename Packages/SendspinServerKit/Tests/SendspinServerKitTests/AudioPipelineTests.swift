@@ -92,6 +92,23 @@ struct PlayerAudioPipelineTests {
         #expect(values == [Int16.max, Int16.min])
     }
 
+    /// 16-bit values and silence pass untouched; only finer samples get dither.
+    @Test func dithersOnlySamplesFinerThan16Bit() throws {
+        var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16, channels: 1),
+                                                        sourceRate: 48_000, sourceChannels: 1))
+        let sixteenBit: [Int16] = (0..<1_000).map { Int16(truncatingIfNeeded: $0 &* 7_919) }
+        let input = sixteenBit.map { Float($0) / 32_768 } + [Float](repeating: 0, count: 1_000)
+        let out = try #require(pipeline.process(pcm(input, channels: 1), timestampUs: 0).first)
+        let values = out.payload.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        #expect(values == sixteenBit + [Int16](repeating: 0, count: 1_000))
+
+        // Halfway between two 16-bit values: dither spreads them over both neighbours.
+        let finer = [Float](repeating: 100.5 / 32_768, count: 1_000)
+        let dithered = try #require(pipeline.process(pcm(finer, channels: 1), timestampUs: 41_667).first)
+        let ditheredValues = dithered.payload.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        #expect(Set(ditheredValues).isSuperset(of: [100, 101]))
+    }
+
     @Test func downmixesStereoToMono() {
         #expect(PlayerAudioPipeline.mix([0.25, 0.75, -0.5, 0.5], from: 2, to: 1) == [0.5, 0])
         #expect(PlayerAudioPipeline.mix([0.1, 0.2], from: 1, to: 2) == [0.1, 0.1, 0.2, 0.2])
