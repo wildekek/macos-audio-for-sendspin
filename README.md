@@ -4,6 +4,8 @@ Play your Mac's audio on [Sendspin](https://www.sendspin-audio.com/) speakers, i
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
 choose speakers and control their volume.
 
+<img src="docs/menu.png" width="481" alt="The menu bar app: Playing on Sendspin, streaming, with a button to switch back to the MacBook Pro Speakers, and a Home Assistant Connect AUX-2 ticked with its volume slider.">
+
 > Sendspin is a protocol of the Open Home Foundation; this project is not affiliated with
 > or endorsed by it.
 
