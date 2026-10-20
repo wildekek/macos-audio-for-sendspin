@@ -14,7 +14,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CODESIGN_ID "-" CACHE STRING "Codesign identity")
 
 set(DRIVER_NAME "MacOSAudioForSendspin")
-set(DRIVER_VERSION "0.2.0")
+set(DRIVER_VERSION "0.2.1")
 set(DRIVER_IDENTIFIER "eu.vooijs.MacOSAudioForSendspin.Driver")
 set(DRIVER_FACTORY_UUID "A82861F5-3A3A-4365-9F25-96577E9B97A8")
 set(DRIVER_ENTRYPOINT "SendspinDriverEntryPoint")
@@ -47,7 +47,8 @@ add_library(${DRIVER_NAME} MODULE
   src/LoopbackStream.cpp
   resources/SendspinDevice.icns
 )
-# Device icon (regenerate with resources/make-icon.swift), copied into Contents/Resources.
+# Device icon, the same as the app icon (regenerate with App/make-app-icon.swift), copied into
+# Contents/Resources.
 set_source_files_properties(resources/SendspinDevice.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 add_dependencies(${DRIVER_NAME} libASPL)
 target_include_directories(${DRIVER_NAME} SYSTEM PRIVATE ${LIBASPL_PREFIX}/include)

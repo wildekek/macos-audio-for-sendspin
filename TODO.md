@@ -32,7 +32,8 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 
 - The Developer ID certificates (G2) expire on 19 November 2027. Before then, create new ones and
   replace the `DEVELOPER_ID_P12` and `P12_PASSWORD` secrets (README → Release).
-- The app icon uses the Sendspin logo; that needs the Open Home Foundation's OK.
+- The output device is named "Sendspin". That names the protocol, as "AirPlay" does in the same
+  list, but confirm with the Open Home Foundation (the logo is already gone from the icons).
 - Release builds print a harmless "failed with exit code 0" line from an Xcode build step.
 - "Move to Applications" now copies in the background ("Moving…"); not yet tested by hand.
 
