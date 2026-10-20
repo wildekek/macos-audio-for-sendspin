@@ -28,6 +28,26 @@ targets:
         product: SendspinServerKit
       - package: SendspinServerKit
         product: SendspinAudio
+    # The app carries the audio driver and installs it itself (see DriverInstaller). This runs
+    # before Xcode signs the app, so the app's signature covers the driver too.
+    postBuildScripts:
+      - name: Embed audio driver
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+          build="${DERIVED_FILE_DIR}/driver"
+          # Quiet unless it fails: progress on stderr shows as a "failed" step in quiet builds.
+          if ! { cmake -S "${SRCROOT}/../Driver" -B "$build" -DCODESIGN_ID="${identity:--}" \
+                 && cmake --build "$build"; } > "${DERIVED_FILE_DIR}/driver-build.log" 2>&1; then
+            cat "${DERIVED_FILE_DIR}/driver-build.log"
+            exit 1
+          fi
+          destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/Audio/Plug-Ins/HAL"
+          mkdir -p "$destination"
+          rm -rf "$destination/MacOSAudioForSendspin.driver"
+          ditto "$build/MacOSAudioForSendspin.driver" "$destination/MacOSAudioForSendspin.driver"
     info:
       path: MacOSAudioForSendspin/Info.plist
       properties:
@@ -60,6 +80,8 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         SWIFT_STRICT_CONCURRENCY: complete
+        # The driver script builds ../Driver with CMake, outside the sandboxed inputs.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
       configs:
         # Dev builds are a separate app: own settings, permissions and privacy entries,
         # so they don't mix with an installed release. They share the one driver.

@@ -5,6 +5,7 @@ import SwiftUI
 struct MenuView: View {
     @Bindable var bridge: BridgeController
     @Environment(\.openSettings) private var openSettings
+    @State private var driverError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,8 +74,17 @@ struct MenuView: View {
     }
 
     @ViewBuilder private var warnings: some View {
-        if !bridge.driverInstalled {
-            Notice(text: "The Sendspin audio driver isn't installed.", systemImage: "exclamationmark.triangle.fill")
+        if bridge.driverNeedsRestart || (!bridge.driverInstalled && bridge.driverState != .notInstalled) {
+            Notice(text: "The audio driver is installed, but macOS hasn't loaded it. Restart your Mac to finish.",
+                   systemImage: "arrow.clockwise.circle.fill")
+        } else if bridge.driverState != .current {
+            let update = bridge.driverState == .outdated
+            Notice(text: driverError ?? (update ? "This version comes with a newer audio driver."
+                                                : "The Sendspin audio driver isn't installed."),
+                   systemImage: "exclamationmark.triangle.fill") {
+                Button(update ? "Update Driver…" : "Install Driver…") { installDriver() }
+                    .disabled(bridge.isInstallingDriver)
+            }
         } else if bridge.microphoneAccess == .denied || bridge.microphoneAccess == .restricted {
             Notice(text: "Allow microphone access so macOS Audio for Sendspin can capture the Sendspin output.",
                    systemImage: "mic.slash.fill") {
@@ -82,6 +92,17 @@ struct MenuView: View {
                     NSWorkspace.shared.open(URL(string:
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }
+            }
+        }
+    }
+
+    private func installDriver() {
+        driverError = nil
+        Task {
+            do {
+                _ = try await bridge.installDriver()
+            } catch {
+                driverError = "Couldn't install the driver: \(error.localizedDescription)"
             }
         }
     }

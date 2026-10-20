@@ -51,7 +51,13 @@ final class BridgeController {
     private(set) var statuses: [String: PlayerStatus] = [:]
     private(set) var selected: Set<String>
     private(set) var isStreaming = false
+    /// The Sendspin device is there (the driver is loaded).
     private(set) var driverInstalled = false
+    /// Whether the installed driver is the one this app carries.
+    private(set) var driverState = DriverInstaller.state
+    private(set) var isInstallingDriver = false
+    /// Installed, but the device didn't appear: coreaudiod didn't load it, a restart will.
+    private(set) var driverNeedsRestart = false
     private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
     private(set) var isMacOutput = false
     /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
@@ -152,6 +158,32 @@ final class BridgeController {
         Log.info("Starting (\(identity.name), lead \(lead.rawValue) ms)")
         observeSystem()
         refreshDevice()
+        // On the first launch the welcome window asks for each permission at its step.
+        if isWelcomeDone {
+            startDiscovery()
+            await requestMicrophoneAccess()
+        }
+    }
+
+    // MARK: First launch
+
+    /// The welcome window was finished or closed; until then, nothing asks for permissions.
+    private(set) var isWelcomeDone = UserDefaults.standard.bool(forKey: "welcomeDone")
+
+    /// Close the welcome flow, and start whatever it didn't get to.
+    func finishWelcome() async {
+        guard !isWelcomeDone else { return }
+        isWelcomeDone = true
+        defaults.set(true, forKey: "welcomeDone")
+        startDiscovery()
+        await requestMicrophoneAccess()
+    }
+
+    var isDiscovering: Bool { discoveryTask != nil }
+
+    /// Browsing for speakers is what triggers the Local Network prompt.
+    func startDiscovery() {
+        guard discoveryTask == nil else { return }
         discoveryTask = Task { [weak self] in
             for await players in PlayerBrowser.browse() {
                 guard let self else { return }
@@ -160,12 +192,13 @@ final class BridgeController {
                 reconcile()
             }
         }
-        // Don't hold up discovery and connecting on the permission prompt.
-        if microphoneAccess == .notDetermined {
-            microphoneAccess = await AVCaptureDevice.requestAccess(for: .audio) ? .authorized : .denied
-            Log.info("Microphone access \(microphoneAccess == .authorized ? "granted" : "denied")")
-            updateCapture()
-        }
+    }
+
+    func requestMicrophoneAccess() async {
+        guard microphoneAccess == .notDetermined else { return }
+        microphoneAccess = await AVCaptureDevice.requestAccess(for: .audio) ? .authorized : .denied
+        Log.info("Microphone access \(microphoneAccess == .authorized ? "granted" : "denied")")
+        updateCapture()
     }
 
     /// Players configured by address (`manualPlayers`: ws:// URLs), for networks
@@ -350,6 +383,8 @@ final class BridgeController {
     private func refreshDevice() {
         let device = AudioDevice.sendspin
         driverInstalled = device != nil
+        driverState = DriverInstaller.state
+        if device != nil { driverNeedsRestart = false }
         deviceObservations = []
         refreshDefaultOutput()
         guard let device else {
@@ -557,6 +592,26 @@ final class BridgeController {
         previousUID.flatMap(AudioDevice.find(uid:)) ?? AudioDevice.all().first {
             $0.uid != AudioDevice.sendspinUID && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
         }
+    }
+
+    /// Install or update the driver. Returns false if the user cancelled.
+    func installDriver() async throws -> Bool {
+        isInstallingDriver = true
+        defer { isInstallingDriver = false }
+        // Restarting coreaudiod resets the default output: go back to Sendspin after an update.
+        let wasMacOutput = isMacOutput
+        guard try await DriverInstaller.install() else { return false }
+        driverState = DriverInstaller.state
+        // coreaudiod takes a moment to come back with the device.
+        var appeared = false
+        for _ in 0..<20 where !appeared {
+            appeared = await Task.detached { AudioDevice.sendspin != nil }.value
+            if !appeared { try? await Task.sleep(for: .milliseconds(500)) }
+        }
+        driverNeedsRestart = !appeared
+        Log.info(appeared ? "Driver installed" : "Driver installed, but the device didn't appear")
+        if appeared && wasMacOutput { await setMacOutput(true) }
+        return true
     }
 
     /// Remove the driver and the app. Returns false if the user cancelled.
