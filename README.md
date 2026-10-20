@@ -6,7 +6,7 @@
 
 <p align="center">Play your Mac's audio on <a href="https://www.sendspin-audio.com/">Sendspin</a> speakers, in sync.</p>
 
-Sendspin enables wireless, lossless and hi-res music streaming to your speakers. Wireless
+Sendspin enables wireless, lossless and hi-res music streaming to your speakers. With macOS Audio for Sendspin, wireless
 bit-perfect playback is finally possible on your Mac.
 
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
