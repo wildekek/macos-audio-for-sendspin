@@ -75,6 +75,7 @@ targets:
         PRODUCT_MODULE_NAME: MacOSAudioForSendspin
         PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin
         ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # make-app-icon.swift draws it
         # Ad-hoc signing for local builds; release builds pass a Developer ID.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
