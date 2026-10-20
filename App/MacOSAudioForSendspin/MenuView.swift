@@ -72,11 +72,13 @@ struct MenuView: View {
             // The sound goes nowhere: offer the way back instead of silence.
             Notice(text: "The Mac's sound goes to Sendspin, but no speaker is connected.",
                    systemImage: "speaker.slash.fill") {
-                Button("Use Previous Output") { bridge.setMacOutput(false) }
+                Button("Use Previous Output") { Task { await bridge.setMacOutput(false) } }
+                    .disabled(bridge.isSwitchingOutput)
             }
         } else if !bridge.isMacOutput && bridge.hasConnectedPlayers {
             Notice(text: "The Mac's sound isn't going to Sendspin.", systemImage: "speaker.slash.fill") {
-                Button("Use Sendspin") { bridge.setMacOutput(true) }
+                Button("Use Sendspin") { Task { await bridge.setMacOutput(true) } }
+                    .disabled(bridge.isSwitchingOutput)
             }
         }
     }
@@ -119,7 +121,8 @@ struct MenuView: View {
             // switching back must always be possible.
             if bridge.hasConnectedPlayers || bridge.isMacOutput {
                 Toggle("Use as Mac sound output", isOn: Binding(
-                    get: { bridge.isMacOutput }, set: { bridge.setMacOutput($0) }))
+                    get: { bridge.isMacOutput }, set: { enabled in Task { await bridge.setMacOutput(enabled) } }))
+                    .disabled(bridge.isSwitchingOutput)
             }
             if let active = bridge.activeFormat {
                 // Only formats a selected speaker supports; others get it converted.

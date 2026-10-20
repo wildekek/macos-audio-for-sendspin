@@ -25,5 +25,8 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 5. **Speaker selection front and centre.** macOS can't show speakers as sub-items of one output
    device in Control Center, so the menu bar app's speaker list has to be the obvious place to
    pick them.
+6. **No CoreAudio calls on the main thread.** Switching the output already runs off it; the
+   reads after device, volume and format changes still don't. When coreaudiod is slow (for
+   minutes after many restarts without a reboot), each of those freezes the menu.
 
 Other protocol work (FLAC/Opus, …) is listed under Status in the README.

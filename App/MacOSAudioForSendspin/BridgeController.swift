@@ -54,6 +54,7 @@ final class BridgeController {
     private(set) var driverInstalled = false
     private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
     private(set) var isMacOutput = false
+    private(set) var isSwitchingOutput = false
     private(set) var deviceVolume: Float = 1
     private(set) var deviceMuted = false
     private(set) var lead: Lead
@@ -452,40 +453,59 @@ final class BridgeController {
         }
     }
 
-    func setMacOutput(_ enabled: Bool) {
-        guard let sendspin = AudioDevice.sendspin else { return }
-        do {
-            if enabled {
-                if let current = AudioDevice.defaultOutput, current.uid != AudioDevice.sendspinUID {
-                    defaults.set(current.uid, forKey: "previousOutputUID")
-                }
-                try AudioDevice.setDefaultOutput(sendspin)
-            } else {
-                let previous = defaults.string(forKey: "previousOutputUID").flatMap(AudioDevice.find(uid:))
-                let fallback = AudioDevice.all().first {
-                    $0.uid != AudioDevice.sendspinUID && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
-                }
-                if let target = previous ?? fallback { try AudioDevice.setDefaultOutput(target) }
-            }
-        } catch {
-            Log.error("Couldn't change the Mac's output: \(error)")
+    /// Make Sendspin the Mac's output, or switch back to the previous one. coreaudiod answers
+    /// these calls and can be slow (it was busy for minutes after restarts), so they run off
+    /// the main thread and the menu stays responsive.
+    func setMacOutput(_ enabled: Bool) async {
+        guard !isSwitchingOutput else { return }
+        isSwitchingOutput = true
+        defer { isSwitchingOutput = false }
+        let previousUID = defaults.string(forKey: "previousOutputUID")
+        let result = await Task.detached { Self.switchOutput(enabled, previousUID: previousUID) }.value
+        if let uid = result.replacedUID {
+            defaults.set(uid, forKey: "previousOutputUID")
         }
-        refreshDefaultOutput()
+        isMacOutput = result.isMacOutput
+    }
+
+    /// Returns the output Sendspin replaced (to switch back to later) and the new state.
+    nonisolated private static func switchOutput(_ enabled: Bool, previousUID: String?)
+        -> (replacedUID: String?, isMacOutput: Bool) {
+        var replacedUID: String?
+        if let sendspin = AudioDevice.sendspin {
+            do {
+                if enabled {
+                    if let current = AudioDevice.defaultOutput, current.uid != AudioDevice.sendspinUID {
+                        replacedUID = current.uid
+                    }
+                    try AudioDevice.setDefaultOutput(sendspin)
+                } else {
+                    let previous = previousUID.flatMap(AudioDevice.find(uid:))
+                    let fallback = AudioDevice.all().first {
+                        $0.uid != AudioDevice.sendspinUID && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
+                    }
+                    if let target = previous ?? fallback { try AudioDevice.setDefaultOutput(target) }
+                }
+            } catch {
+                Log.error("Couldn't change the Mac's output: \(error)")
+            }
+        }
+        return (replacedUID, AudioDevice.defaultOutput?.uid == AudioDevice.sendspinUID)
     }
 
     /// Remove the driver and the app. Returns false if the user cancelled.
     func uninstall() async throws -> Bool {
         // Hand the Mac's sound back to the previous output before the device disappears.
         let wasMacOutput = isMacOutput
-        if wasMacOutput { setMacOutput(false) }
+        if wasMacOutput { await setMacOutput(false) }
         let removed: Bool
         do {
             removed = try await Uninstaller.run()
         } catch {
-            if wasMacOutput { setMacOutput(true) }
+            if wasMacOutput { await setMacOutput(true) }
             throw error
         }
-        if !removed && wasMacOutput { setMacOutput(true) }
+        if !removed && wasMacOutput { await setMacOutput(true) }
         return removed
     }
 }
