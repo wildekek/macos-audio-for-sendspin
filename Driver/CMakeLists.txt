@@ -74,9 +74,20 @@ set_target_properties(${DRIVER_NAME} PROPERTIES
   MACOSX_BUNDLE_GUI_IDENTIFIER "${DRIVER_IDENTIFIER}"
 )
 
-add_custom_command(TARGET ${DRIVER_NAME} POST_BUILD
+# Notarization requires a secure timestamp; ad-hoc signatures can't have one.
+if(CODESIGN_ID STREQUAL "-")
+  set(CODESIGN_TIMESTAMP --timestamp=none)
+else()
+  set(CODESIGN_TIMESTAMP --timestamp)
+endif()
+
+# A separate target, not POST_BUILD: resources (the icon) can be copied into the bundle after
+# the link step, and signing before that leaves them outside the signature.
+add_custom_target(${DRIVER_NAME}_codesign ALL
   COMMENT "Signing ${DRIVER_NAME}.driver (${CODESIGN_ID})"
   VERBATIM
-  COMMAND codesign --force --options runtime --timestamp=none -s "${CODESIGN_ID}"
+  COMMAND codesign --force --options runtime ${CODESIGN_TIMESTAMP} -s "${CODESIGN_ID}"
     "$<TARGET_BUNDLE_DIR:${DRIVER_NAME}>"
+  COMMAND codesign --verify --strict "$<TARGET_BUNDLE_DIR:${DRIVER_NAME}>"
 )
+add_dependencies(${DRIVER_NAME}_codesign ${DRIVER_NAME})

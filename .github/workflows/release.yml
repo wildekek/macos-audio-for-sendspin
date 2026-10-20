@@ -1,0 +1,107 @@
+# Build, sign and notarize the installer for a version tag, and attach it to a draft release.
+# Publishing the draft is a manual step. Setup: README → Release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    # Holds the signing secrets; restrict it to v* tags in the repository settings.
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the tag matches the version
+        run: |
+          version=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' App/project.yml)
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match MARKETING_VERSION ${version}"
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "KEYCHAIN=$RUNNER_TEMP/release.keychain-db" >> "$GITHUB_ENV"
+
+      - name: Install tools
+        run: |
+          brew install xcodegen
+          xcodebuild -version
+          cmake --version | head -1
+
+      - name: Import signing certificates
+        env:
+          # Both identities (Application and Installer) in one .p12.
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          keychain_password=$(uuidgen)
+          security create-keychain -p "$keychain_password" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$KEYCHAIN"
+          p12="$RUNNER_TEMP/developer-id.p12"
+          base64 --decode <<<"$DEVELOPER_ID_P12" > "$p12"
+          security import "$p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productbuild
+          rm -f "$p12"
+          # The intermediate isn't in the .p12; without it the identities don't validate.
+          ca="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL -o "$ca" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$ca" -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$KEYCHAIN" >/dev/null
+          # Default keychain, so codesign, productbuild and notarytool all find it.
+          security list-keychains -d user -s "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+
+          identity() { security find-identity -v "$KEYCHAIN" | sed -n "s/.*\"\($1: .*\)\"$/\1/p" | head -1; }
+          app_id=$(identity "Developer ID Application")
+          installer_id=$(identity "Developer ID Installer")
+          if [[ -z "$app_id" || -z "$installer_id" ]]; then
+            echo "::error::Developer ID Application or Installer identity missing"
+            exit 1
+          fi
+          echo "DEVELOPER_ID_APP=$app_id" >> "$GITHUB_ENV"
+          echo "DEVELOPER_ID_INSTALLER=$installer_id" >> "$GITHUB_ENV"
+
+      - name: Store notarization credentials
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          key="$RUNNER_TEMP/notary.p8"
+          printf '%s\n' "$NOTARY_KEY" > "$key"
+          xcrun notarytool store-credentials notary --key "$key" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --keychain "$KEYCHAIN"
+          rm -f "$key"
+
+      - name: Build, sign and notarize
+        env:
+          NOTARY_PROFILE: notary
+        run: Installer/build-pkg.sh
+
+      - name: Verify
+        run: |
+          pkg="build/release/macOS-Audio-for-Sendspin-${VERSION}.pkg"
+          xcrun stapler validate "$pkg"
+          spctl --assess --type install -vv "$pkg"
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$PKG" --draft --generate-notes \
+            --title "macOS Audio for Sendspin ${VERSION}"
+
+      - name: Remove keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN" 2>/dev/null || true

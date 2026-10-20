@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Installer for the app and the driver, built by build-pkg.sh. -->
+<installer-gui-script minSpecVersion="2">
+    <title>macOS Audio for Sendspin</title>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="14.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+    <choice id="default" title="macOS Audio for Sendspin">
+        <pkg-ref id="eu.vooijs.MacOSAudioForSendspin.pkg.app"/>
+        <pkg-ref id="eu.vooijs.MacOSAudioForSendspin.pkg.driver"/>
+    </choice>
+    <pkg-ref id="eu.vooijs.MacOSAudioForSendspin.pkg.app">app.pkg</pkg-ref>
+    <pkg-ref id="eu.vooijs.MacOSAudioForSendspin.pkg.driver">driver.pkg</pkg-ref>
+</installer-gui-script>
