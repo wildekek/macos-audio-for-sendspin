@@ -82,17 +82,24 @@ struct MenuView: View {
     /// output. What belongs to a destination hangs underneath it.
     private var destinations: some View {
         let onSpeakers = bridge.isMacOutput && bridge.destination == .speakers
+        // Sendspin speakers shows once there's a speaker (found or ticked), or while it's chosen.
+        let showsSpeakers = !bridge.players.isEmpty || onSpeakers || bridge.waitsForSpeaker
         return VStack(alignment: .leading, spacing: 2) {
-            DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
-                           state: onSpeakers ? speakersState : nil,
-                           action: { bridge.chooseSpeakers() }) {
-                // No group slider: the Mac's volume is the group's volume.
-                if !onSpeakers, let names = bridge.selectedSpeakerNames {
-                    Text(names)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+            if !showsSpeakers && !bridge.offersMusicAssistant {
+                LookingRow()
+            }
+            if showsSpeakers {
+                DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
+                               state: onSpeakers ? speakersState : nil,
+                               action: { bridge.chooseSpeakers() }) {
+                    // No group slider: the Mac's volume is the group's volume.
+                    if !onSpeakers, let names = bridge.selectedSpeakerNames {
+                        Text(names)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
             }
             if onSpeakers || bridge.waitsForSpeaker {
@@ -142,6 +149,31 @@ struct MenuView: View {
 /// Where what hangs under a destination starts: past its icon.
 private let destinationIndent: CGFloat = 36
 
+/// Before any speaker or Music Assistant is found: what the app is looking for, and where to
+/// read which speakers work with it.
+private struct LookingRow: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 26, height: 26)
+                .background(Color.secondary.opacity(0.2), in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Looking for speakers…")
+                    .fontWeight(.semibold)
+                Text("Sendspin speakers and Music Assistant on your network show up here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                WebLink(title: "Which speakers work with this app?",
+                        url: URL(string: "https://www.sendspin-audio.com/#speakers")!)
+            }
+            .padding(.top, 4)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
 /// Whether a chosen destination gets the Mac's audio, on the right of its row.
 private enum DestinationState {
     case streaming, idle, unavailable
@@ -151,6 +183,24 @@ private enum DestinationState {
         case .streaming: "Streaming"
         case .idle: "Idle"
         case .unavailable: "Unavailable"
+        }
+    }
+}
+
+/// A link that looks like one: underlined, with the pointing hand, while hovered.
+private struct WebLink: View {
+    let title: String
+    let url: URL
+    @State private var hovering = false
+
+    var body: some View {
+        Link(destination: url) {
+            Text(title).underline(hovering)
+        }
+        .font(.callout)
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
     }
 }
