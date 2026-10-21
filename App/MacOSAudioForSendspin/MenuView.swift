@@ -89,7 +89,7 @@ struct MenuView: View {
                 LookingRow()
             }
             if showsSpeakers {
-                DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
+                DestinationRow(icon: .symbol("hifispeaker.fill"), title: "Sendspin speakers", chosen: onSpeakers,
                                state: onSpeakers ? speakersState : nil,
                                action: { bridge.chooseSpeakers() }) {
                     // No group slider: the Mac's volume is the group's volume.
@@ -108,7 +108,7 @@ struct MenuView: View {
             if bridge.offersMusicAssistant {
                 MusicAssistantRows(bridge: bridge)
             }
-            DestinationRow(icon: "laptopcomputer", title: bridge.macOutputName, chosen: !bridge.isMacOutput,
+            DestinationRow(icon: .symbol("laptopcomputer"), title: bridge.macOutputName, chosen: !bridge.isMacOutput,
                            action: { bridge.chooseMac() }) {
                 EmptyView()
             }
@@ -205,10 +205,30 @@ private struct WebLink: View {
     }
 }
 
+/// A destination's icon: an SF Symbol, or a template image from the asset catalog (Music
+/// Assistant's own mark), drawn the same way.
+private enum DestinationIcon {
+    case symbol(String)
+    case asset(String)
+
+    @ViewBuilder var image: some View {
+        switch self {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 12, weight: .medium))
+        case .asset(let name):
+            Image(name)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 14, height: 14)
+        }
+    }
+}
+
 /// A destination: a round icon, blue when chosen, its name, and on the right its state
 /// while chosen or whatever else it shows.
 private struct DestinationRow<Trailing: View>: View {
-    let icon: String
+    let icon: DestinationIcon
     let title: String
     let chosen: Bool
     var state: DestinationState?
@@ -221,8 +241,7 @@ private struct DestinationRow<Trailing: View>: View {
             // left, so a long list of speakers truncates instead of widening the menu.
             Button(action: action) {
                 HStack(spacing: 10) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
+                    icon.image
                         .foregroundStyle(chosen ? Color.white : Color.primary)
                         .frame(width: 26, height: 26)
                         .background(chosen ? Color.accentColor : Color.secondary.opacity(0.2), in: Circle())
@@ -270,7 +289,7 @@ private struct MusicAssistantRows: View {
         let needsPairing = status.connected && !status.paired
         let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
         VStack(alignment: .leading, spacing: 2) {
-            DestinationRow(icon: "music.note", title: "Music Assistant", chosen: chosen,
+            DestinationRow(icon: .asset("MusicAssistantIcon"), title: "Music Assistant", chosen: chosen,
                            state: chosen ? (!status.connected ? .unavailable : status.streaming ? .streaming : .idle) : nil,
                            action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
                 if needsPairing {
