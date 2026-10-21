@@ -511,7 +511,7 @@ final class BridgeController {
                 }
                 if let key { playerStatusChanged(key, status) }
             }
-            // It left: forget the connection (a ticked one shows as offline).
+            // It left: forget the connection (a ticked one shows as unavailable).
             guard let self else { return }
             if let key, sessions[key] === session { dropSession(key) } else { Task { await group.remove(url: session.url) } }
         }

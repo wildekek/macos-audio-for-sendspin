@@ -137,13 +137,12 @@ private let destinationIndent: CGFloat = 36
 
 /// Whether a chosen destination gets the Mac's audio, on the right of its row.
 private enum DestinationState {
-    case streaming, idle, offline, unavailable
+    case streaming, idle, unavailable
 
     var text: String {
         switch self {
         case .streaming: "Streaming"
         case .idle: "Idle"
-        case .offline: "Offline"
         case .unavailable: "Unavailable"
         }
     }
@@ -215,13 +214,13 @@ private struct MusicAssistantRows: View {
         let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
         VStack(alignment: .leading, spacing: 2) {
             DestinationRow(icon: "music.note", title: "Music Assistant", chosen: chosen,
-                           state: chosen ? (!status.connected ? .offline : status.streaming ? .streaming : .idle) : nil,
+                           state: chosen ? (!status.connected ? .unavailable : status.streaming ? .streaming : .idle) : nil,
                            action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
                 if needsPairing {
                     Pill(text: copied ? "Copied" : "Copy Token", checked: copied)
                         .onTapGesture(perform: copyToken)
                 } else if !chosen {
-                    Text(status.connected ? "Ready" : "Offline")
+                    Text(status.connected ? "Ready" : "Unavailable")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize()
