@@ -378,6 +378,8 @@ private struct PlayerRow: View {
             return "This speaker can't be reached. It plays again by itself once it's back on the network."
         }
         return switch player.status?.connection {
+        case .disconnected:
+            "This speaker disconnected from this Mac. Untick and tick it to connect again."
         case .left:
             "This speaker is playing something else. Tick it to play your Mac's sound on it again."
         case .pairingRequired:

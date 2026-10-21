@@ -284,7 +284,16 @@ final class BridgeController {
     /// The browsed speakers and the manual ones, without this Mac: it advertises itself as
     /// a Sendspin client too, for Music Assistant.
     private func updateDiscovered() {
+        let previous = Set(discovered.map(\.instanceName))
         discovered = browsed.filter { $0.instanceName != sourceStatus.advertisedName } + manualPlayers()
+        // A ticked speaker that said goodbye and announces itself again is back: connect to it
+        // anew, as after a lost power cable. Not one whose own user disconnected this Mac.
+        for player in discovered where !previous.contains(player.instanceName) {
+            if case .disconnected(let reason) = statuses[player.instanceName]?.connection, reason != "user_request" {
+                Log.info("\(player.instanceName) is back; connecting again")
+                dropSession(player.instanceName)
+            }
+        }
         reconcile()
     }
 
