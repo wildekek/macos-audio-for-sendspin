@@ -142,8 +142,8 @@ private struct PlayerRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Clicking the name toggles the speaker, as in Apple Music. The slider sits
-            // outside this area, so dragging it never toggles.
+            // Clicking the name plays on this speaker only, as AirPlay does; the checkbox adds
+            // or removes it. The slider sits outside this area, so dragging it never selects.
             HStack(spacing: 6) {
                 Text(player.name)
                     .lineLimit(1)
@@ -158,7 +158,7 @@ private struct PlayerRow: View {
                 Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
-            .onTapGesture { bridge.setSelected(player.instanceName, !player.isSelected) }
+            .onTapGesture { bridge.selectOnly(player.instanceName) }
 
             trailing
 

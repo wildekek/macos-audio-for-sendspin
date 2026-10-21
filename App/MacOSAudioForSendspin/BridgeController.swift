@@ -253,6 +253,12 @@ final class BridgeController {
         reconcile()
     }
 
+    /// Clicking a name, as in AirPlay: play on this speaker only. The checkboxes add and remove.
+    func selectOnly(_ instanceName: String) {
+        for other in selected where other != instanceName { setSelected(other, false) }
+        setSelected(instanceName, true)
+    }
+
     /// Approved players: instance name → the `client_id` approved for it.
     private var approvedPlayers: [String: String] {
         defaults.dictionary(forKey: "approvedPlayers") as? [String: String] ?? [:]
