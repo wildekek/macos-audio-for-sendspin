@@ -15,6 +15,7 @@ wheels/
 Driver/build/
 App/build/
 App/MacOSAudioForSendspin.xcodeproj/
+App/Local.xcconfig
 
 # macOS
 .DS_Store

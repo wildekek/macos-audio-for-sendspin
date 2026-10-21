@@ -1,0 +1,8 @@
+// Ad-hoc signing for local builds; release builds pass a Developer ID (Release/build-dmg.sh).
+// An ad-hoc signature changes with every build, so the Keychain asks again after each one.
+// To sign your own builds with a certificate instead, which the Keychain keeps trusting,
+// set CODE_SIGN_IDENTITY and DEVELOPMENT_TEAM in Local.xcconfig next to this file (git
+// ignores it).
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+#include? "Local.xcconfig"

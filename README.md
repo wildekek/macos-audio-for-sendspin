@@ -118,6 +118,15 @@ advertise itself to speakers: mDNSResponder can't read its Info.plist inside you
 and refuses the announcement (`NoAuth`). To test client-initiated connections, copy the dev
 app to /Applications and run it from there.
 
+Local builds are signed ad hoc, so each build is a new app to the Keychain, which asks again
+for the app's keys. With a signing certificate, create `App/Local.xcconfig` (git ignores it)
+and the Keychain keeps trusting your builds once you click *Always Allow*:
+
+```
+CODE_SIGN_IDENTITY = Developer ID Application: Your Name (TEAMID)
+DEVELOPMENT_TEAM = TEAMID
+```
+
 ## Release
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`). Push a tag `v<version>`,

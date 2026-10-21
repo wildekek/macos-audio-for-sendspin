@@ -70,6 +70,9 @@ targets:
       path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
       properties:
         com.apple.security.device.audio-input: true
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
         PRODUCT_NAME: macOS Audio for Sendspin
@@ -77,10 +80,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # make-app-icon.swift draws it
-        # Ad-hoc signing for local builds; release builds pass a Developer ID.
+        # The identity comes from Signing.xcconfig: ad-hoc unless Local.xcconfig says otherwise.
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: ""
         SWIFT_STRICT_CONCURRENCY: complete
         # The driver script builds ../Driver with CMake, outside the sandboxed inputs.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
