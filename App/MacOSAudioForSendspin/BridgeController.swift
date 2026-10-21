@@ -134,9 +134,11 @@ final class BridgeController {
         (isMacOutput ? returnOutputName : currentOutputName) ?? "This Mac"
     }
 
-    /// The ticked speakers, for the Sendspin speakers row while something else is chosen.
-    var selectedSpeakerNames: String? {
-        let names = players.filter(\.isSelected).map(\.name)
+    /// For the Sendspin speakers row while something else is chosen: the ticked speakers, or
+    /// until one is ticked, the ones found.
+    var speakersSummary: String? {
+        let ticked = players.filter(\.isSelected)
+        let names = (ticked.isEmpty ? players : ticked).map(\.name)
         return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 

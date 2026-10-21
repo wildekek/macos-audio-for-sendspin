@@ -93,7 +93,7 @@ struct MenuView: View {
                                state: onSpeakers ? speakersState : nil,
                                action: { bridge.chooseSpeakers() }) {
                     // No group slider: the Mac's volume is the group's volume.
-                    if !onSpeakers, let names = bridge.selectedSpeakerNames {
+                    if !onSpeakers, let names = bridge.speakersSummary {
                         Text(names)
                             .font(.caption)
                             .foregroundStyle(.secondary)
