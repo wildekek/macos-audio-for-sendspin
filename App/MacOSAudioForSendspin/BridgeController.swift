@@ -8,7 +8,8 @@ import os
 
 /// Owns the bridge: discovers players, keeps the selected ones in one group, captures
 /// the Sendspin device and streams it, and links the device's volume/mute (volume keys,
-/// Control Center) with the players.
+/// Control Center) with the players. It also offers the Mac's audio to Music Assistant, as
+/// a Sendspin source.
 @MainActor
 @Observable
 final class BridgeController {
@@ -19,6 +20,12 @@ final class BridgeController {
         var isSelected: Bool
         var status: PlayerStatus?
         var isDiscovered: Bool
+    }
+
+    /// Where the Mac's audio goes: the speakers ticked here, in sync, or Music Assistant,
+    /// which plays it on whatever it chooses. One at a time: the two aren't in sync.
+    enum Destination: String {
+        case speakers, musicAssistant
     }
 
     enum Lead: Int, CaseIterable, Identifiable {
@@ -77,6 +84,10 @@ final class BridgeController {
     private(set) var selectedFormat: StreamFormat
     private(set) var deviceSampleRate = 48_000
     private var deviceSampleRates: Set<Int> = []
+    /// This Mac as a source for Music Assistant (or another Sendspin server).
+    private(set) var sourceStatus: SourceStatus
+    /// The chosen destination; `destination` is the one in effect.
+    private(set) var chosenDestination: Destination
 
     var players: [Player] {
         var names = Set(discovered.map(\.instanceName)).union(selected)
@@ -94,6 +105,33 @@ final class BridgeController {
     }
 
     var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
+
+    /// Music Assistant found this Mac, or is paired with it: the menu offers the choice.
+    var offersMusicAssistant: Bool { sourceStatus.connected || sourceStatus.hasPairing }
+
+    /// Speakers, unless Music Assistant is chosen and offered.
+    var destination: Destination { offersMusicAssistant ? chosenDestination : .speakers }
+
+    /// Music Assistant can take the Mac's audio: chosen, paired and connected.
+    var musicAssistantReady: Bool { destination == .musicAssistant && sourceStatus.paired }
+
+    /// Somewhere for the Mac's sound to go.
+    var hasDestination: Bool { destination == .speakers ? hasConnectedPlayers : musicAssistantReady }
+
+    /// Audio is going out to the current destination.
+    var isPlayingOut: Bool { destination == .speakers ? isStreaming : sourceStatus.streaming }
+
+    /// What Music Assistant pastes to pair with this Mac.
+    var pairingToken: String { source.pairingToken }
+
+    /// The name this Mac goes by in Music Assistant.
+    var macName: String { identity.name }
+
+    /// The server's name without the id Music Assistant adds, e.g. "Music Assistant (d536…)".
+    var musicAssistantName: String {
+        let name = sourceStatus.serverName ?? sourceStatus.pairedServerNames.first ?? "Music Assistant"
+        return name.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
+    }
 
     /// Formats at least one connected speaker supports, at rates the device offers.
     /// Speakers that don't support the active format get it converted.
@@ -118,6 +156,11 @@ final class BridgeController {
     private let defaults = UserDefaults.standard
     private let group: PlaybackGroup
     private let identity: ServerIdentity
+    private let source: SourceClient
+    /// Whether captured audio goes to the speakers; the capture pump reads it per block.
+    private let speakerRoute = SpeakerRoute()
+    /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
+    private var browsed: [DiscoveredPlayer] = []
     private var sessions: [String: PlayerSession] = [:]
     private var capture: AudioCapture?
     private var isStartingCapture = false
@@ -142,6 +185,11 @@ final class BridgeController {
         appliedLeadMs = lead.rawValue
         self.identity = identity
         group = PlaybackGroup(name: identity.name, leadMs: lead.rawValue)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        source = SourceClient(name: identity.name, softwareVersion: version,
+                              credentials: SourceCredentialsStore.load(), save: SourceCredentialsStore.save)
+        sourceStatus = SourceStatus()
+        chosenDestination = Destination(rawValue: defaults.string(forKey: "destination") ?? "") ?? .speakers
 
         Log.minimumLevel = defaults.bool(forKey: "verboseLogging") ? .debug : .info
         let logger = Logger(subsystem: "eu.vooijs.MacOSAudioForSendspin", category: "bridge")
@@ -202,10 +250,18 @@ final class BridgeController {
             for await players in PlayerBrowser.browse(localNetworkDenied: denied) {
                 guard let self else { return }
                 Log.debug("Discovered: \(players.map { "\($0.instanceName) \($0.url.absoluteString)" })")
-                discovered = players + manualPlayers()
-                reconcile()
+                browsed = players
+                updateDiscovered()
             }
         }
+        startSource()
+    }
+
+    /// The browsed speakers and the manual ones, without this Mac: it advertises itself as
+    /// a Sendspin client too, for Music Assistant.
+    private func updateDiscovered() {
+        discovered = browsed.filter { $0.instanceName != sourceStatus.advertisedName } + manualPlayers()
+        reconcile()
     }
 
     func requestMicrophoneAccess() async {
@@ -313,6 +369,60 @@ final class BridgeController {
         Task { await group.remove(url: session.url) }
     }
 
+    // MARK: Music Assistant
+
+    /// Advertise this Mac as a Sendspin source: Music Assistant finds it, and once paired
+    /// (with the token from Settings) can play its audio anywhere.
+    private func startSource() {
+        let source = source
+        let sending = chosenDestination == .musicAssistant
+        Task { [weak self] in
+            await source.start()
+            // Always available: the Speakers tab sends silence instead (see applyDestination).
+            await source.setAvailable(true)
+            await source.setSending(sending)
+            for await status in source.statusUpdates {
+                self?.sourceStatusChanged(status)
+            }
+        }
+    }
+
+    private func sourceStatusChanged(_ status: SourceStatus) {
+        let advertisedChanged = status.advertisedName != sourceStatus.advertisedName
+        sourceStatus = status
+        applyDestination()
+        if advertisedChanged { updateDiscovered() } else { updateCapture() }
+    }
+
+    func setDestination(_ destination: Destination) {
+        chosenDestination = destination
+        defaults.set(destination.rawValue, forKey: "destination")
+        applyDestination()
+        updateCapture()
+    }
+
+    /// Route the audio: to the speakers, or to Music Assistant. Either side stays connected,
+    /// so switching back is immediate. Music Assistant gets silence meanwhile, like a line-in
+    /// whose source went quiet: reporting the Mac unavailable would end its stream, and it
+    /// would only play again once someone starts the input anew.
+    private func applyDestination() {
+        let toSpeakers = destination == .speakers
+        guard toSpeakers != speakerRoute.isOn else { return }
+        speakerRoute.set(toSpeakers)
+        let source = source
+        Task { await source.setSending(!toSpeakers) }
+        if !toSpeakers {
+            isStreaming = false
+            Task { await group.setPlaying(false) }
+        }
+    }
+
+    /// Forget every pairing: Music Assistant needs the token again.
+    func forgetMusicAssistant() {
+        let source = source
+        Task { await source.forgetPairings() }
+    }
+
     // MARK: Players that connect to us
 
     /// Players that look for a server themselves (client-initiated connections) find this
@@ -394,7 +504,12 @@ final class BridgeController {
 
     // MARK: Capture
 
-    private var isCaptureWanted: Bool { !sessions.isEmpty && microphoneAccess == .authorized }
+    /// Speakers to play to, or Music Assistant: as the destination, or with its stream open
+    /// (it keeps getting silence, so the stream lives on for when it's chosen again).
+    private var isCaptureWanted: Bool {
+        let wanted = destination == .speakers ? !sessions.isEmpty || sourceStatus.streaming : musicAssistantReady
+        return wanted && microphoneAccess == .authorized
+    }
 
     private func updateCapture() {
         if isCaptureWanted, capture == nil, !isStartingCapture, let device = AudioDevice.sendspin {
@@ -423,8 +538,9 @@ final class BridgeController {
                         return
                     }
                     self.capture = capture
-                    pumpTask = Task.detached { [group] in
-                        await Self.pump(capture.blocks, into: group, streamingChanged: streamingChanged)
+                    pumpTask = Task.detached { [group, source, speakerRoute] in
+                        await Self.pump(capture.blocks, into: group, source: source, route: speakerRoute,
+                                        streamingChanged: streamingChanged)
                     }
                     Log.info("Capturing from \(capture.deviceName) at \(capture.sampleRate) Hz")
                 case .failure(let error):
@@ -463,15 +579,20 @@ final class BridgeController {
     }
 
     /// Forward captured audio; after a few seconds of digital silence the players get
-    /// `stream/end`, and the stream restarts with the next sound.
+    /// `stream/end`, and the stream restarts with the next sound. Music Assistant gets every
+    /// block, silence too: it decides when to play, from the signal we report (and only
+    /// streams while it's the destination).
     nonisolated private static func pump(_ blocks: AsyncStream<CapturedBlock>, into group: PlaybackGroup,
+                                         source: SourceClient, route: SpeakerRoute,
                                          streamingChanged: @Sendable (Bool) async -> Void) async {
         let idleAfterUs: Int64 = 3_000_000
         var lastSoundUs: Int64?
         var streaming = false
         for await block in blocks {
+            // 16-bit: Music Assistant plays live inputs at 48 kHz/16-bit anyway.
+            await source.deliver(block.pcm, captureTimeUs: block.captureTimeUs, bitDepth: 16)
             if !block.pcm.isSilent { lastSoundUs = block.captureTimeUs }
-            let active = lastSoundUs.map { block.captureTimeUs - $0 < idleAfterUs } ?? false
+            let active = route.isOn && (lastSoundUs.map { block.captureTimeUs - $0 < idleAfterUs } ?? false)
             if active {
                 await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
             } else if streaming {
@@ -566,10 +687,12 @@ final class BridgeController {
         }
     }
 
-    /// Volume keys / Control Center / our group slider changed the device volume.
+    /// Volume keys / Control Center / our group slider changed the device volume. With Music
+    /// Assistant as the destination, its own volume applies and the idle speakers stay put.
     private func deviceVolumeChanged() {
         guard let volume = AudioDevice.sendspin?.volume else { return }
         deviceVolume = volume
+        guard destination == .speakers else { return }
         if let expected = expectedDeviceVolume, abs(expected - volume) < 0.005 {
             expectedDeviceVolume = nil
             return
@@ -585,6 +708,7 @@ final class BridgeController {
     private func deviceMuteChanged() {
         guard let muted = AudioDevice.sendspin?.isMuted, muted != deviceMuted else { return }
         deviceMuted = muted
+        guard destination == .speakers else { return }
         let targets = sessions.filter { statuses[$0.key]?.muted != muted }.map(\.value)
         for session in targets {
             Task { await session.setMuted(muted) }
@@ -753,6 +877,15 @@ final class BridgeController {
         if !removed && wasMacOutput { await setMacOutput(true) }
         return removed
     }
+}
+
+/// A flag the capture pump reads for every block, off the main actor.
+final class SpeakerRoute: Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: true)
+
+    var isOn: Bool { state.withLock { $0 } }
+
+    func set(_ on: Bool) { state.withLock { $0 = on } }
 }
 
 extension PlayerStatus.Connection {

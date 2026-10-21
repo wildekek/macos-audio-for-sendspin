@@ -9,6 +9,12 @@ struct SettingsView: View {
     @State private var uninstallError: String?
     @State private var openAtLogin = LoginItem.isEnabled
     @State private var loginItemNeedsApproval = LoginItem.needsApproval
+    @State private var confirmingForget = false
+
+    private static let repository = URL(string: "https://github.com/wildekek/macos-audio-for-sendspin")!
+    private var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
 
     var body: some View {
         Form {
@@ -51,6 +57,8 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
+            musicAssistant
+
             Section {
                 Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
             } footer: {
@@ -73,6 +81,17 @@ struct SettingsView: View {
                     Text("Uninstall")
                     Text("Removes the Sendspin audio device, this app and its microphone permission. Your settings are kept.")
                 }
+            } footer: {
+                // A minimal about: the version, and where the source lives.
+                HStack(spacing: 4) {
+                    Text("macOS Audio for Sendspin \(version)")
+                    Text("·")
+                    Link("GitHub", destination: Self.repository)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
             }
         }
         .formStyle(.grouped)
@@ -84,11 +103,32 @@ struct SettingsView: View {
         } message: {
             Text("The Sendspin audio device and the app are removed, and you're asked for an administrator password. Mac audio stops for a moment; there's no need to restart.")
         }
+        .alert("Forget the pairing with \(bridge.musicAssistantName)?", isPresented: $confirmingForget) {
+            Button("Forget", role: .destructive) { bridge.forgetMusicAssistant() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Music Assistant can't play the Mac's audio until you pair it again with the token.")
+        }
         .alert("Couldn't uninstall", isPresented: Binding(get: { uninstallError != nil },
                                                           set: { if !$0 { uninstallError = nil } })) {
             Button("OK") {}
         } message: {
             Text(uninstallError ?? "")
+        }
+    }
+
+    /// Once paired: which server, and a way to forget it. Pairing itself happens in the menu.
+    @ViewBuilder private var musicAssistant: some View {
+        let status = bridge.sourceStatus
+        if status.hasPairing || status.paired {
+            Section {
+                LabeledContent {
+                    Button("Forget…") { confirmingForget = true }
+                } label: {
+                    Text(bridge.musicAssistantName)
+                    Text(status.connected ? "Paired" : "Paired, not connected right now")
+                }
+            }
         }
     }
 
