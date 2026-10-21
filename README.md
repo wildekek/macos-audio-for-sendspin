@@ -12,7 +12,7 @@ bit-perfect playback is finally possible on your Mac.
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
 choose speakers and control their volume:
 
-<img src="docs/menu.png" width="443" alt="The speaker icon in the menu bar, with its menu open: Playing on Sendspin, streaming, with a button to switch back to the MacBook Pro Speakers, and a Home Assistant Connect AUX-2 ticked with its volume slider.">
+<img src="docs/menu.png" width="439" alt="The speaker icon in the menu bar, with its menu open: Playing on Sendspin, streaming, with a link to use the MacBook Pro Speakers instead; below it the Speakers and Music Assistant tabs, with a dot on Music Assistant, and a Home Assistant Connect AUX-2 ticked with its volume slider.">
 
 > Sendspin is a protocol of the Open Home Foundation;
 > this project is not affiliated with or endorsed by it.
@@ -35,8 +35,13 @@ release candidate in October 2026). Sendspin's own site keeps
   [the Sendspin daemon](https://github.com/Sendspin/sendspin-cli), from a release built on
   aiosendspin 10 or later (8.0.0 isn't yet).
 
-AirPlay and Chromecast speakers that Music Assistant bridges to Sendspin don't work currently:
-those bridges live inside Music Assistant and Music Assistant support is pending.
+### Already running Music Assistant?
+
+Then the menu gets a second tab, **Music Assistant**. Pair this Mac once with the token the tab
+offers, and Music Assistant can play the Mac's audio on any of its speakers and groups,
+AirPlay, Chromecast and Sonos included: select this Mac as an input source there. Music
+Assistant chooses the speakers and the volume, and it isn't in sync with the speakers on the
+**Speakers** tab, so the Mac plays to one or the other.
 
 ## Install
 
@@ -79,12 +84,13 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
            │ loopback, same host clock
            ▼
         menu bar app (App/) ── SendspinServerKit (Packages/) ── ws:// ──► speakers
+                                         └── ws:// ──► Music Assistant (as a source)
 ```
 
 | Path | What |
 | --- | --- |
 | `Driver/` | Audio Server plug-in on libASPL: the loopback device, with volume/mute and a reported latency. |
-| `Packages/SendspinServerKit/` | Sendspin server in Swift (`SendspinServerKit`), CoreAudio capture and device control (`SendspinAudio`), and the `sendspin-bridge` CLI. |
+| `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`); CoreAudio capture and device control (`SendspinAudio`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). |
 | `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
 | `Release/` | Builds the disk image; signs and notarizes it for releases. |
 
@@ -162,7 +168,8 @@ Release/build-dmg.sh
   connection, and it comes back unticked when it reconnects.
 - **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
   Its volume and mute controls aren't applied to the audio: the app forwards them to the
-  speakers, so the volume keys and Control Center control the speakers.
+  speakers, so the volume keys and Control Center control the speakers (on the Speakers tab;
+  with Music Assistant, its own volume applies).
 - **Timing.** Each captured block is scheduled at its capture host time plus the *speaker
   buffer* (300 ms / 600 ms / 1 s), or more when a connected speaker asks for it
   (its `min_buffer_ms` plus `output_delay_ms`; Settings then shows why). Capture timestamps equal the output timestamps apps see
@@ -183,6 +190,16 @@ Release/build-dmg.sh
   with the next sound.
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker
   equally, so their relative balance is kept (the same algorithm as aiosendspin).
+- **Music Assistant.** The app is also a Sendspin client with the `source@v1` role: it
+  advertises `_sendspin._tcp` (port 8928, or a free one) with its own Curve25519 identity, and
+  Music Assistant connects to it. Pairing uses the Pairing PSK method: the token
+  (`SP:0…`) carries the client key and a pairing PSK, and the long-term keys of up to 5
+  servers are kept in the Keychain (Settings → Forget unpairs). Clock sync is the Sendspin
+  time filter (a 2D Kalman filter) over bursts of `client/time`. When Music Assistant asks, the
+  Mac streams FLAC at the device's rate in 16 bit, 20 ms chunks stamped with their capture
+  time in the server's clock, and reports `signal: present` while there's sound, so Music
+  Assistant can start it automatically. On the Speakers tab it sends silence instead: the
+  stream stays open, like a quiet line-in, and resumes when Music Assistant is chosen again.
 
 Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….dev` for a dev build):
 - `manualPlayers`: an array of `ws://host:port/path` URLs, for speakers mDNS can't find;
@@ -190,7 +207,9 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 
 ## Status
 
-Implements Sendspin 1 (release candidate) with unpaired access, tested against aiosendspin
-10.2.1 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol isn't
-supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
-pairing, Opus, and a test of 44.1 kHz-only speakers (the resampler should already handle them).
+Implements Sendspin 1 (release candidate): as a server with unpaired access, and as a client
+with the source role, paired with the pairing token. Tested against aiosendspin 10.2.1, Music
+Assistant 2.10.7 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol
+isn't supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
+pairing with speakers (the server side), Opus, and a test of 44.1 kHz-only speakers (the
+resampler should already handle them).

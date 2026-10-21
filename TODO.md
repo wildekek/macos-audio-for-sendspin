@@ -8,7 +8,9 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 1. **Pairing.** Servers must implement all three methods: the pairing PSK token (`SP:0…`), the
    static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
    Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
-   show "Needs pairing". Not started; deliberately left until a speaker needs it.
+   show "Needs pairing". Deliberately left until a speaker needs it. The client side of the
+   Pairing PSK method exists (the Music Assistant tab): the token, `client/pair-init` and
+   `-finalize`, the pairing records and the re-handshake to the new key. CPace is still to do.
 2. **The other roles.** "All servers MUST implement all versions of these roles": besides
    `player`, that's `controller` (play/pause/next, group volume by the spec's algorithm,
    `switch`), `metadata` and `artwork` (what's playing; needs macOS's Now Playing info),
@@ -27,15 +29,10 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
 5. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
-6. **Play through Music Assistant** (for people who already run it). The Mac becomes a Sendspin
-   client with the `source@v1` role, and MA shows it as a Live Input that it can play on any of
-   its players, so the app stops competing with MA for the same speakers. MA starts the stream
-   (`start` → `client-stream/start` → type-12 chunks of at most 150 ms; FLAC at 48 kHz/16-bit is
-   enough), and reporting `signal: present` while the Mac plays lets MA start it automatically.
-   New: the client side (advertise `_sendspin._tcp` and skip ourselves when browsing, Noise as
-   responder, `client/hello`, the time filter and capture times in server time) and client-side
-   pairing, because MA only admits paired sources. Do it after pairing (1), which shares the
-   CPace code. MA's buffering adds latency, so direct playback stays the default.
+6. **More on the Music Assistant tab.** Show and control what Music Assistant does with the
+   Mac's input (where it plays, its volume, stop): a source can't, so this needs Music
+   Assistant's own API. And pairing with the 6-digit dynamic pairing code instead of the token,
+   once pairing (1) has CPace.
 
 ## Audio: recommended or optional
 
@@ -57,5 +54,6 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 Done: the signed, notarized disk image with a welcome window that installs the driver (each
 `v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, Sendspin 1 over Noise,
 client-initiated connections (speakers that connect to us wait, unticked, until allowed), a
-notice when Local Network access is denied, opening at login, and speakers that leave the
-group (unavailable or `client/leave`) staying out until the user ticks them again.
+notice when Local Network access is denied, opening at login, speakers that leave the
+group (unavailable or `client/leave`) staying out until the user ticks them again, and playing
+through Music Assistant (the Mac as a paired source, on its own tab).
