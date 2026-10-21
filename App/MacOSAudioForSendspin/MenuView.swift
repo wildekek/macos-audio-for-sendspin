@@ -9,7 +9,6 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
             warnings
             if bridge.driverInstalled {
                 destinations
@@ -34,12 +33,6 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 340)
-    }
-
-    /// Whether audio goes out shows on the destination itself, so the header is only a title.
-    private var header: some View {
-        Text("Play on")
-            .font(.headline)
     }
 
     @ViewBuilder private var warnings: some View {
