@@ -159,6 +159,8 @@ private struct DestinationRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // The icon and name keep their size, and what's on the right gets the space that's
+            // left, so a long list of speakers truncates instead of widening the menu.
             Button(action: action) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
@@ -169,28 +171,32 @@ private struct DestinationRow<Trailing: View>: View {
                     Text(title)
                         .fontWeight(chosen ? .semibold : .regular)
                         .lineLimit(1)
-                        // The name stays whole; what's on the right gives way.
-                        .fixedSize()
-                    Spacer(minLength: 8)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .fixedSize()
             .accessibilityAddTraits(chosen ? .isSelected : [])
-            if let state {
-                HStack(spacing: 4) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 6))
-                        .foregroundStyle(state == .streaming ? Color.green : Color.secondary)
-                    Text(state.text)
+            HStack(spacing: 10) {
+                if let state {
+                    HStack(spacing: 4) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .foregroundStyle(state == .streaming ? Color.green : Color.secondary)
+                        Text(state.text)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize()
+                trailing
             }
-            trailing
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(height: 38)
+        // The whole row chooses, not only the icon and name.
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
     }
 }
 
