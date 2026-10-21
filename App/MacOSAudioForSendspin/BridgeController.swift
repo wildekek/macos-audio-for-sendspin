@@ -115,14 +115,24 @@ final class BridgeController {
     /// Music Assistant can take the Mac's audio: chosen, paired and connected.
     var musicAssistantReady: Bool { destination == .musicAssistant && sourceStatus.paired }
 
-    /// Somewhere for the Mac's sound to go.
-    var hasDestination: Bool { destination == .speakers ? hasConnectedPlayers : musicAssistantReady }
-
-    /// Audio is going out to the current destination.
-    var isPlayingOut: Bool { destination == .speakers ? isStreaming : sourceStatus.streaming }
-
     /// What Music Assistant pastes to pair with this Mac.
     var pairingToken: String { source.pairingToken }
+
+    /// The Mac's own output, which choosing it in the menu goes back to.
+    var macOutputName: String {
+        (isMacOutput ? returnOutputName : currentOutputName) ?? "This Mac"
+    }
+
+    /// The ticked speakers, for the Sendspin speakers row while something else is chosen.
+    var selectedSpeakerNames: String? {
+        let names = players.filter(\.isSelected).map(\.name)
+        return names.isEmpty ? nil : names.joined(separator: ", ")
+    }
+
+    /// Sendspin speakers was chosen before any speaker could play: the Mac's output switches
+    /// to Sendspin once one is connected, and until then the menu asks to tick one.
+    private var pendingSendspinOutput = false
+    var waitsForSpeaker: Bool { pendingSendspinOutput && !isMacOutput }
 
     /// The name this Mac goes by in Music Assistant.
     var macName: String { identity.name }
@@ -394,6 +404,35 @@ final class BridgeController {
         if advertisedChanged { updateDiscovered() } else { updateCapture() }
     }
 
+    // MARK: Choosing where the sound goes
+
+    /// Sendspin speakers: the Mac's output becomes Sendspin, now or once a speaker connects.
+    func chooseSpeakers() {
+        setDestination(.speakers)
+        guard !isMacOutput else { return }
+        if hasConnectedPlayers {
+            pendingSendspinOutput = false
+            Task { await setMacOutput(true) }
+        } else {
+            pendingSendspinOutput = true
+        }
+    }
+
+    /// Music Assistant, once paired: the Mac's output becomes Sendspin, and Music Assistant
+    /// gets the audio.
+    func chooseMusicAssistant() {
+        guard sourceStatus.paired else { return }
+        pendingSendspinOutput = false
+        setDestination(.musicAssistant)
+        if !isMacOutput { Task { await setMacOutput(true) } }
+    }
+
+    /// The Mac's own output again.
+    func chooseMac() {
+        pendingSendspinOutput = false
+        if isMacOutput { Task { await setMacOutput(false) } }
+    }
+
     func setDestination(_ destination: Destination) {
         chosenDestination = destination
         defaults.set(destination.rawValue, forKey: "destination")
@@ -497,6 +536,10 @@ final class BridgeController {
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
         statuses[name] = status
+        if pendingSendspinOutput, destination == .speakers, hasConnectedPlayers {
+            pendingSendspinOutput = false
+            if !isMacOutput { Task { await setMacOutput(true) } }
+        }
         syncDeviceToPlayers()
         applyLead()
         if formatsChanged { applyFormat() }

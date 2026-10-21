@@ -8,23 +8,11 @@ struct MenuView: View {
     @State private var driverError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             header
             warnings
             if bridge.driverInstalled {
-                Divider()
-                if bridge.offersMusicAssistant {
-                    HStack(spacing: 16) {
-                        DestinationTab(title: "Speakers", destination: .speakers, bridge: bridge)
-                        DestinationTab(title: "Music Assistant", destination: .musicAssistant, bridge: bridge,
-                                       nudge: bridge.sourceStatus.connected && !bridge.sourceStatus.paired)
-                    }
-                }
-                if bridge.destination == .speakers {
-                    speakers
-                } else {
-                    MusicAssistantPanel(bridge: bridge)
-                }
+                destinations
             }
             Divider()
             HStack {
@@ -48,46 +36,10 @@ struct MenuView: View {
         .frame(width: 340)
     }
 
-    /// Where the Mac's sound plays, and a quiet link to the other output: the choice is
-    /// between two outputs, not on or off.
+    /// Whether audio goes out shows on the destination itself, so the header is only a title.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Centred, not on the baseline: a caption on a headline's baseline looks low.
-            HStack(alignment: .center) {
-                Text("Playing on \(bridge.isMacOutput ? "Sendspin" : bridge.currentOutputName ?? "this Mac")")
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer()
-                // With somewhere to play: green while audio goes out, grey while silent.
-                if bridge.hasDestination {
-                    let streaming = bridge.isPlayingOut
-                    HStack(spacing: 4) {
-                        Image(systemName: "circle.fill")
-                            .foregroundStyle(streaming ? Color.green : Color.secondary)
-                            .font(.system(size: 6))
-                        Text(streaming ? "Streaming" : "Idle")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            if let action = switchAction {
-                Button(action.title) { Task { await bridge.setMacOutput(action.toSendspin) } }
-                    .buttonStyle(.link)
-                    .font(.system(size: 12))
-                    .disabled(bridge.isSwitchingOutput)
-            }
-        }
-    }
-
-    /// Switching to Sendspin needs a connected speaker or Music Assistant, or the Mac would
-    /// go silent; switching back is always offered.
-    private var switchAction: (title: String, toSendspin: Bool)? {
-        if bridge.isMacOutput {
-            return bridge.returnOutputName.map { ("Use \($0)", false) }
-        }
-        guard bridge.driverInstalled, bridge.hasDestination else { return nil }
-        return ("Use Sendspin", true)
+        Text("Play on")
+            .font(.headline)
     }
 
     @ViewBuilder private var warnings: some View {
@@ -132,7 +84,38 @@ struct MenuView: View {
         }
     }
 
-    /// One row per speaker, after Apple Music's AirPlay list.
+    /// One list of where the Mac's sound can go, as in the macOS Sound menu: Sendspin speakers
+    /// (with the speakers within), Music Assistant once it found this Mac, and the Mac's own
+    /// output. What belongs to a destination hangs underneath it.
+    private var destinations: some View {
+        let onSpeakers = bridge.isMacOutput && bridge.destination == .speakers
+        return VStack(alignment: .leading, spacing: 2) {
+            DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
+                           state: onSpeakers ? (bridge.isStreaming ? .streaming : .idle) : nil,
+                           action: { bridge.chooseSpeakers() }) {
+                // No group slider: the Mac's volume is the group's volume.
+                if !onSpeakers, let names = bridge.selectedSpeakerNames {
+                    Text(names)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            if onSpeakers || bridge.waitsForSpeaker {
+                speakers
+            }
+            if bridge.offersMusicAssistant {
+                MusicAssistantRows(bridge: bridge)
+            }
+            DestinationRow(icon: "laptopcomputer", title: bridge.macOutputName, chosen: !bridge.isMacOutput,
+                           action: { bridge.chooseMac() }) {
+                EmptyView()
+            }
+        }
+    }
+
+    /// The speakers within Sendspin speakers, after Apple Music's AirPlay list.
     private var speakers: some View {
         VStack(alignment: .leading, spacing: 0) {
             if bridge.players.isEmpty {
@@ -140,102 +123,159 @@ struct MenuView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
+            } else if bridge.waitsForSpeaker {
+                Text("Tick a speaker to play on it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
             }
             ForEach(bridge.players) { player in
                 PlayerRow(player: player, bridge: bridge)
             }
         }
+        .padding(.leading, destinationIndent)
+        .padding(.bottom, 6)
     }
 }
 
-/// A light text tab: the active one semibold and underlined, the other secondary. A `nudge`
-/// dot points at an inactive tab that wants attention (Music Assistant waiting to pair).
-private struct DestinationTab: View {
+/// Where what hangs under a destination starts: past its icon.
+private let destinationIndent: CGFloat = 36
+
+/// Whether a chosen destination gets the Mac's audio, on the right of its row.
+private enum DestinationState {
+    case streaming, idle, offline
+
+    var text: String {
+        switch self {
+        case .streaming: "Streaming"
+        case .idle: "Idle"
+        case .offline: "Offline"
+        }
+    }
+}
+
+/// A destination: a round icon, blue when chosen, its name, and on the right its state
+/// while chosen or whatever else it shows.
+private struct DestinationRow<Trailing: View>: View {
+    let icon: String
     let title: String
-    let destination: BridgeController.Destination
-    let bridge: BridgeController
-    var nudge = false
+    let chosen: Bool
+    var state: DestinationState?
+    let action: () -> Void
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        let active = bridge.destination == destination
-        let showsNudge = nudge && !active
-        Button { bridge.setDestination(destination) } label: {
-            HStack(spacing: 5) {
-                Text(title)
-                if showsNudge {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 7, height: 7)
-                }
-            }
-                .font(.system(size: 12, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? Color.primary : Color.secondary)
-                .padding(.bottom, 3)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(active ? Color.primary : Color.clear)
-                        .frame(height: 2)
+        HStack(spacing: 10) {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(chosen ? Color.white : Color.primary)
+                        .frame(width: 26, height: 26)
+                        .background(chosen ? Color.accentColor : Color.secondary.opacity(0.2), in: Circle())
+                    Text(title)
+                        .fontWeight(chosen ? .semibold : .regular)
+                        .lineLimit(1)
+                        // The name stays whole; what's on the right gives way.
+                        .fixedSize()
+                    Spacer(minLength: 8)
                 }
                 .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(chosen ? .isSelected : [])
+            if let state {
+                HStack(spacing: 4) {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 6))
+                        .foregroundStyle(state == .streaming ? Color.green : Color.secondary)
+                    Text(state.text)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            }
+            trailing
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(showsNudge ? "\(title), waiting to pair" : title)
-        .accessibilityAddTraits(active ? .isSelected : [])
+        .frame(height: 38)
     }
 }
 
-/// Music Assistant as the destination: it plays the Mac's audio wherever it chooses, at its
-/// own volume. Until the connected server is paired, this offers the pairing token; finding
-/// and playing the input is Music Assistant's part.
-private struct MusicAssistantPanel: View {
+/// Music Assistant as a destination. Until it's paired the whole row copies the pairing
+/// token, and choosing it would only silence the Mac; once paired, choosing it hands the
+/// Mac's audio to Music Assistant, which picks the speakers and the volume.
+private struct MusicAssistantRows: View {
     let bridge: BridgeController
     @State private var copied = false
 
     var body: some View {
         let status = bridge.sourceStatus
-        VStack(alignment: .leading, spacing: 6) {
-            if status.connected && !status.paired {
-                HStack(spacing: 10) {
-                    Text("Music Assistant found this Mac")
-                    Spacer(minLength: 8)
-                    if copied {
-                        Text("Copied · Open Music Assistant")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                    } else {
-                        Button("Copy Token", action: copyToken)
-                            .controlSize(.small)
-                    }
+        let needsPairing = status.connected && !status.paired
+        let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
+        VStack(alignment: .leading, spacing: 2) {
+            DestinationRow(icon: "music.note", title: "Music Assistant", chosen: chosen,
+                           state: chosen ? (!status.connected ? .offline : status.streaming ? .streaming : .idle) : nil,
+                           action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
+                if needsPairing {
+                    Pill(text: copied ? "Copied" : "Copy Token", checked: copied)
+                        .onTapGesture(perform: copyToken)
+                } else if !chosen {
+                    Text(status.connected ? "Ready" : "Offline")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
                 }
-                .frame(height: 30)
-                Text("Copy the token, then pair this Mac in Music Assistant.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(status.streaming ? Color.green : Color.secondary)
-                    Text(!status.connected ? "Music Assistant isn't connected"
-                         : status.streaming ? "Music Assistant is playing the Mac's audio"
-                         : "Ready for Music Assistant")
-                }
-                .frame(height: 30)
-                Text(status.connected && !status.streaming
-                     ? "Select \(bridge.macName) as an input source in Music Assistant to start playing."
-                     : "Choose speakers, groups and volume in Music Assistant.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
+
+            if needsPairing {
+                caption(copied ? "Open Music Assistant and paste the token to pair this Mac."
+                               : "Copy the token, then pair this Mac in Music Assistant.")
+                    .padding(.leading, destinationIndent)
+                    .padding(.bottom, 6)
+            } else if chosen {
+                caption(!status.connected ? "It reconnects by itself when it's back on the network."
+                        : status.streaming ? "Choose speakers, groups and volume in Music Assistant."
+                        : "Select \(bridge.macName) as an input source in Music Assistant to start playing.")
+                    .padding(.leading, destinationIndent)
+                    .padding(.bottom, 6)
             }
         }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func copyToken() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(bridge.pairingToken, forType: .string)
         copied = true
+    }
+}
+
+/// The small grey label at the end of a row: "Copy Token", then "✓ Copied".
+private struct Pill: View {
+    let text: String
+    let checked: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if checked {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            Text(text)
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 5))
+        .fixedSize()
     }
 }
 
@@ -264,12 +304,18 @@ private struct PlayerRow: View {
                 Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
-            .onTapGesture { bridge.selectOnly(player.instanceName) }
+            .onTapGesture {
+                bridge.selectOnly(player.instanceName)
+                bridge.chooseSpeakers()
+            }
 
             trailing
 
             Toggle(player.name, isOn: Binding(get: { player.isSelected },
-                                              set: { bridge.setSelected(player.instanceName, $0) }))
+                                              set: { isOn in
+                                                  bridge.setSelected(player.instanceName, isOn)
+                                                  if isOn { bridge.chooseSpeakers() }
+                                              }))
                 .toggleStyle(RoundedCheckboxStyle(name: player.name))
                 .labelsHidden()
         }
