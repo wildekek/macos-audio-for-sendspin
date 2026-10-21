@@ -95,7 +95,8 @@ final class BridgeController {
         return names.sorted().map { name in
             let discovery = discovered.first { $0.instanceName == name }
             return Player(instanceName: name,
-                          name: statuses[name]?.name ?? discovery?.displayName ?? incomingNames[name] ?? name,
+                          // The name it told us, also while it's away: mDNS often has only an ID.
+                          name: statuses[name]?.name ?? playerNames[name] ?? discovery?.displayName ?? name,
                           // A speaker that left shows unticked, as AirPlay does: ticking takes it back.
                           isSelected: selected.contains(name) && statuses[name]?.connection != .left,
                           status: statuses[name],
@@ -195,6 +196,11 @@ final class BridgeController {
         let lead = Lead(rawValue: defaults.integer(forKey: "leadMs")) ?? .low
         // The pre-1.0 server ID; Sendspin 1 identifies the server by its Noise key.
         defaults.removeObject(forKey: "serverID")
+        // Earlier versions remembered only the names of players that connected to us.
+        if let names = defaults.dictionary(forKey: "incomingNames") {
+            defaults.set(names, forKey: "playerNames")
+            defaults.removeObject(forKey: "incomingNames")
+        }
         let identity = IdentityStore.load(name: Host.current().localizedName ?? "Mac")
         selected = Set(defaults.stringArray(forKey: "selectedPlayers") ?? [])
         selectedFormat = StreamFormat(sampleRate: defaults.object(forKey: "sampleRate") as? Int ?? 48_000,
@@ -490,12 +496,6 @@ final class BridgeController {
     static func incomingKey(_ clientID: String) -> String { "client:" + clientID }
     static func isIncoming(_ name: String) -> Bool { name.hasPrefix("client:") }
 
-    /// Names of players that connected to us, to show a ticked one while it's away.
-    private var incomingNames: [String: String] {
-        get { defaults.dictionary(forKey: "incomingNames") as? [String: String] ?? [:] }
-        set { defaults.set(newValue, forKey: "incomingNames") }
-    }
-
     private func accept(_ connection: IncomingConnection) {
         let session = PlayerSession(incoming: connection, identity: identity) { [weak self] clientID in
             await self?.approveIncoming(clientID) ?? false
@@ -523,7 +523,6 @@ final class BridgeController {
         if let old = sessions[key], old !== session { dropSession(key) }
         sessions[key] = session
         statuses[key] = PlayerStatus()
-        incomingNames[key] = name
         Log.info("\(name) connected to us (\(clientID))")
         return key
     }
@@ -539,8 +538,16 @@ final class BridgeController {
         return true
     }
 
+    /// The names players told us in their hello, so the list shows the same name while one is
+    /// unticked or away. A player that connected to us has no other name at all.
+    private var playerNames: [String: String] {
+        get { defaults.dictionary(forKey: "playerNames") as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: "playerNames") }
+    }
+
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
+        if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
         statuses[name] = status
