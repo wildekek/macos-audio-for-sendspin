@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 
 public struct PlayerStatus: Sendable, Equatable {
     public enum Connection: Sendable, Equatable {
@@ -17,6 +18,9 @@ public struct PlayerStatus: Sendable, Equatable {
         /// sent `client/leave`. It stays connected in a stopped group of its own until the
         /// user selects it again (`rejoin()`): the spec doesn't let us take it back by ourselves.
         case left
+        /// The player can't be reached: it dropped off the network, or the connection broke
+        /// without a goodbye. The session keeps trying, and plays again once it's back.
+        case unavailable
         case disconnected(reason: String?)
         case failed(String)
     }
@@ -127,6 +131,9 @@ public actor PlayerSession {
                 } else {
                     status.connection = .disconnected(reason: nil)
                 }
+            } catch where Self.isUnreachable(error) {
+                Log.info("\(status.name ?? url.absoluteString): unavailable (\(error))")
+                status.connection = .unavailable
             } catch {
                 Log.warning("\(url): \(error)")
                 status.connection = .failed(String(describing: error))
@@ -136,13 +143,22 @@ public actor PlayerSession {
         }
         var backoff: Duration = .seconds(1)
         while !Task.isCancelled {
-            status.connection = .connecting
+            // An unavailable player stays so while we try again: no "Connecting…" each time.
+            if status.connection != .unavailable { status.connection = .connecting }
             var outcome: SessionEnd
+            var unreachable = false
             do {
                 outcome = try await connectAndServe()
                 backoff = .seconds(1)
             } catch is CancellationError {
                 break
+            } catch where Self.isUnreachable(error) {
+                if status.connection != .unavailable {
+                    Log.info("\(status.name ?? url.absoluteString): unavailable (\(error)), retrying")
+                }
+                status.connection = .unavailable
+                unreachable = true
+                outcome = .reconnect
             } catch {
                 Log.warning("\(url): \(error)")
                 status.connection = .failed(String(describing: error))
@@ -158,10 +174,17 @@ public actor PlayerSession {
                 status.connection = connection
                 return
             }
-            // Also the backoff for repeated handshake failures, which the spec asks for.
+            // Also the backoff for repeated handshake failures, which the spec asks for. A
+            // player that's off the network is tried more often, so it plays again soon after
+            // it's back: a connection attempt costs nothing on the network it isn't on.
             try? await Task.sleep(for: backoff)
-            backoff = min(backoff * 2, .seconds(30))
+            backoff = min(backoff * 2, unreachable ? .seconds(5) : .seconds(30))
         }
+    }
+
+    /// The network failed, not the player: unreachable, refused, timed out, or gone silent.
+    private static func isUnreachable(_ error: any Error) -> Bool {
+        error is NWError || error is WebSocketConnection.Failure
     }
 
     private enum SessionEnd {

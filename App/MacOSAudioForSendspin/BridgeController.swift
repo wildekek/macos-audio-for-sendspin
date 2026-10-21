@@ -106,6 +106,14 @@ final class BridgeController {
 
     var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
 
+    /// Speakers are ticked, and none of them can be reached.
+    var selectedPlayersUnavailable: Bool {
+        let ticked = players.filter(\.isSelected)
+        return !ticked.isEmpty && ticked.allSatisfy {
+            $0.status?.connection != .connected && (!$0.isDiscovered || $0.status?.connection == .unavailable)
+        }
+    }
+
     /// Music Assistant found this Mac, or is paired with it: the menu offers the choice.
     var offersMusicAssistant: Bool { sourceStatus.connected || sourceStatus.hasPairing }
 

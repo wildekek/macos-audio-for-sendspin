@@ -84,7 +84,8 @@ struct MenuView: View {
         let onSpeakers = bridge.isMacOutput && bridge.destination == .speakers
         return VStack(alignment: .leading, spacing: 2) {
             DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
-                           state: onSpeakers ? (bridge.isStreaming ? .streaming : .idle) : nil,
+                           state: onSpeakers ? (bridge.selectedPlayersUnavailable ? .unavailable
+                                                : bridge.isStreaming ? .streaming : .idle) : nil,
                            action: { bridge.chooseSpeakers() }) {
                 // No group slider: the Mac's volume is the group's volume.
                 if !onSpeakers, let names = bridge.selectedSpeakerNames {
@@ -136,13 +137,14 @@ private let destinationIndent: CGFloat = 36
 
 /// Whether a chosen destination gets the Mac's audio, on the right of its row.
 private enum DestinationState {
-    case streaming, idle, offline
+    case streaming, idle, offline, unavailable
 
     var text: String {
         switch self {
         case .streaming: "Streaming"
         case .idle: "Idle"
         case .offline: "Offline"
+        case .unavailable: "Unavailable"
         }
     }
 }
@@ -352,13 +354,15 @@ private struct PlayerRow: View {
 
     /// Only for what needs attention; a connected speaker shows its slider instead.
     private var statusText: String? {
-        guard player.isDiscovered else { return "Offline" }
+        // Only a ticked speaker stays listed while it's gone: it plays again once it's back.
+        guard player.isDiscovered else { return "Unavailable" }
         guard player.isSelected || player.status?.connection == .left else { return nil }
         switch player.status?.connection {
         case .connected: return nil
         case .taken, .left: return "In use elsewhere"
         case .pairingRequired: return "Needs pairing"
         case .notApproved: return "Identity changed"
+        case .unavailable: return "Unavailable"
         case .disconnected: return "Disconnected"
         case .failed: return "Can't connect"
         case .connecting, .awaitingApproval, nil: return "Connecting…"
@@ -366,7 +370,10 @@ private struct PlayerRow: View {
     }
 
     private var statusHelp: String {
-        switch player.status?.connection {
+        if !player.isDiscovered || player.status?.connection == .unavailable {
+            return "This speaker can't be reached. It plays again by itself once it's back on the network."
+        }
+        return switch player.status?.connection {
         case .left:
             "This speaker is playing something else. Tick it to play your Mac's sound on it again."
         case .pairingRequired:

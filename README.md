@@ -175,7 +175,12 @@ Release/build-dmg.sh
   dials speakers that advertise `_sendspin._tcp`, and advertises itself as
   `_sendspin-server._tcp` (port 8927, or a free one) for speakers that look for a server. Those
   appear unticked and wait, with no activities, until you tick them; unticking one closes its
-  connection, and it comes back unticked when it reconnects.
+  connection, and it comes back unticked when it reconnects. Connections are pinged every 2 s:
+  a speaker that answers nothing for 6 s shows as Unavailable while ticked, and the app keeps
+  trying until it plays again. The list is what mDNS reports. A speaker that loses power can't
+  say goodbye, and mDNS would keep it for up to 75 minutes, so each one is checked every 15 s:
+  for one that doesn't answer, mDNSResponder is asked to verify its records, which drops it
+  when it's really gone. Its announcement when it's back adds it again straight away.
 - **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
   Its volume and mute controls aren't applied to the audio: the app forwards them to the
   speakers, so the volume keys and Control Center control the speakers (with Sendspin

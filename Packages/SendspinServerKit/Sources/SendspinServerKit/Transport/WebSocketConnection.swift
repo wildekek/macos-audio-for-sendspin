@@ -13,7 +13,15 @@ final class WebSocketConnection: @unchecked Sendable {
 
     enum Failure: Error {
         case closed
+        /// The peer stopped answering pings: it's gone without closing (unplugged, off the network).
+        case unresponsive
     }
+
+    /// A peer that's gone without closing leaves TCP waiting for minutes. Ping/Pong is the
+    /// expected liveness check (messaging.md): ping every few seconds, and give up on a peer
+    /// that hasn't sent anything, pongs included, for a while.
+    private static let pingInterval: DispatchTimeInterval = .seconds(2)
+    private static let unresponsiveAfterUs: Int64 = 6_000_000
 
     let frames: AsyncThrowingStream<Frame, any Error>
 
@@ -22,6 +30,9 @@ final class WebSocketConnection: @unchecked Sendable {
     private let continuation: AsyncThrowingStream<Frame, any Error>.Continuation
     // Guarded by `queue`.
     private var pendingSends = 0
+    private var lastHeardUs: Int64 = 0
+    private var pinger: DispatchSourceTimer?
+    private var finished = false
 
     /// Dial a player.
     convenience init(url: URL) {
@@ -65,6 +76,7 @@ final class WebSocketConnection: @unchecked Sendable {
             try await group.next()
         }
         receiveNext()
+        startPinging()
     }
 
     private func waitUntilReady() async throws {
@@ -96,6 +108,7 @@ final class WebSocketConnection: @unchecked Sendable {
                 finish(error)
                 return
             }
+            lastHeardUs = now
             let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
                 as? NWProtocolWebSocket.Metadata
             switch metadata?.opcode {
@@ -140,6 +153,32 @@ final class WebSocketConnection: @unchecked Sendable {
                         })
     }
 
+    private func startPinging() {
+        queue.async { [self] in
+            guard pinger == nil, !finished else { return }
+            lastHeardUs = ServerClock.nowMicros()
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + Self.pingInterval, repeating: Self.pingInterval)
+            timer.setEventHandler { [weak self] in self?.ping() }
+            timer.resume()
+            pinger = timer
+        }
+    }
+
+    private func ping() {
+        guard ServerClock.nowMicros() - lastHeardUs < Self.unresponsiveAfterUs else {
+            finish(Failure.unresponsive)
+            connection.cancel()
+            return
+        }
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .ping)
+        metadata.setPongHandler(queue) { [weak self] error in
+            if error == nil { self?.lastHeardUs = ServerClock.nowMicros() }
+        }
+        let context = NWConnection.ContentContext(identifier: "ping", metadata: [metadata])
+        connection.send(content: Data(), contentContext: context, isComplete: true, completion: .idempotent)
+    }
+
     func close() {
         let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
         metadata.closeCode = .protocolCode(.normalClosure)
@@ -150,6 +189,11 @@ final class WebSocketConnection: @unchecked Sendable {
     }
 
     private func finish(_ error: (any Error)?) {
+        queue.async { [self] in
+            finished = true
+            pinger?.cancel()
+            pinger = nil
+        }
         if let error {
             continuation.finish(throwing: error)
         } else {

@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import dnssd
 
 /// A Sendspin player advertised over mDNS (`_sendspin._tcp`).
 public struct DiscoveredPlayer: Sendable, Hashable {
@@ -37,47 +38,115 @@ public enum PlayerBrowser {
         browser.cancel()
         continuation.finish()
         let latest = await collector.value
-
-        return await withTaskGroup(of: DiscoveredPlayer?.self) { group in
-            for result in latest {
-                group.addTask { await resolve(result) }
-            }
-            var players: [DiscoveredPlayer] = []
-            for await player in group {
-                if let player { players.append(player) }
-            }
-            return players.sorted { $0.instanceName < $1.instanceName }
-        }
+        return await resolveAll(Array(latest)).values.sorted { $0.instanceName < $1.instanceName }
     }
 
-    /// Browse continuously; yields the full list of resolved players whenever it changes.
+    /// How often the players found are checked. One that lost power or the network can't say
+    /// goodbye, and mDNS would keep it for up to 75 minutes (the PTR and TXT records' TTL).
+    static let recheckInterval: Duration = .seconds(15)
+
+    /// Browse continuously; yields the players mDNS reports, resolved, whenever they change.
+    /// Every `recheckInterval` each one is resolved again, which connects to it: one that moved
+    /// gets its new address, and mDNSResponder is asked to verify the records of one that
+    /// can't be reached. If it doesn't answer, they're flushed and it leaves the list (for
+    /// every app on the Mac); when it's back, its announcement adds it again straight away.
     /// Browsing stops when the consuming task is cancelled. `localNetworkDenied` reports
     /// whether macOS refuses the app Local Network access.
     public static func browse(localNetworkDenied: (@Sendable (Bool) -> Void)? = nil) -> AsyncStream<[DiscoveredPlayer]> {
         AsyncStream { continuation in
-            let (snapshots, snapshotContinuation) = AsyncStream.makeStream(
-                of: Set<NWBrowser.Result>.self, bufferingPolicy: .bufferingNewest(1))
-            let browsing = Browsing(snapshots: snapshotContinuation, report: localNetworkDenied)
+            let (events, eventContinuation) = AsyncStream.makeStream(of: BrowseEvent.self)
+            let browsing = Browsing(results: { eventContinuation.yield(.results($0)) }, report: localNetworkDenied)
             browsing.start()
+            let ticker = Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: recheckInterval)
+                    eventContinuation.yield(.recheck)
+                }
+            }
 
             let task = Task {
+                var current: [String: NWBrowser.Result] = [:]
                 var resolved: [String: DiscoveredPlayer] = [:]
-                for await results in snapshots {
-                    let current = Dictionary(results.compactMap { result -> (String, NWBrowser.Result)? in
-                        guard case let .service(name, _, _, _) = result.endpoint else { return nil }
-                        return (name, result)
-                    }, uniquingKeysWith: { first, _ in first })
-                    resolved = resolved.filter { current[$0.key] != nil }
-                    for (name, result) in current where resolved[name] == nil {
-                        if let player = await resolve(result) { resolved[name] = player }
+                var yielded: [DiscoveredPlayer]?
+                for await event in events {
+                    switch event {
+                    case .results(let results):
+                        current = Dictionary(results.compactMap { result -> (String, NWBrowser.Result)? in
+                            guard case let .service(name, _, _, _) = result.endpoint else { return nil }
+                            return (name, result)
+                        }, uniquingKeysWith: { first, _ in first })
+                        resolved = resolved.filter { current[$0.key] != nil }
+                        let new = current.filter { resolved[$0.key] == nil }
+                        resolved.merge(await resolveAll(Array(new.values))) { _, new in new }
+                    case .recheck:
+                        let reachable = await resolveAll(Array(current.values))
+                        for (name, result) in current where reachable[name] == nil {
+                            Log.debug("\(name) isn't reachable; asking mDNS to verify it")
+                            reconfirm(result)
+                        }
+                        resolved.merge(reachable) { _, new in new }
                     }
-                    continuation.yield(resolved.values.sorted { $0.instanceName < $1.instanceName })
+                    let players = resolved.values.sorted { $0.instanceName < $1.instanceName }
+                    if players != yielded {
+                        yielded = players
+                        continuation.yield(players)
+                    }
                 }
             }
             continuation.onTermination = { _ in
                 task.cancel()
+                ticker.cancel()
                 browsing.cancel()
-                snapshotContinuation.finish()
+                eventContinuation.finish()
+            }
+        }
+    }
+
+    private enum BrowseEvent: Sendable {
+        /// The browser's results changed.
+        case results(Set<NWBrowser.Result>)
+        /// Time to check every player again.
+        case recheck
+    }
+
+    /// Resolve the players at once: each one that's gone takes the full timeout.
+    private static func resolveAll(_ results: [NWBrowser.Result]) async -> [String: DiscoveredPlayer] {
+        await withTaskGroup(of: DiscoveredPlayer?.self) { group in
+            for result in results {
+                group.addTask { await resolve(result) }
+            }
+            var players: [String: DiscoveredPlayer] = [:]
+            for await player in group {
+                if let player { players[player.instanceName] = player }
+            }
+            return players
+        }
+    }
+
+    /// Ask mDNSResponder to verify a player's PTR record on the interfaces it was found on: it
+    /// queries for it, and flushes it unless the player answers. This is how Bonjour expects
+    /// a client to report a service that doesn't work.
+    private static func reconfirm(_ result: NWBrowser.Result) {
+        guard case let .service(name, type, domain, _) = result.endpoint else { return }
+        let typeLabels = "\(type).\(domain)".split(separator: ".").map(String.init)
+        let serviceType = typeLabels.joined(separator: ".") + "."
+        let labels = [name] + typeLabels
+        // The instance's full name in DNS wire format: length-prefixed labels, then a zero.
+        var rdata = Data()
+        for label in labels {
+            let bytes = Array(label.utf8.prefix(63))
+            rdata.append(UInt8(bytes.count))
+            rdata.append(contentsOf: bytes)
+        }
+        rdata.append(0)
+        for interface in result.interfaces {
+            let error = rdata.withUnsafeBytes { bytes in
+                DNSServiceReconfirmRecord(0, UInt32(interface.index), serviceType,
+                                          UInt16(kDNSServiceType_PTR), UInt16(kDNSServiceClass_IN),
+                                          UInt16(bytes.count), bytes.baseAddress)
+            }
+            if error != kDNSServiceErr_NoError {
+                Log.warning("\(name): couldn't ask mDNS to verify it (\(error))")
             }
         }
     }
@@ -91,7 +160,7 @@ public enum PlayerBrowser {
     /// denied the probe also repeats every few seconds. Everything runs on `queue`.
     private final class Browsing: @unchecked Sendable {
         private let queue = DispatchQueue(label: "sendspin.browser")
-        private let snapshots: AsyncStream<Set<NWBrowser.Result>>.Continuation
+        private let results: @Sendable (Set<NWBrowser.Result>) -> Void
         private let report: (@Sendable (Bool) -> Void)?
         private let monitor = NWPathMonitor()
         private var browser: NWBrowser?
@@ -99,8 +168,8 @@ public enum PlayerBrowser {
         private var denied: Bool?
         private var retryScheduled = false
 
-        init(snapshots: AsyncStream<Set<NWBrowser.Result>>.Continuation, report: (@Sendable (Bool) -> Void)?) {
-            self.snapshots = snapshots
+        init(results: @escaping @Sendable (Set<NWBrowser.Result>) -> Void, report: (@Sendable (Bool) -> Void)?) {
+            self.results = results
             self.report = report
         }
 
@@ -125,7 +194,7 @@ public enum PlayerBrowser {
         private func startBrowser() {
             browser?.cancel()
             let browser = PlayerBrowser.makeBrowser()
-            browser.browseResultsChangedHandler = { [snapshots] results, _ in snapshots.yield(results) }
+            browser.browseResultsChangedHandler = { [results] current, _ in results(current) }
             browser.stateUpdateHandler = { [weak self, weak browser] state in
                 guard let self, self.browser === browser, PlayerBrowser.isPolicyDenied(state) else { return }
                 setDenied(true)
