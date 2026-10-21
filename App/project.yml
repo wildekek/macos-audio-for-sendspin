@@ -13,8 +13,8 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.3.2"
-    CURRENT_PROJECT_VERSION: "5"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "6"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
