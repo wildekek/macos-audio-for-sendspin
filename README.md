@@ -17,6 +17,27 @@ choose speakers and control their volume:
 > Sendspin is a protocol of the Open Home Foundation;
 > this project is not affiliated with or endorsed by it.
 
+## What you need
+
+Speakers or players that speak **Sendspin 1**, the encrypted version of the protocol (still a
+release candidate in October 2026). Sendspin's own site keeps
+[the current list](https://www.sendspin-audio.com/#whole-room).
+
+- **[Home Assistant Voice Preview Edition](https://www.home-assistant.io/voice-pe/)** ($59).
+  Plugs into any powered speaker, amplifier or receiver (3.5 mm). Needs firmware built on
+  ESPHome 2026.10 or later.
+- **[Apollo CAST-1](https://apolloautomation.com/blogs/news/meet-cast-1-audio-casting)**
+  ($30). A small adapter with a PCM5122 DAC for powered speakers, amplifiers and receivers.
+  Runs ESPHome, with the same requirement.
+- **Build your own** for under $10: [SendspinZero](https://github.com/RealDeco/SendspinZero),
+  an ESP32-S3 with a DAC board, on ESPHome 2026.10 or later.
+- **A Raspberry Pi or any Linux computer** with a DAC or speakers:
+  [the Sendspin daemon](https://github.com/Sendspin/sendspin-cli), from a release built on
+  aiosendspin 10 or later (8.0.0 isn't yet).
+
+AirPlay and Chromecast speakers that Music Assistant bridges to Sendspin don't work currently:
+those bridges live inside Music Assistant and Music Assistant support is pending.
+
 ## Install
 
 Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases),
