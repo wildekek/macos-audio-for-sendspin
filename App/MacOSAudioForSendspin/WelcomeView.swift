@@ -50,9 +50,14 @@ struct WelcomeView: View {
             }
 
             HStack(alignment: .firstTextBaseline) {
-                Label("You'll find the app in the menu bar.", systemImage: "menubar.arrow.up.rectangle")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                // The icon it has in the menu bar, so it's easy to spot there.
+                Label {
+                    Text("You'll find the app in the menu bar.")
+                } icon: {
+                    Image("MenuBarIcon")
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 Spacer()
                 Toggle("Open at login", isOn: $openAtLogin)
                     .toggleStyle(.checkbox)
