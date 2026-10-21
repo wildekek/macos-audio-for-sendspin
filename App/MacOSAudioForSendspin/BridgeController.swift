@@ -438,7 +438,11 @@ final class BridgeController {
     // MARK: Choosing where the sound goes
 
     /// Sendspin speakers: the Mac's output becomes Sendspin, now or once a speaker connects.
+    /// With one speaker and nothing ticked, choosing Sendspin speakers means that one: it's ticked.
     func chooseSpeakers() {
+        if !hasSelectedPlayers, players.count == 1, let only = players.first {
+            setSelected(only.instanceName, true)
+        }
         setDestination(.speakers)
         guard !isMacOutput else { return }
         if hasConnectedPlayers {
