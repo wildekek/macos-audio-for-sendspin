@@ -64,8 +64,9 @@ struct WelcomeView: View {
         }
         .padding(24)
         .frame(width: 480)
-        // The local network prompt reports nothing back; the first speaker found means it's answered.
-        .onChange(of: foundSpeakers > 0) { _, found in if found { refocus() } }
+        // The local network prompt reports nothing back; discovery finding access allowed means
+        // it's answered.
+        .onChange(of: bridge.localNetworkAllowed) { _, allowed in if allowed { refocus() } }
     }
 
     // MARK: Steps
@@ -107,9 +108,8 @@ struct WelcomeView: View {
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!)
             }
         }
-        let found = foundSpeakers
-        return found == 0 ? .note("Looking for speakers…")
-            : .done(found == 1 ? "Found 1 speaker" : "Found \(found) speakers")
+        // Only the permission: the menu lists the speakers, so nobody waits here for them.
+        return bridge.localNetworkAllowed ? .done("Allowed") : .busy("Waiting for your answer…")
     }
 
     private func finish() {
@@ -120,8 +120,6 @@ struct WelcomeView: View {
         }
         done()
     }
-
-    private var foundSpeakers: Int { bridge.players.filter(\.isDiscovered).count }
 
     private func installDriver() {
         errorText = nil

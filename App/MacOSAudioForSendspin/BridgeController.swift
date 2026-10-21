@@ -68,6 +68,8 @@ final class BridgeController {
     private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
     /// macOS refuses Local Network access: no speaker can be found or reached.
     private(set) var localNetworkDenied = false
+    /// Discovery found that macOS allows Local Network access (neither is known before then).
+    private(set) var localNetworkAllowed = false
     private(set) var isMacOutput = false
     /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
     private(set) var currentOutputName: String?
@@ -267,7 +269,9 @@ final class BridgeController {
         startListening()
         let denied: @Sendable (Bool) -> Void = { [weak self] denied in
             Task { @MainActor in
-                guard let self, self.localNetworkDenied != denied else { return }
+                guard let self else { return }
+                self.localNetworkAllowed = !denied
+                guard self.localNetworkDenied != denied else { return }
                 Log.info("Local Network access \(denied ? "denied" : "allowed")")
                 self.localNetworkDenied = denied
             }
