@@ -138,6 +138,8 @@ final class BridgeController {
         return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 
+    var hasSelectedPlayers: Bool { players.contains(where: \.isSelected) }
+
     /// Sendspin speakers was chosen before any speaker could play: the Mac's output switches
     /// to Sendspin once one is connected, and until then the menu asks to tick one.
     private var pendingSendspinOutput = false

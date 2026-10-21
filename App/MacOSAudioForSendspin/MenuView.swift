@@ -84,8 +84,7 @@ struct MenuView: View {
         let onSpeakers = bridge.isMacOutput && bridge.destination == .speakers
         return VStack(alignment: .leading, spacing: 2) {
             DestinationRow(icon: "hifispeaker.fill", title: "Sendspin speakers", chosen: onSpeakers,
-                           state: onSpeakers ? (bridge.selectedPlayersUnavailable ? .unavailable
-                                                : bridge.isStreaming ? .streaming : .idle) : nil,
+                           state: onSpeakers ? speakersState : nil,
                            action: { bridge.chooseSpeakers() }) {
                 // No group slider: the Mac's volume is the group's volume.
                 if !onSpeakers, let names = bridge.selectedSpeakerNames {
@@ -109,6 +108,14 @@ struct MenuView: View {
         }
     }
 
+    /// Idle means connected, with nothing playing; with no speaker connected there's no state,
+    /// unless the ticked ones are all gone.
+    private var speakersState: DestinationState? {
+        if bridge.selectedPlayersUnavailable { return .unavailable }
+        guard bridge.hasConnectedPlayers else { return nil }
+        return bridge.isStreaming ? .streaming : .idle
+    }
+
     /// The speakers within Sendspin speakers, after Apple Music's AirPlay list.
     private var speakers: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -117,7 +124,7 @@ struct MenuView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
-            } else if bridge.waitsForSpeaker {
+            } else if !bridge.hasSelectedPlayers {
                 Text("Tick a speaker to play on it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
