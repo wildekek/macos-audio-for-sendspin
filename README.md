@@ -37,18 +37,19 @@ release candidate in October 2026). Sendspin's own site keeps
 
 ### Already running Music Assistant?
 
-Then the menu gets a second tab, **Music Assistant**. Pair this Mac once with the token the tab
-offers, and Music Assistant can play the Mac's audio on any of its speakers and groups,
-AirPlay, Chromecast and Sonos included: select this Mac as an input source there. Music
-Assistant chooses the speakers and the volume, and it isn't in sync with the speakers on the
-**Speakers** tab, so the Mac plays to one or the other.
+Then **Music Assistant** shows up in the menu, next to Sendspin speakers. Click it once to
+copy the pairing token and paste it in Music Assistant, and Music Assistant can play the Mac's
+audio on any of its speakers and groups, AirPlay, Chromecast and Sonos included: choose it in
+the menu, and select this Mac as an input source there. Music Assistant chooses the speakers
+and the volume, and it isn't in sync with the Sendspin speakers in the menu, so the Mac plays
+to one or the other.
 
 ## Install
 
 Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases),
 open it and drag the app to Applications. On first launch it installs its audio driver (your
 password once) and asks for the microphone and local network. Then tick your speakers in the
-menu bar app and click **Use Sendspin**. The current release is a beta.
+menu bar app: that switches the Mac to Sendspin speakers. The current release is a beta.
 
 ## Why not just AirPlay?
 
@@ -168,8 +169,8 @@ Release/build-dmg.sh
   connection, and it comes back unticked when it reconnects.
 - **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
   Its volume and mute controls aren't applied to the audio: the app forwards them to the
-  speakers, so the volume keys and Control Center control the speakers (on the Speakers tab;
-  with Music Assistant, its own volume applies).
+  speakers, so the volume keys and Control Center control the speakers (with Sendspin
+  speakers chosen; with Music Assistant, its own volume applies).
 - **Timing.** Each captured block is scheduled at its capture host time plus the *speaker
   buffer* (300 ms / 600 ms / 1 s), or more when a connected speaker asks for it
   (its `min_buffer_ms` plus `output_delay_ms`; Settings then shows why). Capture timestamps equal the output timestamps apps see
@@ -198,7 +199,7 @@ Release/build-dmg.sh
   time filter (a 2D Kalman filter) over bursts of `client/time`. When Music Assistant asks, the
   Mac streams FLAC at the device's rate in 16 bit, 20 ms chunks stamped with their capture
   time in the server's clock, and reports `signal: present` while there's sound, so Music
-  Assistant can start it automatically. On the Speakers tab it sends silence instead: the
+  Assistant can start it automatically. With Sendspin speakers chosen it sends silence instead: the
   stream stays open, like a quiet line-in, and resumes when Music Assistant is chosen again.
 
 Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….dev` for a dev build):

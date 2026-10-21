@@ -9,7 +9,7 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
    Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
    show "Needs pairing". Deliberately left until a speaker needs it. The client side of the
-   Pairing PSK method exists (the Music Assistant tab): the token, `client/pair-init` and
+   Pairing PSK method exists (the Music Assistant row): the token, `client/pair-init` and
    `-finalize`, the pairing records and the re-handshake to the new key. CPace is still to do.
 2. **The other roles.** "All servers MUST implement all versions of these roles": besides
    `player`, that's `controller` (play/pause/next, group volume by the spec's algorithm,
@@ -29,7 +29,7 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
 5. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
-6. **More on the Music Assistant tab.** Show and control what Music Assistant does with the
+6. **More under Music Assistant.** Show and control what Music Assistant does with the
    Mac's input (where it plays, its volume, stop): a source can't, so this needs Music
    Assistant's own API. And pairing with the 6-digit dynamic pairing code instead of the token,
    once pairing (1) has CPace.
@@ -56,4 +56,4 @@ Done: the signed, notarized disk image with a welcome window that installs the d
 client-initiated connections (speakers that connect to us wait, unticked, until allowed), a
 notice when Local Network access is denied, opening at login, speakers that leave the
 group (unavailable or `client/leave`) staying out until the user ticks them again, and playing
-through Music Assistant (the Mac as a paired source, on its own tab).
+through Music Assistant (the Mac as a paired source).
