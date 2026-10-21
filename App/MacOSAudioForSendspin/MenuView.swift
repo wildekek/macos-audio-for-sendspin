@@ -292,16 +292,22 @@ private struct PlayerRow: View {
             // Clicking the name plays on this speaker only, as AirPlay does; the checkbox adds
             // or removes it. The slider sits outside this area, so dragging it never selects.
             HStack(spacing: 6) {
+                // While hovering the name, the format this speaker receives takes its place.
+                // It's drawn over the name, so nothing moves: the row has no room for both.
+                let format = hovering ? formatLabel : nil
                 Text(player.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                // The format this speaker receives, while hovering a streaming row.
-                if hovering, let format = formatLabel {
-                    Text(format)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
+                    .opacity(format == nil ? 1 : 0)
+                    .overlay(alignment: .leading) {
+                        if let format {
+                            Text(format)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                    }
+                    .onHover { hovering = $0 }
                 Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
@@ -321,7 +327,6 @@ private struct PlayerRow: View {
                 .labelsHidden()
         }
         .frame(height: 30)
-        .onHover { hovering = $0 }
     }
 
     @ViewBuilder private var trailing: some View {
