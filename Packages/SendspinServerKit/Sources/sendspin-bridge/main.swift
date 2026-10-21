@@ -7,6 +7,7 @@ let usage = """
            sendspin-bridge --list
            sendspin-bridge --measure-latency [--device NAME]
            sendspin-bridge --measure-sync [--mic NAME]
+           sendspin-bridge --source [--tone] [--device NAME]
 
     Stream audio from an input device (default: the Sendspin device) to Sendspin players.
     A player is an mDNS instance name (or substring) or a ws:// URL.
@@ -14,6 +15,9 @@ let usage = """
     options:
       --list            list Sendspin players on the network and exit
       --measure-latency measure capture vs. output timestamps on the device and exit
+      --source          be a Sendspin source instead (source@v1 client): advertise as
+                        _sendspin._tcp, print the pairing token for Music Assistant, and
+                        stream the audio to the server that pairs and asks for it
       --measure-sync    measure lip sync acoustically: play chirps into the Sendspin device
                         (the app must be streaming to the speakers) and listen with a mic
       --mic NAME        microphone for --measure-sync (default: the default input)
@@ -30,6 +34,7 @@ struct Options {
     var list = false
     var measureLatency = false
     var measureSync = false
+    var source = false
     var microphone: String?
     var output: String?
     var device = "Sendspin"
@@ -51,6 +56,7 @@ func parseOptions() -> Options {
         case "--list": options.list = true
         case "--measure-latency": options.measureLatency = true
         case "--measure-sync": options.measureSync = true
+        case "--source": options.source = true
         case "--mic": options.microphone = value(for: arg)
         case "--output": options.output = value(for: arg)
         case "--device": options.device = value(for: arg)
@@ -66,7 +72,7 @@ func parseOptions() -> Options {
             options.players.append(arg)
         }
     }
-    if !options.list && !options.measureLatency && !options.measureSync && options.players.isEmpty { fail("give at least one player (use --list)") }
+    if !options.list && !options.measureLatency && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
     return options
 }
 
@@ -143,24 +149,13 @@ func run() async {
         return
     }
 
-    let urls = await resolvePlayers(options.players)
-
-    let source: AsyncStream<CapturedBlock>
-    var capture: AudioCapture?
-    if options.tone {
-        Log.info("Source: 440 Hz test tone")
-        source = ToneSource.blocks()
-    } else {
-        do {
-            let deviceCapture = try AudioCapture(deviceName: options.device)
-            try deviceCapture.start()
-            Log.info("Source: \(deviceCapture.deviceName), \(deviceCapture.sampleRate) Hz float stereo")
-            source = deviceCapture.blocks
-            capture = deviceCapture
-        } catch {
-            fail("\(error)")
-        }
+    if options.source {
+        await runSource(options)
+        return
     }
+
+    let urls = await resolvePlayers(options.players)
+    let (source, capture) = audioSource(options)
 
     let identity = loadIdentity(name: options.name)
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
@@ -190,8 +185,34 @@ func run() async {
         }
     }
 
-    // Shut down cleanly on Ctrl-C / SIGTERM so players get stream/end.
-    let stop = AsyncStream<Void> { continuation in
+    for await _ in stopSignal() { break }
+
+    Log.info("Shutting down")
+    pump.cancel()
+    capture?.stop()
+    await group.shutdown()
+    try? await Task.sleep(for: .milliseconds(200))
+}
+
+/// The audio to stream: the test tone, or the input device.
+func audioSource(_ options: Options) -> (AsyncStream<CapturedBlock>, AudioCapture?) {
+    if options.tone {
+        Log.info("Audio: 440 Hz test tone")
+        return (ToneSource.blocks(), nil)
+    }
+    do {
+        let capture = try AudioCapture(deviceName: options.device)
+        try capture.start()
+        Log.info("Audio: \(capture.deviceName), \(capture.sampleRate) Hz float stereo")
+        return (capture.blocks, capture)
+    } catch {
+        fail("\(error)")
+    }
+}
+
+/// Ctrl-C / SIGTERM, so peers get a clean goodbye.
+func stopSignal() -> AsyncStream<Void> {
+    AsyncStream { continuation in
         let sources = [SIGINT, SIGTERM].map { sig in
             signal(sig, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
@@ -202,12 +223,50 @@ func run() async {
         // Keep the sources alive for the lifetime of the stream.
         continuation.onTermination = { _ in sources.forEach { $0.cancel() } }
     }
-    for await _ in stop { break }
+}
 
+/// The client credentials, kept across runs so a paired server stays paired.
+func loadSourceCredentials() -> (SourceCredentials, @Sendable (SourceCredentials) -> Void) {
+    let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge")
+    let file = dir.appending(path: "source-credentials.json")
+    let save: @Sendable (SourceCredentials) -> Void = { credentials in
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Secrets: readable by this user only.
+        FileManager.default.createFile(atPath: file.path, contents: try? JSONEncoder().encode(credentials),
+                                       attributes: [.posixPermissions: 0o600])
+    }
+    if let data = try? Data(contentsOf: file), let credentials = try? JSONDecoder().decode(SourceCredentials.self, from: data) {
+        return (credentials, save)
+    }
+    let credentials = SourceCredentials.generate()
+    save(credentials)
+    return (credentials, save)
+}
+
+func runSource(_ options: Options) async {
+    let (source, capture) = audioSource(options)
+    let (credentials, save) = loadSourceCredentials()
+    let client = SourceClient(name: options.name, softwareVersion: "sendspin-bridge", credentials: credentials, save: save)
+    print("Pairing token: \(client.pairingToken)")
+    await client.start()
+    await client.setAvailable(true)
+    let statusTask = Task {
+        for await status in client.statusUpdates {
+            Log.info("Source: \(status.serverName.map { "\($0), \(status.paired ? "paired" : "not paired")" } ?? "no server")"
+                + (status.streaming ? ", streaming" : "") + (status.advertisedName.map { " (advertised as \($0))" } ?? ""))
+        }
+    }
+    let pump = Task {
+        for await block in source {
+            await client.deliver(block.pcm, captureTimeUs: block.captureTimeUs, bitDepth: 16)
+        }
+    }
+    for await _ in stopSignal() { break }
     Log.info("Shutting down")
     pump.cancel()
+    statusTask.cancel()
     capture?.stop()
-    await group.shutdown()
+    await client.stop()
     try? await Task.sleep(for: .milliseconds(200))
 }
 

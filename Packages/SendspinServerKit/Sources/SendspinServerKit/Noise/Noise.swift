@@ -2,9 +2,9 @@ import CryptoKit
 import Foundation
 
 // The parts of the Noise Protocol Framework (revision 34, noiseprotocol.org/noise.html)
-// that Sendspin needs: the KKpsk2 handshake as initiator, which is the server's side,
-// and transport mode. Names follow the specification (CipherState, SymmetricState,
-// MixKey, MixHash, ...) so the code reads alongside it.
+// that Sendspin needs: the KKpsk2 handshake as initiator, which is the server's side, as
+// responder, the client's side, and transport mode. Names follow the specification
+// (CipherState, SymmetricState, MixKey, MixHash, ...) so the code reads alongside it.
 
 enum NoiseError: Error, CustomStringConvertible {
     case invalidMessage
@@ -216,6 +216,64 @@ struct NoiseInitiatorHandshake {
         let payload = try state.decryptAndHash(Data(message.dropFirst(32)))
         let (send, receive) = state.split()
         return (payload, NoiseTransport(send: send, receive: receive, handshakeHash: state.h))
+    }
+
+    private func dh(_ privateKey: Curve25519.KeyAgreement.PrivateKey,
+                    _ publicKey: Curve25519.KeyAgreement.PublicKey) throws -> Data {
+        try privateKey.sharedSecretFromKeyAgreement(with: publicKey).withUnsafeBytes { Data($0) }
+    }
+}
+
+/// `Noise_KKpsk2_<suite>` as the responder, the client's side. The PSK is only needed for
+/// message 2: message 1's payload names which one the server uses (connection.md,
+/// Pre-Shared Key).
+struct NoiseResponderHandshake {
+    private var state: SymmetricState
+    private let localStatic: Curve25519.KeyAgreement.PrivateKey
+    private let remoteStatic: Curve25519.KeyAgreement.PublicKey
+    private let ephemeral: Curve25519.KeyAgreement.PrivateKey
+    private var remoteEphemeral: Curve25519.KeyAgreement.PublicKey?
+
+    /// `ephemeral` is only passed by tests, to reproduce reference vectors.
+    init(suite: NoiseSuite, prologue: Data, localStatic: Curve25519.KeyAgreement.PrivateKey,
+         remoteStatic: Curve25519.KeyAgreement.PublicKey,
+         ephemeral: Curve25519.KeyAgreement.PrivateKey = .init()) {
+        state = SymmetricState(protocolName: "Noise_KKpsk2_\(suite.rawValue)", suite: suite)
+        self.localStatic = localStatic
+        self.remoteStatic = remoteStatic
+        self.ephemeral = ephemeral
+        state.mixHash(prologue)
+        // Pre-messages: the initiator's static key, then the responder's.
+        state.mixHash(remoteStatic.rawRepresentation)
+        state.mixHash(localStatic.publicKey.rawRepresentation)
+    }
+
+    /// `-> e, es, ss`; returns the payload.
+    mutating func readMessage1(_ message: Data) throws -> Data {
+        guard message.count >= 32 + NoiseSuite.tagSize else { throw NoiseError.invalidMessage }
+        let re = Data(message.prefix(32))
+        let remoteEphemeral = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: re)
+        self.remoteEphemeral = remoteEphemeral
+        state.mixHash(re)
+        state.mixKey(re)
+        state.mixKey(try dh(localStatic, remoteEphemeral))
+        state.mixKey(try dh(localStatic, remoteStatic))
+        return try state.decryptAndHash(Data(message.dropFirst(32)))
+    }
+
+    /// `<- e, ee, se, psk` with `payload`; returns the message and the transport cipher states.
+    mutating func writeMessage2(payload: Data, psk: Data) throws -> (message: Data, transport: NoiseTransport) {
+        guard let remoteEphemeral else { throw NoiseError.invalidMessage }
+        let e = ephemeral.publicKey.rawRepresentation
+        state.mixHash(e)
+        state.mixKey(e)
+        state.mixKey(try dh(ephemeral, remoteEphemeral))
+        state.mixKey(try dh(ephemeral, remoteStatic))
+        state.mixKeyAndHash(psk)
+        let message = e + (try state.encryptAndHash(payload))
+        let (initiatorToResponder, responderToInitiator) = state.split()
+        return (message, NoiseTransport(send: responderToInitiator, receive: initiatorToResponder,
+                                        handshakeHash: state.h))
     }
 
     private func dh(_ privateKey: Curve25519.KeyAgreement.PrivateKey,

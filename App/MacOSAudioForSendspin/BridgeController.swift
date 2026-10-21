@@ -123,7 +123,7 @@ final class BridgeController {
     private var isStartingCapture = false
     private var pumpTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
-    private var listener: ServerListener?
+    private var listener: ServiceListener?
     private var systemObservations: [PropertyObservation] = []
     private var deviceObservations: [PropertyObservation] = []
     /// Volume we just wrote to the device ourselves; its change notification is not a user action.
@@ -319,7 +319,7 @@ final class BridgeController {
     /// Mac over mDNS and connect. They wait, unticked, until the user allows them.
     private func startListening() {
         guard listener == nil else { return }
-        let listener = ServerListener(name: identity.name)
+        let listener = ServiceListener(name: identity.name, kind: .server)
         self.listener = listener
         listener.start()
         Task { [weak self] in
