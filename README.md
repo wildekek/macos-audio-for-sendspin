@@ -94,6 +94,7 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
 | `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`); CoreAudio capture and device control (`SendspinAudio`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). |
 | `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
 | `Release/` | Builds the disk image; signs and notarizes it for releases. |
+| `docs/menu-states.md` | What the menu shows in each situation, what every state means, and the rules behind them. Keep it in step with the menu. |
 
 ## Build and run
 

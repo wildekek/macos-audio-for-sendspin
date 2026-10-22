@@ -57,7 +57,8 @@ final class BridgeController {
     private(set) var discovered: [DiscoveredPlayer] = []
     private(set) var statuses: [String: PlayerStatus] = [:]
     private(set) var selected: Set<String>
-    private(set) var isStreaming = false
+    /// Sound is played to the Sendspin device (in the last few seconds), wherever it goes.
+    private(set) var hasSound = false
     /// The Sendspin device is there (the driver is loaded).
     private(set) var driverInstalled = false
     /// Whether the installed driver is the one this app carries.
@@ -108,6 +109,12 @@ final class BridgeController {
     }
 
     var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
+
+    /// The Mac's sound is playing: on a connected speaker, or through Music Assistant's open
+    /// stream. Without sound it's Idle; without either it's not set up yet.
+    var isPlaying: Bool {
+        hasSound && (destination == .speakers ? hasConnectedPlayers : sourceStatus.streaming)
+    }
 
     /// Speakers are ticked, and none of them can be reached.
     var selectedPlayersUnavailable: Bool {
@@ -513,7 +520,6 @@ final class BridgeController {
         let source = source
         Task { await source.setSending(!toSpeakers) }
         if !toSpeakers {
-            isStreaming = false
             Task { await group.setPlaying(false) }
         }
     }
@@ -620,8 +626,8 @@ final class BridgeController {
     private func updateCapture() {
         if isCaptureWanted, capture == nil, !isStartingCapture, let device = AudioDevice.sendspin {
             isStartingCapture = true
-            let streamingChanged: @Sendable (Bool) async -> Void = { [weak self] streaming in
-                await self?.setStreaming(streaming)
+            let soundChanged: @Sendable (Bool) async -> Void = { [weak self] sound in
+                await self?.setHasSound(sound)
             }
             Task {
                 // Creating and starting the queue waits on coreaudiod, for a freshly loaded
@@ -646,7 +652,7 @@ final class BridgeController {
                     self.capture = capture
                     pumpTask = Task.detached { [group, source, speakerRoute] in
                         await Self.pump(capture.blocks, into: group, source: source, route: speakerRoute,
-                                        streamingChanged: streamingChanged)
+                                        soundChanged: soundChanged)
                     }
                     Log.info("Capturing from \(capture.deviceName) at \(capture.sampleRate) Hz")
                 case .failure(let error):
@@ -655,7 +661,7 @@ final class BridgeController {
             }
         } else if !isCaptureWanted, capture != nil {
             stopCapture()
-            isStreaming = false
+            hasSound = false
             Task { await group.setPlaying(false) }
             Log.info("Capture stopped")
         }
@@ -680,33 +686,37 @@ final class BridgeController {
         }
     }
 
-    private func setStreaming(_ streaming: Bool) {
-        isStreaming = streaming
+    private func setHasSound(_ sound: Bool) {
+        hasSound = sound
     }
 
     /// Forward captured audio; after a few seconds of digital silence the players get
     /// `stream/end`, and the stream restarts with the next sound. Music Assistant gets every
     /// block, silence too: it decides when to play, from the signal we report (and only
-    /// streams while it's the destination).
+    /// streams while it's the destination). `soundChanged` reports whether there's sound,
+    /// wherever it goes.
     nonisolated private static func pump(_ blocks: AsyncStream<CapturedBlock>, into group: PlaybackGroup,
                                          source: SourceClient, route: SpeakerRoute,
-                                         streamingChanged: @Sendable (Bool) async -> Void) async {
+                                         soundChanged: @Sendable (Bool) async -> Void) async {
         let idleAfterUs: Int64 = 3_000_000
         var lastSoundUs: Int64?
         var streaming = false
+        var sound = false
         for await block in blocks {
             // 16-bit: Music Assistant plays live inputs at 48 kHz/16-bit anyway.
             await source.deliver(block.pcm, captureTimeUs: block.captureTimeUs, bitDepth: 16)
             if !block.pcm.isSilent { lastSoundUs = block.captureTimeUs }
-            let active = route.isOn && (lastSoundUs.map { block.captureTimeUs - $0 < idleAfterUs } ?? false)
+            let hasSound = lastSoundUs.map { block.captureTimeUs - $0 < idleAfterUs } ?? false
+            let active = route.isOn && hasSound
             if active {
                 await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
             } else if streaming {
                 await group.setPlaying(false)
             }
-            if active != streaming {
-                streaming = active
-                await streamingChanged(active)
+            streaming = active
+            if hasSound != sound {
+                sound = hasSound
+                await soundChanged(hasSound)
             }
         }
     }

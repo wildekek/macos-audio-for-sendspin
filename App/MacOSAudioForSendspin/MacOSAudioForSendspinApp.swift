@@ -9,8 +9,9 @@ struct MacOSAudioForSendspinApp: App {
         MenuBarExtra {
             MenuView(bridge: appDelegate.bridge)
         } label: {
-            Image("MenuBarIcon")
-                .accessibilityLabel(appDelegate.bridge.isStreaming ? "Sendspin, streaming" : "Sendspin")
+            // Filled while the Mac's sound is playing; both are templates, in the menu bar's colour.
+            Image(appDelegate.bridge.isPlaying ? "MenuBarIconPlaying" : "MenuBarIcon")
+                .accessibilityLabel(appDelegate.bridge.isPlaying ? "Sendspin, playing" : "Sendspin")
         }
         .menuBarExtraStyle(.window)
 

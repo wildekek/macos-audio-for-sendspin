@@ -2,6 +2,8 @@ import AppKit
 import SendspinServerKit
 import SwiftUI
 
+/// The menu bar menu. What it shows in each situation, and what every state means, is written
+/// down in docs/menu-states.md: change that along with the states here.
 struct MenuView: View {
     @Bindable var bridge: BridgeController
     @Environment(\.openSettings) private var openSettings
@@ -90,10 +92,12 @@ struct MenuView: View {
             }
             if showsSpeakers {
                 DestinationRow(icon: .symbol("hifispeaker.fill"), title: "Sendspin speakers", chosen: onSpeakers,
-                               state: onSpeakers ? speakersState : nil,
                                action: { bridge.chooseSpeakers() }) {
-                    // No group slider: the Mac's volume is the group's volume.
-                    if !onSpeakers, let names = bridge.speakersSummary {
+                    // No group slider: the Mac's volume is the group's volume. Playing shows on
+                    // the menu bar icon; the row only says why it can't play.
+                    if onSpeakers, bridge.selectedPlayersUnavailable {
+                        reason("Unavailable")
+                    } else if !onSpeakers, let names = bridge.speakersSummary {
                         Text(names)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -113,14 +117,6 @@ struct MenuView: View {
                 EmptyView()
             }
         }
-    }
-
-    /// Idle means connected, with nothing playing; with no speaker connected there's no state,
-    /// unless the ticked ones are all gone.
-    private var speakersState: DestinationState? {
-        if bridge.selectedPlayersUnavailable { return .unavailable }
-        guard bridge.hasConnectedPlayers else { return nil }
-        return bridge.isStreaming ? .streaming : .idle
     }
 
     /// The speakers within Sendspin speakers, after Apple Music's AirPlay list.
@@ -174,17 +170,14 @@ private struct LookingRow: View {
     }
 }
 
-/// Whether a chosen destination gets the Mac's audio, on the right of its row.
-private enum DestinationState {
-    case streaming, idle, unavailable
-
-    var text: String {
-        switch self {
-        case .streaming: "Streaming"
-        case .idle: "Idle"
-        case .unavailable: "Unavailable"
-        }
-    }
+/// Why a destination can't play, on the right of its row. Whether it plays shows on the menu
+/// bar icon, not in the rows: the Mac's own output couldn't tell, and a working destination
+/// needs no word.
+private func reason(_ text: String) -> some View {
+    Text(text)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize()
 }
 
 /// A link that looks like one: underlined, with the pointing hand, while hovered.
@@ -225,13 +218,12 @@ private enum DestinationIcon {
     }
 }
 
-/// A destination: a round icon, blue when chosen, its name, and on the right its state
-/// while chosen or whatever else it shows.
+/// A destination: a round icon, blue when chosen, its name, and on the right whatever it
+/// shows: why it can't play, the speakers in it, or the pairing token.
 private struct DestinationRow<Trailing: View>: View {
     let icon: DestinationIcon
     let title: String
     let chosen: Bool
-    var state: DestinationState?
     let action: () -> Void
     @ViewBuilder var trailing: Trailing
 
@@ -254,21 +246,8 @@ private struct DestinationRow<Trailing: View>: View {
             .buttonStyle(.plain)
             .fixedSize()
             .accessibilityAddTraits(chosen ? .isSelected : [])
-            HStack(spacing: 10) {
-                if let state {
-                    HStack(spacing: 4) {
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 6))
-                            .foregroundStyle(state == .streaming ? Color.green : Color.secondary)
-                        Text(state.text)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                }
-                trailing
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            trailing
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(height: 38)
         // The whole row chooses, not only the icon and name.
@@ -292,16 +271,12 @@ private struct MusicAssistantRows: View {
         let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
         VStack(alignment: .leading, spacing: 2) {
             DestinationRow(icon: .asset("MusicAssistantIcon"), title: "Music Assistant", chosen: chosen,
-                           state: chosen ? (!status.connected ? .unavailable : status.streaming ? .streaming : .idle) : nil,
                            action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
                 if needsPairing {
                     Pill(text: copied ? "Copied" : "Copy Token", checked: copied, presses: copies)
                         .onTapGesture(perform: copyToken)
-                } else if !chosen {
-                    Text(status.connected ? "Ready" : "Unavailable")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
+                } else if !status.connected {
+                    reason("Unavailable")
                 }
             }
             .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
