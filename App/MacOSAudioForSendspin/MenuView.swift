@@ -307,32 +307,38 @@ private struct MusicAssistantRows: View {
             .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
 
             if needsPairing {
-                pairingLine
+                // Where players waiting for setup are listed.
+                caption("Then pair this Mac in ", musicAssistantLinkingTo: "/settings/players?status=needs_setup", ".")
+                    .padding(.leading, destinationIndent)
+                    .padding(.bottom, 6)
+            } else if chosen && status.connected && !status.streaming {
+                // Where its sources are chosen.
+                caption("Select \(bridge.macName) as an input source in ", musicAssistantLinkingTo: "/browse",
+                        " to start playing.")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if chosen {
                 caption(!status.connected ? "It reconnects by itself when it's back on the network."
-                        : status.streaming ? "Choose speakers, groups and volume in Music Assistant."
-                        : "Select \(bridge.macName) as an input source in Music Assistant to start playing.")
+                        : "Choose speakers, groups and volume in Music Assistant.")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             }
         }
     }
 
-    /// Under the row with the Copy Token pill: "Then pair this Mac in [Music Assistant]",
-    /// Music Assistant linking to its web interface when it's known.
-    private var pairingLine: some View {
-        let musicAssistant = bridge.musicAssistantURL.map { "[Music Assistant](\($0.absoluteString))" } ?? "Music Assistant"
-        let markdown = "Then pair this Mac in \(musicAssistant)."
-        return Text((try? AttributedString(markdown: markdown)) ?? AttributedString(markdown))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    /// A caption with "Music Assistant" in it, linking to that page of its web interface when
+    /// its address is known. Built as text, not Markdown: the Mac's name may hold * or [.
+    private func caption(_ before: String, musicAssistantLinkingTo route: String, _ after: String) -> some View {
+        var name = AttributedString("Music Assistant")
+        name.link = bridge.musicAssistantPage(route)
+        return caption(AttributedString(before) + name + AttributedString(after))
     }
 
     private func caption(_ text: String) -> some View {
+        caption(AttributedString(text))
+    }
+
+    private func caption(_ text: AttributedString) -> some View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)

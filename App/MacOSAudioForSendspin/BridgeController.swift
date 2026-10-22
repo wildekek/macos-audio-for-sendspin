@@ -152,16 +152,26 @@ final class BridgeController {
     /// The name this Mac goes by in Music Assistant.
     var macName: String { identity.name }
 
-    /// The server's name without the id Music Assistant adds, e.g. "Music Assistant (d536…)".
-    /// Music Assistant's web interface, as it advertises it over mDNS: the server that
-    /// connected to this Mac (same name), or the only one on the network.
-    var musicAssistantURL: URL? {
+    /// A page of Music Assistant's web interface, as it advertises it over mDNS; `route` is
+    /// the part after the #, e.g. "/browse".
+    func musicAssistantPage(_ route: String) -> URL? {
+        guard let url = musicAssistantURL, var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        if components.path.isEmpty { components.path = "/" }
+        components.fragment = route
+        return components.url
+    }
+
+    /// Music Assistant's web interface: the server that connected to this Mac (same name), or
+    /// the only one on the network.
+    private var musicAssistantURL: URL? {
         if let name = sourceStatus.serverName, let server = musicAssistantServers.first(where: { $0.name == name }) {
             return server.url
         }
         return musicAssistantServers.count == 1 ? musicAssistantServers[0].url : nil
     }
 
+    /// The server's name without the id Music Assistant adds, e.g. "Music Assistant (d536…)".
     var musicAssistantName: String {
         let name = sourceStatus.serverName ?? sourceStatus.pairedServerNames.first ?? "Music Assistant"
         return name.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
