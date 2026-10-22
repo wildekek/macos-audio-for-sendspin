@@ -307,8 +307,7 @@ private struct MusicAssistantRows: View {
             .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
 
             if needsPairing {
-                caption(copied ? "Open Music Assistant and paste the token to pair this Mac."
-                               : "Copy the token, then pair this Mac in Music Assistant.")
+                pairingLine
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if chosen {
@@ -319,6 +318,18 @@ private struct MusicAssistantRows: View {
                     .padding(.bottom, 6)
             }
         }
+    }
+
+    /// Under the row with the Copy Token pill: "Then pair this Mac in [Music Assistant]",
+    /// Music Assistant linking to its web interface when it's known.
+    private var pairingLine: some View {
+        let musicAssistant = bridge.musicAssistantURL.map { "[Music Assistant](\($0.absoluteString))" } ?? "Music Assistant"
+        let markdown = "Then pair this Mac in \(musicAssistant)."
+        return Text((try? AttributedString(markdown: markdown)) ?? AttributedString(markdown))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func caption(_ text: String) -> some View {

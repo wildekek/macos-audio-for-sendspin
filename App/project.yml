@@ -66,6 +66,7 @@ targets:
         NSBonjourServices:
           - _sendspin._tcp
           - _sendspin-server._tcp
+          - _mass._tcp
     entitlements:
       path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
       properties:

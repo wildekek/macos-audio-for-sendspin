@@ -153,6 +153,15 @@ final class BridgeController {
     var macName: String { identity.name }
 
     /// The server's name without the id Music Assistant adds, e.g. "Music Assistant (d536…)".
+    /// Music Assistant's web interface, as it advertises it over mDNS: the server that
+    /// connected to this Mac (same name), or the only one on the network.
+    var musicAssistantURL: URL? {
+        if let name = sourceStatus.serverName, let server = musicAssistantServers.first(where: { $0.name == name }) {
+            return server.url
+        }
+        return musicAssistantServers.count == 1 ? musicAssistantServers[0].url : nil
+    }
+
     var musicAssistantName: String {
         let name = sourceStatus.serverName ?? sourceStatus.pairedServerNames.first ?? "Music Assistant"
         return name.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
@@ -191,6 +200,8 @@ final class BridgeController {
     private var isStartingCapture = false
     private var pumpTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
+    private var musicAssistantTask: Task<Void, Never>?
+    private var musicAssistantServers: [MusicAssistantServer] = []
     private var listener: ServiceListener?
     private var systemObservations: [PropertyObservation] = []
     private var deviceObservations: [PropertyObservation] = []
@@ -284,6 +295,12 @@ final class BridgeController {
                 Log.debug("Discovered: \(players.map { "\($0.instanceName) \($0.url.absoluteString)" })")
                 browsed = players
                 updateDiscovered()
+            }
+        }
+        musicAssistantTask = Task { [weak self] in
+            for await servers in MusicAssistantBrowser.browse() {
+                Log.debug("Music Assistant found: \(servers.map { "\($0.name ?? "?") \($0.url.absoluteString)" })")
+                self?.musicAssistantServers = servers
             }
         }
         startSource()
