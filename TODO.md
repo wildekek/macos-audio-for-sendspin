@@ -6,13 +6,13 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 ## Sendspin 1: required, not done
 
 1. **Pairing.** Servers must implement all three methods: the pairing PSK token (`SP:0…`), the
-   static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
+   static and the dynamic pairing code (CPace); clients the token plus at most one code method. Playback works unpaired today (Noise on the
    Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
    show "Needs pairing". Deliberately left until a speaker needs it. As a client (a source for
-   Music Assistant) the Mac pairs by token (Pairing PSK) or by a dynamic pairing code it shows
-   on screen (CPace); the static pairing code is still to do there. Spec proposal Sendspin/spec#333
-   would let servers say which methods they support, so the menu could stop offering the token
-   to servers that ask for a code.
+   Music Assistant) it's done: a dynamic pairing code shown on screen; the Pairing PSK is
+   implemented for automated pairing, but its token isn't shown in the app. Never add the static code to the client: the
+   implementation guide says to offer exactly one code method. Its display could also offer
+   the code as a QR code (`qr_code` format, a SHOULD).
 2. **The other roles.** "All servers MUST implement all versions of these roles": besides
    `player`, that's `controller` (play/pause/next, group volume by the spec's algorithm,
    `switch`), `metadata` and `artwork` (what's playing; needs macOS's Now Playing info),

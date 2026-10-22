@@ -142,10 +142,9 @@ struct ClientHelloMessage: Encodable {
         var features = Features()
     }
 
-    struct PairMethodDescriptor: Encodable {
-        /// Where the operator finds the token: shown by this app.
-        var locations = ["device"]
-    }
+    /// The pairing PSK: every client implements it, for automated pairing between systems.
+    /// No `locations`: the app shows the token nowhere (implementation guide).
+    struct PairMethodDescriptor: Encodable {}
 
     /// The code is shown on this Mac's screen, as six digits.
     struct DynamicCodeDescriptor: Encodable {

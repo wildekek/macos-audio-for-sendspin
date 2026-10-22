@@ -133,9 +133,6 @@ final class BridgeController {
     /// Music Assistant can take the Mac's audio: chosen, paired and connected.
     var musicAssistantReady: Bool { destination == .musicAssistant && sourceStatus.paired }
 
-    /// What Music Assistant pastes to pair with this Mac.
-    var pairingToken: String { source.pairingToken }
-
     /// The Mac's own output, which choosing it in the menu goes back to.
     var macOutputName: String {
         (isMacOutput ? returnOutputName : currentOutputName) ?? "This Mac"

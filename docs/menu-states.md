@@ -100,15 +100,14 @@ The right side:
 
 | Shows | Means |
 |---|---|
-| Copy Token, then ✓ Copied | The server found this Mac and it isn't paired yet. Each click copies the token again, with a press animation. Hidden while a code is showing. |
 | Unavailable | Paired, not connected (chosen or not). |
-| nothing | Paired and connected (chosen or not). While it's chosen, the caption says what's left to do. |
+| nothing | Not paired yet (the caption says how), or paired and connected (chosen or not; while it's chosen, the caption says what's left to do). |
 
 The caption under it:
 
 | When | Caption |
 |---|---|
-| Not paired yet | Pair this Mac in **[server]**. If it asks for a token, copy it here. |
+| Not paired yet | Pair this Mac in **[server]**, then enter the code that appears here. Clicking the row opens the same page. |
 | A code is showing | Enter 123-456 in **[server]**. |
 | Chosen, not the input yet | Select [Mac] as an input source in **[server]** to start playing. |
 | Chosen, the Mac is its input | Choose speakers, groups and volume in [server]. |
@@ -120,19 +119,22 @@ the input to Browse (`#/browse`). Without a URL, or for another server, the name
 While the speakers are chosen, the server gets silence, so its stream stays open for when it's
 chosen again.
 
-### Pairing: the server picks the method
+### Pairing: by a code shown on this Mac
 
-The Mac can't know in advance whether a server pairs by token or by code: nothing it receives
-before pairing says so (`server/hello` has no pairing methods). The Mac offers both in its
-hello, and the server picks one when someone starts pairing there. So the instructions lead
-with that step, and make the token conditional:
+Servers implement every pairing method, so the Mac pairs by code: in its hello it offers
+`dynamic_pairing_code` (on its display, as digits), and `pairing_psk`, which every client
+must implement. It never offers the static code too: a client offers exactly one code method
+(the implementation guide).
 
-- **Token** (`pairing_psk`): the server asks for the token; the pill copies it.
-- **Code** (`dynamic_pairing_code`): the server sends a pairing activation, and the Mac shows
-  a six-digit code: in the caption, and in a small floating window near the top of the screen
-  that doesn't take focus from where it's typed. The window says "Paired with [server]" for a
-  moment once it's done, or "Pairing ended"; closing it, or its Cancel, aborts the pairing.
-  Music Assistant offers the code whenever the client does, and then hides the token.
+When someone sets this Mac up on the server, the server sends a pairing activation and the
+Mac shows a six-digit code: in the caption, and in a small floating window near the top of the
+screen, without window controls, in the menu's glass, that doesn't take focus from where it's
+typed. The window has Copy Code and Cancel, and says "Paired with [server]" for a moment once
+it's done, or "Pairing ended".
+
+The pairing token is for automated pairing between systems, which a person never types, so
+the app doesn't show it anywhere (the implementation guide: "Keep automated pairing out of
+this menu"). The Pairing PSK method itself stays: every client must implement it.
 
 ## When something goes away, and comes back
 
@@ -144,4 +146,4 @@ with that step, and make the token conditional:
 | An unticked speaker shuts down properly | It leaves the list at once. | It appears as soon as it announces itself. |
 | Music Assistant goes offline, paired | Unavailable, chosen or not. | Music Assistant connects to the Mac again by itself. |
 | Music Assistant goes away, never paired | Its row leaves the list. | It appears again, ready to pair. |
-| Its pairing is forgotten (Settings › Forget) | Connected: Copy Token again. Not connected: the row leaves, and the speakers become the destination. | Pairing again needs the token. |
+| Its pairing is forgotten (Settings › Forget) | Connected: ready to pair again. Not connected: the row leaves, and the speakers become the destination. | Pairing again needs the token. |

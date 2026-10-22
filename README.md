@@ -37,8 +37,8 @@ release candidate in October 2026). Sendspin's own site keeps
 
 ### Already running Music Assistant?
 
-Then **Music Assistant** shows up in the menu, next to Sendspin speakers. Click it once to
-copy the pairing token and paste it in Music Assistant, and Music Assistant can play the Mac's
+Then **Music Assistant** shows up in the menu, next to Sendspin speakers. Set this Mac up in
+Music Assistant and enter the code the Mac shows, and Music Assistant can play the Mac's
 audio on any of its speakers and groups, AirPlay, Chromecast and Sonos included: choose it in
 the menu, and select this Mac as an input source there. Music Assistant chooses the speakers
 and the volume, and it isn't in sync with the Sendspin speakers in the menu, so the Mac plays
@@ -208,9 +208,12 @@ Release/build-dmg.sh
   equally, so their relative balance is kept (the same algorithm as aiosendspin).
 - **Music Assistant.** The app is also a Sendspin client with the `source@v1` role: it
   advertises `_sendspin._tcp` (port 8928, or a free one) with its own Curve25519 identity, and
-  Music Assistant connects to it. Pairing uses the Pairing PSK method: the token
-  (`SP:0…`) carries the client key and a pairing PSK, and the long-term keys of up to 5
-  servers are kept in the Keychain (Settings → Forget unpairs). Clock sync is the Sendspin
+  Music Assistant connects to it. Pairing is by dynamic pairing code: the Mac shows six digits,
+  derived from the Noise handshake and both sides' nonces, and CPace (X25519, SHA-512) proves
+  the operator entered them. The Pairing PSK method, which every client must implement, is for
+  automated pairing between systems: its token (`SP:0…`, the client key and the pairing PSK)
+  isn't shown in the app, since a person never types it (`sendspin-bridge --source` prints it). The Mac offers no static code: a client offers one code method. The
+  long-term keys of up to 5 servers are kept in the Keychain (Settings → Forget unpairs). Clock sync is the Sendspin
   time filter (a 2D Kalman filter) over bursts of `client/time`. When Music Assistant asks, the
   Mac streams FLAC at the device's rate in 16 bit, 20 ms chunks stamped with their capture
   time in the server's clock, and reports `signal: present` while there's sound, so Music
@@ -224,7 +227,7 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 ## Status
 
 Implements Sendspin 1 (release candidate): as a server with unpaired access, and as a client
-with the source role, paired with the pairing token. Tested against aiosendspin 10.2.1, Music
+with the source role, paired by dynamic pairing code (or the pairing token). Tested against aiosendspin 10.2.1, Music
 Assistant 2.10.7 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol
 isn't supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
 pairing with speakers (the server side), Opus, and a test of 44.1 kHz-only speakers (the

@@ -257,16 +257,14 @@ private struct DestinationRow<Trailing: View>: View {
 }
 
 /// A server this Mac is a source for, such as Music Assistant, as a destination. Until it's
-/// paired the whole row copies the pairing token, and choosing it would only silence the Mac;
-/// once paired, choosing it hands the Mac's audio to the server, which picks the speakers and
-/// the volume. Pairing reads the same for every server: the server picks the method, and a
-/// code pairing shows its code here and in a window. Music Assistant only adds its logo and
-/// links to its own pages.
+/// paired, the row opens the server's setup page (when known), and choosing it would only
+/// silence the Mac; once paired, choosing it hands the Mac's audio to the server, which picks
+/// the speakers and the volume. Pairing is by a code this Mac shows, here and in a window:
+/// servers support every method, so the code always works. The pairing token is for automated
+/// pairing between systems, not for people (the implementation guide), so it's in Settings.
+/// Music Assistant only adds its logo and links to its own pages.
 private struct MusicAssistantRows: View {
     let bridge: BridgeController
-    @State private var copied = false
-    /// Every copy, so each click shows: copying again is the way out of a lost clipboard.
-    @State private var copies = 0
 
     var body: some View {
         let status = bridge.sourceStatus
@@ -276,15 +274,12 @@ private struct MusicAssistantRows: View {
         VStack(alignment: .leading, spacing: 2) {
             DestinationRow(icon: bridge.sourceServerIsMusicAssistant ? .asset("MusicAssistantIcon") : .symbol("server.rack"),
                            title: server, chosen: chosen,
-                           action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
-                if needsPairing && status.pairingCode == nil {
-                    Pill(text: copied ? "Copied" : "Copy Token", checked: copied, presses: copies)
-                        .onTapGesture(perform: copyToken)
-                } else if !status.connected {
+                           action: { needsPairing ? openSetupPage() : bridge.chooseMusicAssistant() }) {
+                if !status.connected {
                     reason("Unavailable")
                 }
             }
-            .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
+            .accessibilityHint(needsPairing ? "Opens \(server) to pair this Mac" : "")
 
             if let code = status.pairingCode {
                 // The server is pairing by a code shown here (and in its window).
@@ -292,9 +287,8 @@ private struct MusicAssistantRows: View {
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if needsPairing {
-                // Pairing starts on the server, which picks the method: a code shown here, or the
-                // token, which the pill copies.
-                caption("Pair this Mac in ", serverLinkingTo: Self.setupPage, ". If it asks for a token, copy it here.")
+                // Pairing starts on the server; the code it asks for shows up here.
+                caption("Pair this Mac in ", serverLinkingTo: Self.setupPage, ", then enter the code that appears here.")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if chosen && status.connected && !status.streaming {
@@ -335,16 +329,13 @@ private struct MusicAssistantRows: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func copyToken() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(bridge.pairingToken, forType: .string)
-        copied = true
-        copies += 1
+    private func openSetupPage() {
+        if let url = bridge.musicAssistantPage(Self.setupPage) { NSWorkspace.shared.open(url) }
     }
 }
 
-/// The small grey label at the end of a row: "Copy Token", then "✓ Copied". It dips and
-/// springs back on each press, and the checkmark bounces, also when it already says Copied.
+/// A small grey label that copies: "Copy Code", then "✓ Copied". It dips and springs back on
+/// each press, and the checkmark bounces, also when it already says Copied.
 struct Pill: View {
     let text: String
     let checked: Bool
