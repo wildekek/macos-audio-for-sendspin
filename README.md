@@ -12,7 +12,7 @@ bit-perfect playback is finally possible on your Mac.
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
 choose speakers and control their volume:
 
-<img src="docs/menu.png" width="433" alt="The speaker icon in the menu bar, with its menu open: Sendspin speakers chosen and streaming, with a Home Assistant Connect AUX-2 ticked beneath it with its volume slider; then Music Assistant, ready, and the MacBook Pro Speakers.">
+<img src="docs/menu.png" width="464" alt="The speaker icon in the menu bar, filled while the Mac plays, with its menu open: Sendspin speakers chosen, with a Home Assistant Connect AUX-2 ticked beneath it with its volume slider; then Music Assistant and the MacBook Pro Speakers.">
 
 > Sendspin is a protocol of the Open Home Foundation;
 > this project is not affiliated with or endorsed by it.
