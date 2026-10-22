@@ -8,9 +8,11 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 1. **Pairing.** Servers must implement all three methods: the pairing PSK token (`SP:0…`), the
    static and the dynamic pairing code (CPace). Playback works unpaired today (Noise on the
    Sentinel PSK, allowed by ticking the speaker), and speakers that only admit paired servers
-   show "Needs pairing". Deliberately left until a speaker needs it. The client side of the
-   Pairing PSK method exists (the Music Assistant row): the token, `client/pair-init` and
-   `-finalize`, the pairing records and the re-handshake to the new key. CPace is still to do.
+   show "Needs pairing". Deliberately left until a speaker needs it. As a client (a source for
+   Music Assistant) the Mac pairs by token (Pairing PSK) or by a dynamic pairing code it shows
+   on screen (CPace); the static pairing code is still to do there. Spec proposal Sendspin/spec#333
+   would let servers say which methods they support, so the menu could stop offering the token
+   to servers that ask for a code.
 2. **The other roles.** "All servers MUST implement all versions of these roles": besides
    `player`, that's `controller` (play/pause/next, group volume by the spec's algorithm,
    `switch`), `metadata` and `artwork` (what's playing; needs macOS's Now Playing info),
@@ -31,8 +33,7 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    `defaults write` details should move to a "For developers" section.
 6. **More under Music Assistant.** Show and control what Music Assistant does with the
    Mac's input (where it plays, its volume, stop): a source can't, so this needs Music
-   Assistant's own API. And pairing with the 6-digit dynamic pairing code instead of the token,
-   once pairing (1) has CPace.
+   Assistant's own API.
 
 ## Audio: recommended or optional
 

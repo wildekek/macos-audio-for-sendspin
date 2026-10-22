@@ -27,9 +27,57 @@ struct MacOSAudioForSendspinApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let bridge = BridgeController()
     private var welcomeWindow: NSWindow?
+    private var pairingWindow: NSPanel?
+    private var pairingWindowClose: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !bridge.isWelcomeDone || AppLocation.needsMove { showWelcome() }
+        bridge.onPairingCode = { [weak self] code in self?.pairingCodeChanged(code) }
+    }
+
+    // MARK: Pairing code
+
+    /// Music Assistant started pairing by a code shown here: show it, near the top of the
+    /// screen, without taking focus from where it's typed. When it ends, the window says how
+    /// for a moment, then closes.
+    private func pairingCodeChanged(_ code: String?) {
+        if code != nil {
+            pairingWindowClose?.cancel()
+            if pairingWindow == nil { showPairingWindow() }
+        } else if pairingWindow != nil {
+            pairingWindowClose = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.pairingWindow?.close()
+            }
+        }
+    }
+
+    private func showPairingWindow() {
+        // No window controls, and transparent around the view's glass.
+        let panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: false)
+        let hosting = NSHostingController(rootView: PairingCodeView(bridge: bridge))
+        hosting.sizingOptions = .preferredContentSize
+        panel.contentViewController = hosting
+        panel.setContentSize(hosting.view.fittingSize)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.title = "Pair with \(bridge.sourceServerName)"  // for VoiceOver and the window list
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        // On the Space you're on, also over a full-screen app.
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.delegate = self
+        if let screen = NSScreen.main {
+            let frame = screen.visibleFrame
+            panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.maxY - 40))
+        }
+        pairingWindow = panel
+        panel.orderFrontRegardless()
     }
 
     private func showWelcome() {
@@ -56,8 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         welcomeWindow.makeKeyAndOrderFront(nil)
     }
 
-    /// Done or closed early: either way, start what the window didn't get to.
+    /// Done or closed early: either way, start what the window didn't get to. Closing the
+    /// pairing code's window while it shows a code cancels the pairing.
     func windowWillClose(_ notification: Notification) {
+        if (notification.object as? NSWindow) === pairingWindow {
+            pairingWindow = nil
+            pairingWindowClose?.cancel()
+            if bridge.sourceStatus.pairingCode != nil { bridge.cancelPairing() }
+            return
+        }
         guard (notification.object as? NSWindow) === welcomeWindow else { return }
         welcomeWindow = nil
         NSApp.setActivationPolicy(.accessory)  // back to a menu bar app

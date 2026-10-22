@@ -36,7 +36,7 @@ From top to bottom; a notice can sit above them.
 | Notice | The driver is missing or outdated, or microphone or Local Network access is denied. One at a time, in that order. Without the driver there are no rows. |
 | Looking for speakers… | No speaker is found or ticked, Music Assistant isn't connected or paired, and Sendspin speakers isn't chosen. Closes as soon as either is found. Links to [which speakers work](https://www.sendspin-audio.com/#speakers). |
 | Sendspin speakers | A speaker is found or ticked, or Sendspin speakers is chosen. The speakers are listed under it while it's chosen. |
-| Music Assistant | Music Assistant is connected to this Mac, or paired with it (`offersMusicAssistant`). |
+| Music Assistant (or another server) | A server is connected to this Mac as its source, or paired with it (`offersMusicAssistant`). Named after the server; see below. |
 | This Mac | Always: the Mac's own output, named after it (e.g. MacBook Pro Speakers). |
 
 One destination is chosen at a time (blue icon, bold name): Sendspin speakers, Music Assistant
@@ -87,13 +87,20 @@ shows the format it receives (e.g. FLAC · 48 kHz · 16-bit) in place of the nam
 A speaker keeps the name it gave in its hello while it's unticked or away (mDNS often has only
 an ID).
 
-## Music Assistant
+## Music Assistant, or another Sendspin server
+
+The Mac is a Sendspin source for one server at a time, usually Music Assistant. The row is
+the same for any server, with two Music Assistant extras: its logo, and links to its own pages.
+The app knows it's Music Assistant when a `_mass._tcp` record on the network has the server's
+name (it remembers the names it has seen, so an offline Music Assistant keeps its logo). Any
+other server shows its own name with a generic icon (`server.rack`), and its captions have no
+links.
 
 The right side:
 
 | Shows | Means |
 |---|---|
-| Copy Token, then ✓ Copied | Music Assistant found this Mac and isn't paired yet. Each click copies the token again, with a press animation. |
+| Copy Token, then ✓ Copied | The server found this Mac and it isn't paired yet. Each click copies the token again, with a press animation. Hidden while a code is showing. |
 | Unavailable | Paired, not connected (chosen or not). |
 | nothing | Paired and connected (chosen or not). While it's chosen, the caption says what's left to do. |
 
@@ -101,14 +108,31 @@ The caption under it:
 
 | When | Caption |
 |---|---|
-| Not paired yet | Then pair this Mac in **Music Assistant**. Links to its players waiting for setup (`#/settings/players?status=needs_setup`). |
-| Chosen, not the input yet | Select [Mac] as an input source in **Music Assistant** to start playing. Links to Browse (`#/browse`). |
-| Chosen, the Mac is its input | Choose speakers, groups and volume in Music Assistant. |
+| Not paired yet | Pair this Mac in **[server]**. If it asks for a token, copy it here. |
+| A code is showing | Enter 123-456 in **[server]**. |
+| Chosen, not the input yet | Select [Mac] as an input source in **[server]** to start playing. |
+| Chosen, the Mac is its input | Choose speakers, groups and volume in [server]. |
 | Chosen, Unavailable | It reconnects by itself when it's back on the network. |
 
-The links use the web interface URL Music Assistant advertises over mDNS (`_mass._tcp`,
-`internal_url`); without one, "Music Assistant" is plain text. While the speakers are chosen,
-Music Assistant gets silence, so its stream stays open for when it's chosen again.
+For Music Assistant, the server's name links to the URL it advertises over mDNS
+(`internal_url`): pairing to its players waiting for setup (`#/settings/players?status=needs_setup`),
+the input to Browse (`#/browse`). Without a URL, or for another server, the name is plain text.
+While the speakers are chosen, the server gets silence, so its stream stays open for when it's
+chosen again.
+
+### Pairing: the server picks the method
+
+The Mac can't know in advance whether a server pairs by token or by code: nothing it receives
+before pairing says so (`server/hello` has no pairing methods). The Mac offers both in its
+hello, and the server picks one when someone starts pairing there. So the instructions lead
+with that step, and make the token conditional:
+
+- **Token** (`pairing_psk`): the server asks for the token; the pill copies it.
+- **Code** (`dynamic_pairing_code`): the server sends a pairing activation, and the Mac shows
+  a six-digit code: in the caption, and in a small floating window near the top of the screen
+  that doesn't take focus from where it's typed. The window says "Paired with [server]" for a
+  moment once it's done, or "Pairing ended"; closing it, or its Cancel, aborts the pairing.
+  Music Assistant offers the code whenever the client does, and then hides the token.
 
 ## When something goes away, and comes back
 
@@ -119,5 +143,5 @@ Music Assistant gets silence, so its stream stays open for when it's chosen agai
 | A ticked speaker shuts down properly | Unavailable while it's gone. | It reconnects once it announces itself again: a fresh start. |
 | An unticked speaker shuts down properly | It leaves the list at once. | It appears as soon as it announces itself. |
 | Music Assistant goes offline, paired | Unavailable, chosen or not. | Music Assistant connects to the Mac again by itself. |
-| Music Assistant goes away, never paired | Its row leaves the list. | It appears again with Copy Token. |
+| Music Assistant goes away, never paired | Its row leaves the list. | It appears again, ready to pair. |
 | Its pairing is forgotten (Settings › Forget) | Connected: Copy Token again. Not connected: the row leaves, and the speakers become the destination. | Pairing again needs the token. |

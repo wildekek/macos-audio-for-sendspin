@@ -169,19 +169,35 @@ final class BridgeController {
         return components.url
     }
 
-    /// Music Assistant's web interface: the server that connected to this Mac (same name), or
-    /// the only one on the network.
+    /// Music Assistant's web interface: the `_mass._tcp` record with the source server's name.
     private var musicAssistantURL: URL? {
-        if let name = sourceStatus.serverName, let server = musicAssistantServers.first(where: { $0.name == name }) {
-            return server.url
-        }
-        return musicAssistantServers.count == 1 ? musicAssistantServers[0].url : nil
+        guard let name = sourceServerFullName else { return nil }
+        return musicAssistantServers.first { $0.name == name }?.url
     }
 
-    /// The server's name without the id Music Assistant adds, e.g. "Music Assistant (d536…)".
-    var musicAssistantName: String {
-        let name = sourceStatus.serverName ?? sourceStatus.pairedServerNames.first ?? "Music Assistant"
+    /// The server this Mac is a source for: the one connected, or else the one paired.
+    private var sourceServerFullName: String? {
+        sourceStatus.serverName ?? sourceStatus.pairedServerNames.first
+    }
+
+    /// That server is Music Assistant: a `_mass._tcp` record has its name, now or before. It
+    /// decides the logo and the links only; the instructions are the same for any server.
+    var sourceServerIsMusicAssistant: Bool {
+        guard let name = sourceServerFullName else { return true }
+        return musicAssistantNames.contains(name) || musicAssistantServers.contains { $0.name == name }
+    }
+
+    /// The server's name; Music Assistant's without the id it adds, e.g. "Music Assistant (d536…)".
+    var sourceServerName: String {
+        guard let name = sourceServerFullName else { return "Music Assistant" }
+        guard sourceServerIsMusicAssistant else { return name }
         return name.replacingOccurrences(of: #"\s*\(.*\)$"#, with: "", options: .regularExpression)
+    }
+
+    /// Names of the Music Assistant servers seen, so one keeps its logo while it's away.
+    private var musicAssistantNames: Set<String> {
+        get { Set(defaults.stringArray(forKey: "musicAssistantNames") ?? []) }
+        set { defaults.set(Array(newValue).sorted(), forKey: "musicAssistantNames") }
     }
 
     /// Formats at least one connected speaker supports, at rates the device offers.
@@ -317,7 +333,10 @@ final class BridgeController {
         musicAssistantTask = Task { [weak self] in
             for await servers in MusicAssistantBrowser.browse() {
                 Log.debug("Music Assistant found: \(servers.map { "\($0.name ?? "?") \($0.url.absoluteString)" })")
-                self?.musicAssistantServers = servers
+                guard let self else { return }
+                musicAssistantServers = servers
+                let names = Set(servers.compactMap(\.name))
+                if !names.isSubset(of: musicAssistantNames) { musicAssistantNames.formUnion(names) }
             }
         }
         startSource()
@@ -462,8 +481,13 @@ final class BridgeController {
         }
     }
 
+    /// Called when a server starts pairing by a code shown on this Mac (the code), and when
+    /// that ends (nil). The app shows it in a window of its own.
+    var onPairingCode: ((String?) -> Void)?
+
     private func sourceStatusChanged(_ status: SourceStatus) {
         let advertisedChanged = status.advertisedName != sourceStatus.advertisedName
+        if status.pairingCode != sourceStatus.pairingCode { onPairingCode?(status.pairingCode) }
         sourceStatus = status
         applyDestination()
         if advertisedChanged { updateDiscovered() } else { updateCapture() }
@@ -525,6 +549,12 @@ final class BridgeController {
     }
 
     /// Forget every pairing: Music Assistant needs the token again.
+    /// Cancel the pairing whose code is showing.
+    func cancelPairing() {
+        let source = source
+        Task { await source.cancelPairing() }
+    }
+
     func forgetMusicAssistant() {
         let source = source
         Task { await source.forgetPairings() }

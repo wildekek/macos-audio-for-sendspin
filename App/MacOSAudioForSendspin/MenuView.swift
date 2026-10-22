@@ -256,9 +256,12 @@ private struct DestinationRow<Trailing: View>: View {
     }
 }
 
-/// Music Assistant as a destination. Until it's paired the whole row copies the pairing
-/// token, and choosing it would only silence the Mac; once paired, choosing it hands the
-/// Mac's audio to Music Assistant, which picks the speakers and the volume.
+/// A server this Mac is a source for, such as Music Assistant, as a destination. Until it's
+/// paired the whole row copies the pairing token, and choosing it would only silence the Mac;
+/// once paired, choosing it hands the Mac's audio to the server, which picks the speakers and
+/// the volume. Pairing reads the same for every server: the server picks the method, and a
+/// code pairing shows its code here and in a window. Music Assistant only adds its logo and
+/// links to its own pages.
 private struct MusicAssistantRows: View {
     let bridge: BridgeController
     @State private var copied = false
@@ -269,10 +272,12 @@ private struct MusicAssistantRows: View {
         let status = bridge.sourceStatus
         let needsPairing = status.connected && !status.paired
         let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
+        let server = bridge.sourceServerName
         VStack(alignment: .leading, spacing: 2) {
-            DestinationRow(icon: .asset("MusicAssistantIcon"), title: "Music Assistant", chosen: chosen,
+            DestinationRow(icon: bridge.sourceServerIsMusicAssistant ? .asset("MusicAssistantIcon") : .symbol("server.rack"),
+                           title: server, chosen: chosen,
                            action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
-                if needsPairing {
+                if needsPairing && status.pairingCode == nil {
                     Pill(text: copied ? "Copied" : "Copy Token", checked: copied, presses: copies)
                         .onTapGesture(perform: copyToken)
                 } else if !status.connected {
@@ -281,30 +286,39 @@ private struct MusicAssistantRows: View {
             }
             .accessibilityHint(needsPairing ? "Copies the pairing token" : "")
 
-            if needsPairing {
-                // Where players waiting for setup are listed.
-                caption("Then pair this Mac in ", musicAssistantLinkingTo: "/settings/players?status=needs_setup", ".")
+            if let code = status.pairingCode {
+                // The server is pairing by a code shown here (and in its window).
+                caption("Enter \(code.prefix(3))-\(code.suffix(3)) in ", serverLinkingTo: Self.setupPage, ".")
+                    .padding(.leading, destinationIndent)
+                    .padding(.bottom, 6)
+            } else if needsPairing {
+                // Pairing starts on the server, which picks the method: a code shown here, or the
+                // token, which the pill copies.
+                caption("Pair this Mac in ", serverLinkingTo: Self.setupPage, ". If it asks for a token, copy it here.")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if chosen && status.connected && !status.streaming {
                 // Where its sources are chosen.
-                caption("Select \(bridge.macName) as an input source in ", musicAssistantLinkingTo: "/browse",
-                        " to start playing.")
+                caption("Select \(bridge.macName) as an input source in ", serverLinkingTo: "/browse", " to start playing.")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             } else if chosen {
                 caption(!status.connected ? "It reconnects by itself when it's back on the network."
-                        : "Choose speakers, groups and volume in Music Assistant.")
+                        : "Choose speakers, groups and volume in \(server).")
                     .padding(.leading, destinationIndent)
                     .padding(.bottom, 6)
             }
         }
     }
 
-    /// A caption with "Music Assistant" in it, linking to that page of its web interface when
-    /// its address is known. Built as text, not Markdown: the Mac's name may hold * or [.
-    private func caption(_ before: String, musicAssistantLinkingTo route: String, _ after: String) -> some View {
-        var name = AttributedString("Music Assistant")
+    /// Music Assistant's list of players waiting for setup, where pairing happens.
+    private static let setupPage = "/settings/players?status=needs_setup"
+
+    /// A caption with the server's name in it, linking to that page of Music Assistant's web
+    /// interface when the server is Music Assistant and its address is known. Built as text,
+    /// not Markdown: the Mac's name may hold * or [.
+    private func caption(_ before: String, serverLinkingTo route: String, _ after: String) -> some View {
+        var name = AttributedString(bridge.sourceServerName)
         name.link = bridge.musicAssistantPage(route)
         return caption(AttributedString(before) + name + AttributedString(after))
     }
@@ -331,7 +345,7 @@ private struct MusicAssistantRows: View {
 
 /// The small grey label at the end of a row: "Copy Token", then "✓ Copied". It dips and
 /// springs back on each press, and the checkmark bounces, also when it already says Copied.
-private struct Pill: View {
+struct Pill: View {
     let text: String
     let checked: Bool
     /// Changes with each press.
