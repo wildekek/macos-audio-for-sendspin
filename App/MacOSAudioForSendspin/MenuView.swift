@@ -283,6 +283,8 @@ private struct DestinationRow<Trailing: View>: View {
 private struct MusicAssistantRows: View {
     let bridge: BridgeController
     @State private var copied = false
+    /// Every copy, so each click shows: copying again is the way out of a lost clipboard.
+    @State private var copies = 0
 
     var body: some View {
         let status = bridge.sourceStatus
@@ -293,7 +295,7 @@ private struct MusicAssistantRows: View {
                            state: chosen ? (!status.connected ? .unavailable : status.streaming ? .streaming : .idle) : nil,
                            action: { needsPairing ? copyToken() : bridge.chooseMusicAssistant() }) {
                 if needsPairing {
-                    Pill(text: copied ? "Copied" : "Copy Token", checked: copied)
+                    Pill(text: copied ? "Copied" : "Copy Token", checked: copied, presses: copies)
                         .onTapGesture(perform: copyToken)
                 } else if !chosen {
                     Text(status.connected ? "Ready" : "Unavailable")
@@ -331,19 +333,24 @@ private struct MusicAssistantRows: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(bridge.pairingToken, forType: .string)
         copied = true
+        copies += 1
     }
 }
 
-/// The small grey label at the end of a row: "Copy Token", then "✓ Copied".
+/// The small grey label at the end of a row: "Copy Token", then "✓ Copied". It dips and
+/// springs back on each press, and the checkmark bounces, also when it already says Copied.
 private struct Pill: View {
     let text: String
     let checked: Bool
+    /// Changes with each press.
+    var presses = 0
 
     var body: some View {
         HStack(spacing: 4) {
             if checked {
                 Image(systemName: "checkmark")
                     .font(.system(size: 8, weight: .bold))
+                    .symbolEffect(.bounce, value: presses)
             }
             Text(text)
         }
@@ -352,6 +359,12 @@ private struct Pill: View {
         .padding(.vertical, 3)
         .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 5))
         .fixedSize()
+        .keyframeAnimator(initialValue: 1.0, trigger: presses) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            CubicKeyframe(0.88, duration: 0.07)
+            SpringKeyframe(1.0, duration: 0.25, spring: .snappy)
+        }
     }
 }
 
