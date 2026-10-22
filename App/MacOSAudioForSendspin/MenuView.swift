@@ -334,37 +334,6 @@ private struct MusicAssistantRows: View {
     }
 }
 
-/// A small grey label that copies: "Copy Code", then "✓ Copied". It dips and springs back on
-/// each press, and the checkmark bounces, also when it already says Copied.
-struct Pill: View {
-    let text: String
-    let checked: Bool
-    /// Changes with each press.
-    var presses = 0
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if checked {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .symbolEffect(.bounce, value: presses)
-            }
-            Text(text)
-        }
-        .font(.caption)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 5))
-        .fixedSize()
-        .keyframeAnimator(initialValue: 1.0, trigger: presses) { content, scale in
-            content.scaleEffect(scale)
-        } keyframes: { _ in
-            CubicKeyframe(0.88, duration: 0.07)
-            SpringKeyframe(1.0, duration: 0.25, spring: .snappy)
-        }
-    }
-}
-
 /// Name, then the volume slider (selected and connected) or a status, then a checkbox.
 /// There are no device icons: Sendspin doesn't say what kind of device a speaker is.
 private struct PlayerRow: View {

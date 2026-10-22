@@ -57,8 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // No window controls, and transparent around the view's glass.
         let panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered, defer: false)
-        let hosting = NSHostingController(rootView: PairingCodeView(bridge: bridge))
-        hosting.sizingOptions = .preferredContentSize
+        let hosting = NSHostingController(rootView: PairingCodeView(bridge: bridge) { [weak self] in
+            self?.pairingWindow?.close()
+        })
+        // Sized once, from its largest state (the code): SwiftUI resizing this borderless glass
+        // panel during an animation loops in Auto Layout until the stack overflows. Smaller
+        // states just shrink their glass inside the transparent window.
+        hosting.sizingOptions = []
         panel.contentViewController = hosting
         panel.setContentSize(hosting.view.fittingSize)
         panel.isOpaque = false
@@ -105,12 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Done or closed early: either way, start what the window didn't get to. Closing the
-    /// pairing code's window while it shows a code cancels the pairing.
+    /// pairing code's window only dismisses it: the pairing goes on, its code in the menu.
     func windowWillClose(_ notification: Notification) {
         if (notification.object as? NSWindow) === pairingWindow {
             pairingWindow = nil
             pairingWindowClose?.cancel()
-            if bridge.sourceStatus.pairingCode != nil { bridge.cancelPairing() }
             return
         }
         guard (notification.object as? NSWindow) === welcomeWindow else { return }

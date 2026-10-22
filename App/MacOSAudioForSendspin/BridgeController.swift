@@ -546,12 +546,6 @@ final class BridgeController {
     }
 
     /// Forget every pairing: Music Assistant needs the token again.
-    /// Cancel the pairing whose code is showing.
-    func cancelPairing() {
-        let source = source
-        Task { await source.cancelPairing() }
-    }
-
     func forgetMusicAssistant() {
         let source = source
         Task { await source.forgetPairings() }

@@ -129,8 +129,10 @@ must implement. It never offers the static code too: a client offers exactly one
 When someone sets this Mac up on the server, the server sends a pairing activation and the
 Mac shows a six-digit code: in the caption, and in a small floating window near the top of the
 screen, without window controls, in the menu's glass, that doesn't take focus from where it's
-typed. The window has Copy Code and Cancel, and says "Paired with [server]" for a moment once
-it's done, or "Pairing ended".
+typed. The code is on the clipboard at once: the digits lift and settle, and "Copied" fades in
+with a bouncing clipboard icon; clicking the digits copies it again. Close only dismisses the
+window (the pairing goes on, its code still in the menu). The window says "Paired with
+[server]" for a moment once it's done, or "Pairing ended".
 
 The pairing token is for automated pairing between systems, which a person never types, so
 the app doesn't show it anywhere (the implementation guide: "Keep automated pairing out of
