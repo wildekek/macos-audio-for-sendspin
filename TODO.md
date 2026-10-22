@@ -34,14 +34,30 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 6. **More under Music Assistant.** Show and control what Music Assistant does with the
    Mac's input (where it plays, its volume, stop): a source can't, so this needs Music
    Assistant's own API.
+7. **More than one server.** The spec allows one admitted connection at a time (Multiple
+   servers, server-initiated): playback outranks pairing outranks idle, a pairing attempt is
+   never displaced, and between two idle servers only the last one that played may take over.
+   The displaced server gets `another_server` and SHOULD NOT reconnect by itself, so pairing a
+   second server takes the Mac away from an idle Music Assistant until someone picks the Mac
+   there again. That's by the spec; what's missing is the menu: it shows one server row, named
+   after the first paired server even when that one is gone. Show every paired server, which
+   one holds the connection and which were set aside, each with Forget. Also consider the
+   spec's MAY: holding one pairing connection alongside a playing one, so pairing another
+   server doesn't interrupt what plays.
+8. **Auto-updater.** Today every update is a manual download and drag to Applications, as the
+   release notes explain. AirPlay never asks for that. Check for new releases and install them
+   from the app (Sparkle is the usual choice: an EdDSA-signed appcast, which the release
+   workflow would publish next to the disk image). An update that changes the audio driver
+   still needs the administrator password; say so before installing rather than surprising
+   the user mid-update.
 
 ## Audio: recommended or optional
 
-7. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+9. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
-8. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
-9. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
-   a per-speaker delay for external amplifiers).
+10. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+11. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+    a per-speaker delay for external amplifiers).
 
 ## Loose ends
 
