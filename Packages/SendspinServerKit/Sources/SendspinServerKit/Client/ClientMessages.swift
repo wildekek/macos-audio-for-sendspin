@@ -60,6 +60,8 @@ struct ServerHelloReceived: Decodable {
 struct ServerActivateReceived: Decodable {
     struct Pairing: Decodable {
         var method: String
+        /// The dynamic code's emission format: "digits" or "qr_code".
+        var format: String?
     }
 
     var activities: [String]
@@ -96,6 +98,35 @@ struct PairAbortMessage: Codable {
     var reason: String
 }
 
+// Dynamic Pairing Code flow (pairing.md, Messages). Binary values are base64url.
+
+struct ServerPairInitReceived: Decodable {
+    /// In the first round only.
+    var nonceA: String?
+
+    enum CodingKeys: String, CodingKey {
+        case nonceA = "nonce_A"
+    }
+}
+
+struct ServerPairAuthReceived: Decodable {
+    /// The server's CPace share `Ya`.
+    var pakeMsg1: String
+
+    enum CodingKeys: String, CodingKey {
+        case pakeMsg1 = "pake_msg_1"
+    }
+}
+
+struct ServerPairConfirmReceived: Decodable {
+    /// The server's confirmation tag `Ta`.
+    var serverKC: String
+
+    enum CodingKeys: String, CodingKey {
+        case serverKC = "server_kc"
+    }
+}
+
 // MARK: - Client -> server
 
 struct ClientHelloMessage: Encodable {
@@ -116,11 +147,24 @@ struct ClientHelloMessage: Encodable {
         var locations = ["device"]
     }
 
+    /// The code is shown on this Mac's screen, as six digits.
+    struct DynamicCodeDescriptor: Encodable {
+        var outChannels = ["display"]
+        var formats = ["digits"]
+
+        enum CodingKeys: String, CodingKey {
+            case formats
+            case outChannels = "out_channels"
+        }
+    }
+
     struct PairMethods: Encodable {
         var pairingPSK = PairMethodDescriptor()
+        var dynamicPairingCode = DynamicCodeDescriptor()
 
         enum CodingKeys: String, CodingKey {
             case pairingPSK = "pairing_psk"
+            case dynamicPairingCode = "dynamic_pairing_code"
         }
     }
 
@@ -196,18 +240,55 @@ struct ClientStreamStartMessage: Encodable {
 
 struct ClientPairInitMessage: Encodable {
     var pairingIndex: Int
+    /// The commitment to nonce_B, in the Dynamic Pairing Code flow.
+    var commitB: String?
 
     enum CodingKeys: String, CodingKey {
+        case pairingIndex = "pairing_index"
+        case commitB = "commit_B"
+    }
+}
+
+struct ClientPairAuthMessage: Encodable {
+    /// This Mac's CPace share `Yb`.
+    var pakeMsg2: String
+
+    enum CodingKeys: String, CodingKey {
+        case pakeMsg2 = "pake_msg_2"
+    }
+}
+
+struct ClientPairConfirmMessage: Encodable {
+    /// This Mac's confirmation tag `Tb`.
+    var clientKC: String
+    var wrappedNonceB: String
+
+    enum CodingKeys: String, CodingKey {
+        case clientKC = "client_kc"
+        case wrappedNonceB = "wrapped_nonce_B"
+    }
+}
+
+struct ClientPairPendingMessage: Encodable {
+    var pairingIndex: Int
+    var message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case message
         case pairingIndex = "pairing_index"
     }
 }
 
+/// The new long-term PSK: plain in the Pairing PSK flow, wrapped in the code flows.
 struct ClientPairFinalizeMessage: Encodable {
     /// base64url, 43 characters.
-    var longTermPSK: String
+    var longTermPSK: String?
+    /// base64url, 64 characters.
+    var wrappedPSK: String?
 
     enum CodingKeys: String, CodingKey {
         case longTermPSK = "long_term_psk"
+        case wrappedPSK = "wrapped_psk"
     }
 }
 

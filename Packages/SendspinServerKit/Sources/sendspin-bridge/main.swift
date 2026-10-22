@@ -251,9 +251,15 @@ func runSource(_ options: Options) async {
     await client.start()
     await client.setAvailable(true)
     let statusTask = Task {
+        var shownCode: String?
         for await status in client.statusUpdates {
             Log.info("Source: \(status.serverName.map { "\($0), \(status.paired ? "paired" : "not paired")" } ?? "no server")"
                 + (status.streaming ? ", streaming" : "") + (status.advertisedName.map { " (advertised as \($0))" } ?? ""))
+            // The terminal is this tool's display for the dynamic pairing code.
+            if status.pairingCode != shownCode {
+                shownCode = status.pairingCode
+                if let code = shownCode { print("Pairing code: \(code.prefix(3))-\(code.suffix(3))") }
+            }
         }
     }
     let pump = Task {

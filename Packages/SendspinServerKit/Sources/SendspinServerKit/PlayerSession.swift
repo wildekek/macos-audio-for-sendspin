@@ -643,10 +643,13 @@ struct PlayerBufferAccount {
 
 enum SessionError: Error, CustomStringConvertible {
     case handshake(String)
+    /// A pairing protocol error (pairing.md): the connection closes without a message.
+    case pairing(String)
 
     var description: String {
         switch self {
         case .handshake(let detail): "handshake failed: \(detail)"
+        case .pairing(let detail): "pairing protocol error: \(detail)"
         }
     }
 }

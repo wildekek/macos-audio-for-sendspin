@@ -12,6 +12,8 @@ public struct SourceStatus: Sendable, Equatable {
     public var pairedServerNames: [String] = []
     /// The server is receiving the Mac's audio.
     public var streaming = false
+    /// A code to show while the server pairs with this Mac: six digits, entered there.
+    public var pairingCode: String?
     /// The instance name this Mac advertises as a client; the speaker browser skips it.
     public var advertisedName: String?
 
@@ -46,6 +48,10 @@ public actor SourceClient {
     private var admittedState = SourceSession.State()
     private var available = false
     private var sending = true
+    /// Dynamic pairing code rounds since the last verified server_kc, across servers. At the
+    /// limit, attempts wait until the app starts anew (pairing.md, Rounds).
+    private var failedCodeRounds = 0
+    private static let codeRoundLimit = 20
 
     /// `save` is called with the credentials whenever a pairing changes; persist them whole.
     public init(name: String, softwareVersion: String, credentials: SourceCredentials,
@@ -118,6 +124,23 @@ public actor SourceClient {
         save(credentials)
         for session in sessions.values { await session.close(goodbye: "restart") }
         refreshStatus()
+    }
+
+    /// Cancel a pairing in progress, from this Mac.
+    public func cancelPairing() async {
+        await admitted?.cancelPairing()
+    }
+
+    var codeRoundLimitReached: Bool { failedCodeRounds >= Self.codeRoundLimit }
+
+    /// Count a round whose code didn't match; true once that reaches the limit.
+    func codeRoundFailed() -> Bool {
+        failedCodeRounds += 1
+        return codeRoundLimitReached
+    }
+
+    func codeRoundVerified() {
+        failedCodeRounds = 0
     }
 
     private func setAdvertisedName(_ name: String) {
@@ -219,6 +242,7 @@ public actor SourceClient {
         status.serverName = admitted == nil ? nil : (admittedState.serverName ?? "Sendspin server")
         status.paired = admittedState.paired
         status.streaming = admittedState.streaming
+        status.pairingCode = admittedState.pairingCode
         status.hasPairing = !credentials.records.isEmpty
         status.pairedServerNames = credentials.records.compactMap(\.serverName)
         self.status = status

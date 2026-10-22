@@ -3,8 +3,8 @@ import Foundation
 
 /// One server's connection to this Mac as a Sendspin client with the `source@v1` role: a
 /// server-initiated connection (Music Assistant dials us). It runs the Noise handshake as
-/// responder, keeps the clock in sync, pairs with the pairing token, and streams the Mac's
-/// audio while the server asks for it (roles/source/v1.md).
+/// responder, keeps the clock in sync, pairs with the pairing token or a pairing code shown
+/// on this Mac, and streams the Mac's audio while the server asks for it (roles/source/v1.md).
 actor SourceSession {
     /// Which PSK keyed the session (connection.md, Pre-Shared Key).
     enum PSKCategory: String {
@@ -19,6 +19,8 @@ actor SourceSession {
         var activities: [String] = []
         var sourceActive = false
         var streaming = false
+        /// The pairing code to show while a server pairs with this Mac (six digits).
+        var pairingCode: String?
     }
 
     nonisolated let id = UUID()
@@ -42,10 +44,26 @@ actor SourceSession {
     /// nothing but the handshake may be sent (connection.md, Re-handshake).
     private var rehandshaking = false
 
-    // Pairing (Pairing PSK flow).
+    // Pairing.
     private var pairingIndex = 0
+    /// The long-term PSK sent in client/pair-finalize, stored once the server confirms.
     private var pendingPSK: Data?
     private var pairingTimeout: Task<Void, Never>?
+    private var codeAttempt: CodeAttempt?
+
+    /// One Dynamic Pairing Code attempt (pairing.md): its code stays the same across rounds,
+    /// each round a fresh CPace run.
+    private struct CodeAttempt {
+        let nonceB = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        let pairingIndex: Int
+        var round = 0
+        /// Waiting for server/pair-init: after client/pair-init, and after client/pair-retry.
+        var awaitingRound = true
+        /// From the first round's nonce_A on.
+        var code: String?
+        var cpace: CPace?
+        var sid = Data()
+    }
 
     // Clock.
     private var filter = TimeFilter()
@@ -223,18 +241,23 @@ actor SourceSession {
             if let command = try MessageCoding.payload(ServerCommandReceived.self, from: data).source?.command {
                 handleSourceCommand(command)
             }
+        case "server/pair-init":
+            try await beginCodeRound(MessageCoding.payload(ServerPairInitReceived.self, from: data))
+        case "server/pair-auth":
+            try answerCodeAuth(MessageCoding.payload(ServerPairAuthReceived.self, from: data))
+        case "server/pair-confirm":
+            try await confirmCode(MessageCoding.payload(ServerPairConfirmReceived.self, from: data))
         case "server/pair-finalize":
             if let psk = pendingPSK, let serverID = state.serverID {
                 // The server persisted its record: now ours. It re-handshakes to the new key next.
-                pendingPSK = nil
-                pairingTimeout?.cancel()
+                await endPairingAttempt()
                 await client.storePairing(serverID: serverID, psk: psk)
                 Log.info("Source: paired with \(state.serverName ?? serverID)")
             }
         case "pair/abort":
             let reason = (try? MessageCoding.payload(PairAbortMessage.self, from: data).reason) ?? "?"
             Log.info("Source: pairing aborted by the server (\(reason))")
-            endPairingAttempt()
+            await endPairingAttempt()
         case "server/unpair":
             guard matched == .longTerm, let serverID = state.serverID else { break }
             await client.removePairing(serverID: serverID)
@@ -303,17 +326,21 @@ actor SourceSession {
         }
         if timeSync == nil { startTimeSync() }
 
-        // Pairing.
+        // Pairing: the token on a pairing-PSK connection, a code on an unpaired one.
         if activities.contains("pairing") {
             pairingIndex += 1
-            if activate.pairing?.method == "pairing_psk" && matched == .pairing {
+            await endPairingAttempt()  // each pairing activation admits one attempt of its own
+            switch (activate.pairing?.method, matched) {
+            case ("pairing_psk", .pairing):
                 startPairingPSK()
-            } else {
+            case ("dynamic_pairing_code", .sentinel) where activate.pairing?.format == "digits":
+                await startPairingCode()
+            default:
                 sendMessage("pair/abort", PairAbortMessage(reason: "method_not_supported"))
             }
-        } else if pendingPSK != nil {
+        } else if pendingPSK != nil || codeAttempt != nil {
             // Left pairing without server/pair-finalize: persist nothing.
-            endPairingAttempt()
+            await endPairingAttempt()
         }
         await client.sessionChanged(self)
         return false
@@ -327,25 +354,137 @@ actor SourceSession {
         pendingPSK = psk
         sendMessage("client/pair-init", ClientPairInitMessage(pairingIndex: pairingIndex))
         sendMessage("client/pair-finalize", ClientPairFinalizeMessage(longTermPSK: Base64URL.encode(psk)))
+        startPairingTimeout()
+        Log.info("Source: pairing with \(state.serverName ?? "server") (token)")
+    }
+
+    /// Dynamic Pairing Code flow: commit to nonce_B; the code follows from the server's
+    /// nonce_A in its first server/pair-init. Past the round limit, attempts wait until the
+    /// app starts anew (pairing.md, Rounds).
+    private func startPairingCode() async {
+        if await client.codeRoundLimitReached {
+            sendMessage("client/pair-pending", ClientPairPendingMessage(
+                pairingIndex: pairingIndex,
+                message: "Too many wrong codes. Quit and reopen macOS Audio for Sendspin on the Mac to try again."))
+            return
+        }
+        let attempt = CodeAttempt(pairingIndex: pairingIndex)
+        codeAttempt = attempt
+        sendMessage("client/pair-init", ClientPairInitMessage(
+            pairingIndex: pairingIndex, commitB: Base64URL.encode(DynamicPairingCode.commitment(to: attempt.nonceB))))
+        startPairingTimeout()
+        Log.info("Source: pairing with \(state.serverName ?? "server") (code)")
+    }
+
+    /// server/pair-init: a round begins. The first carries nonce_A, which fixes the code; each
+    /// shows the code and starts a fresh CPace run on it.
+    private func beginCodeRound(_ message: ServerPairInitReceived) async throws {
+        guard var attempt = codeAttempt else { return }  // left over from an ended attempt
+        guard attempt.awaitingRound, let h = channel?.handshakeHash else {
+            throw SessionError.pairing("server/pair-init out of turn")
+        }
+        attempt.round += 1
+        if attempt.round == 1 {
+            guard let nonceA = message.nonceA.flatMap(Base64URL.decode), nonceA.count == DynamicPairingCode.nonceSize
+            else { throw SessionError.pairing("bad nonce_A") }
+            attempt.code = DynamicPairingCode.digits(handshakeHash: h, nonceA: nonceA, nonceB: attempt.nonceB)
+        } else if message.nonceA != nil {
+            throw SessionError.pairing("nonce_A after the first round")
+        }
+        guard let code = attempt.code else { throw SessionError.pairing("no pairing code") }
+        attempt.sid = DynamicPairingCode.sessionID(handshakeHash: h, pairingIndex: attempt.pairingIndex,
+                                                   round: attempt.round)
+        attempt.cpace = try CPace(role: .responder, prs: Data(code.utf8), sid: attempt.sid, ad: Data("client".utf8))
+        attempt.awaitingRound = false
+        codeAttempt = attempt
+        if state.pairingCode != code {
+            state.pairingCode = code
+            await client.sessionChanged(self)
+        }
+        Log.info("Source: showing the pairing code (round \(attempt.round))")
+    }
+
+    /// server/pair-auth: the server has the code the operator entered; answer with our share.
+    private func answerCodeAuth(_ message: ServerPairAuthReceived) throws {
+        guard var attempt = codeAttempt else { return }
+        guard var cpace = attempt.cpace, cpace.isk == nil else { throw SessionError.pairing("server/pair-auth out of turn") }
+        guard let ya = Base64URL.decode(message.pakeMsg1) else { throw SessionError.pairing("bad pake_msg_1") }
+        do {
+            try cpace.derive(peerShare: ya, peerAD: Data("server".utf8))
+        } catch {
+            throw SessionError.pairing("\(error)")
+        }
+        attempt.cpace = cpace
+        codeAttempt = attempt
+        sendMessage("client/pair-auth", ClientPairAuthMessage(pakeMsg2: Base64URL.encode(cpace.publicShare)))
+    }
+
+    /// server/pair-confirm: a tag that verifies means the operator entered our code. Then our
+    /// tag, the opening of the commitment and the new long-term PSK, the last two wrapped
+    /// under the CPace output; otherwise another round, up to the limit.
+    private func confirmCode(_ message: ServerPairConfirmReceived) async throws {
+        guard var attempt = codeAttempt else { return }
+        guard let cpace = attempt.cpace, let isk = cpace.isk else { throw SessionError.pairing("server/pair-confirm out of turn") }
+        guard let ta = Base64URL.decode(message.serverKC), ta.count == 64 else { throw SessionError.pairing("bad server_kc") }
+        attempt.cpace = nil
+        guard cpace.verify(peerTag: ta), let tb = cpace.tag() else {
+            if await client.codeRoundFailed() {
+                Log.info("Source: wrong pairing code, and the round limit is reached")
+                sendMessage("pair/abort", PairAbortMessage(reason: "pairing_code_mismatch"))
+                await endPairingAttempt()
+            } else {
+                Log.info("Source: wrong pairing code; asking for another round")
+                attempt.awaitingRound = true
+                codeAttempt = attempt
+                sendMessage("client/pair-retry", EmptyPayload())
+            }
+            return
+        }
+        await client.codeRoundVerified()
+        codeAttempt = attempt
+        let psk = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        let wrappedNonce = try DynamicPairingCode.wrap(attempt.nonceB, .nonce, sid: attempt.sid, isk: isk, suite: .chaChaPoly)
+        let wrappedPSK = try DynamicPairingCode.wrap(psk, .psk, sid: attempt.sid, isk: isk, suite: .chaChaPoly)
+        pendingPSK = psk
+        sendMessage("client/pair-confirm", ClientPairConfirmMessage(clientKC: Base64URL.encode(tb),
+                                                                    wrappedNonceB: Base64URL.encode(wrappedNonce)))
+        sendMessage("client/pair-finalize", ClientPairFinalizeMessage(wrappedPSK: Base64URL.encode(wrappedPSK)))
+        Log.info("Source: \(state.serverName ?? "server") entered the right code")
+    }
+
+    /// The operator cancelled on this Mac.
+    func cancelPairing() async {
+        guard pendingPSK != nil || codeAttempt != nil else { return }
+        sendMessage("pair/abort", PairAbortMessage(reason: "user_cancelled"))
+        await endPairingAttempt()
+        Log.info("Source: pairing cancelled on this Mac")
+    }
+
+    /// Each attempt ends within 2 minutes of its first message (pairing.md).
+    private func startPairingTimeout() {
         pairingTimeout?.cancel()
         pairingTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(120))
             guard !Task.isCancelled else { return }
             await self?.pairingTimedOut()
         }
-        Log.info("Source: pairing with \(state.serverName ?? "server") (token)")
     }
 
-    private func pairingTimedOut() {
-        guard pendingPSK != nil else { return }
+    private func pairingTimedOut() async {
+        guard pendingPSK != nil || codeAttempt != nil else { return }
         sendMessage("pair/abort", PairAbortMessage(reason: "attempt_timeout"))
-        endPairingAttempt()
+        await endPairingAttempt()
     }
 
-    private func endPairingAttempt() {
+    private func endPairingAttempt() async {
         pendingPSK = nil
+        codeAttempt = nil
         pairingTimeout?.cancel()
         pairingTimeout = nil
+        if state.pairingCode != nil {
+            state.pairingCode = nil
+            await client.sessionChanged(self)
+        }
     }
 
     /// The server swaps session keys in-band, e.g. to the new long-term PSK after pairing.
