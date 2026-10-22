@@ -19,3 +19,6 @@ App/Local.xcconfig
 
 # macOS
 .DS_Store
+
+# Release screenshots, before cropping
+/Screenshots/
