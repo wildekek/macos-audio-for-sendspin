@@ -367,6 +367,14 @@ final class BridgeController {
     func setSelected(_ instanceName: String, _ isSelected: Bool) {
         if isSelected {
             selected.insert(instanceName)
+            // Choosing a player that shows "Identity changed" accepts its new identity: the
+            // user picks it knowingly. It reconnects below, and the new identity is approved.
+            if statuses[instanceName]?.connection == .notApproved {
+                var approved = approvedPlayers
+                approved[instanceName] = nil
+                defaults.set(approved, forKey: "approvedPlayers")
+                Log.info("\(instanceName): accepting its new identity")
+            }
             // Re-selecting a player that left or was taken over reconnects it.
             if let status = statuses[instanceName], status.connection.isFinal { dropSession(instanceName) }
             // A player that left the group for something else comes back on the same connection.
