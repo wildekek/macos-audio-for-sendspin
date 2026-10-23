@@ -18,8 +18,12 @@ final class BridgeController {
         var instanceName: String
         var name: String
         var isSelected: Bool
+        /// It plays the Mac's sound now: its icon is blue.
+        var isActive: Bool
         var status: PlayerStatus?
         var isDiscovered: Bool
+        /// The Mac's own speakers, not a Sendspin speaker.
+        var isLocal: Bool { instanceName == BridgeController.localKey }
     }
 
     /// Where the Mac's audio goes: the speakers ticked here, in sync, or Music Assistant,
@@ -73,8 +77,7 @@ final class BridgeController {
     private(set) var isMacOutput = false
     /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
     private(set) var currentOutputName: String?
-    /// Name of the output switching away from Sendspin goes to.
-    private(set) var returnOutputName: String?
+    private var currentOutputUID: String?
     private(set) var isSwitchingOutput = false
     /// The Sendspin device's volume and mute, linked to the speakers (volume keys, Control Center).
     private var deviceVolume: Float = 1
@@ -91,44 +94,69 @@ final class BridgeController {
     /// The chosen destination; `destination` is the one in effect.
     private(set) var chosenDestination: Destination
 
+    /// The Mac's own speakers first, as in AirPlay's list, then the Sendspin speakers.
     var players: [Player] {
-        var names = Set(discovered.map(\.instanceName)).union(selected)
-        names.formUnion(statuses.keys)
-        names.remove(Self.localKey)
-        let speakers = names.sorted().map { name in
-            let discovery = discovered.first { $0.instanceName == name }
-            return Player(instanceName: name,
-                          // The name it told us, also while it's away: mDNS often has only an ID.
-                          name: statuses[name]?.name ?? playerNames[name] ?? discovery?.displayName ?? name,
-                          // A speaker that left shows unticked, as AirPlay does: ticking takes it back.
-                          isSelected: selected.contains(name) && statuses[name]?.connection != .left,
-                          status: statuses[name],
-                          // A player that connected to us is "discovered" while it's connected.
-                          isDiscovered: discovery != nil || (Self.isIncoming(name) && sessions[name] != nil))
-        }
-        // The Mac's own speakers come first, as in AirPlay's list, once there's a Sendspin
-        // speaker to play along with (or they're ticked).
-        guard !speakers.isEmpty || selected.contains(Self.localKey) else { return speakers }
+        guard localDevice != nil || selected.contains(Self.localKey) else { return speakers }
+        // Played directly they're ticked, whatever was ticked before.
         let local = Player(instanceName: Self.localKey, name: localDevice?.name ?? "This Mac",
-                           isSelected: selected.contains(Self.localKey), status: statuses[Self.localKey],
+                           isSelected: isDirect || (showsSpeakerTicks && selected.contains(Self.localKey)),
+                           isActive: isDirect || (playsOnSpeakers && selected.contains(Self.localKey)),
+                           status: statuses[Self.localKey] ?? (isDirect ? directStatus : nil),
                            isDiscovered: localDevice != nil)
         return [local] + speakers
     }
 
+    /// The Sendspin speakers.
+    var speakers: [Player] {
+        var names = Set(discovered.map(\.instanceName)).union(selected)
+        names.formUnion(statuses.keys)
+        names.remove(Self.localKey)
+        return names.sorted().map { name in
+            let discovery = discovered.first { $0.instanceName == name }
+            // A speaker that left shows unticked, as AirPlay does: ticking takes it back.
+            let isSelected = showsSpeakerTicks && selected.contains(name) && statuses[name]?.connection != .left
+            return Player(instanceName: name,
+                          // The name it told us, also while it's away: mDNS often has only an ID.
+                          name: statuses[name]?.name ?? playerNames[name] ?? discovery?.displayName ?? name,
+                          isSelected: isSelected,
+                          isActive: playsOnSpeakers && isSelected,
+                          status: statuses[name],
+                          // A player that connected to us is "discovered" while it's connected.
+                          isDiscovered: discovery != nil || (Self.isIncoming(name) && sessions[name] != nil))
+        }
+    }
+
     var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
+
+    /// A ticked Sendspin speaker is connected: the Mac's own speakers don't count, as there's
+    /// nothing to play along with without one.
+    private var hasConnectedSpeakers: Bool {
+        statuses.contains { $0.key != Self.localKey && $0.value.connection == .connected }
+    }
+
+    /// Sendspin is the Mac's output, or becomes it once an added speaker connects.
+    private var isOn: Bool { isMacOutput || waitsForSpeaker }
+
+    /// The Mac plays on its own speakers directly, without Sendspin and its delay: chosen here
+    /// (ticked alone) or anywhere else, such as Control Center.
+    var isDirect: Bool {
+        !isMacOutput && localDevice != nil && currentOutputUID == localDevice?.uid
+    }
+
+    /// The speakers get the Mac's sound.
+    private var playsOnSpeakers: Bool { isMacOutput && destination == .speakers }
+
+    /// Music Assistant gets the Mac's sound and plays it where it chooses: nothing can join it.
+    var playsOnMusicAssistant: Bool { isMacOutput && destination == .musicAssistant }
+
+    /// The group shows what plays, or will once an added speaker connects. While the Mac plays
+    /// directly or Music Assistant plays, the Sendspin speakers show as not in it.
+    private var showsSpeakerTicks: Bool { playsOnSpeakers || waitsForSpeaker }
 
     /// The Mac's sound is playing: on a connected speaker, or through Music Assistant's open
     /// stream. Without sound it's Idle; without either it's not set up yet.
     var isPlaying: Bool {
         hasSound && (destination == .speakers ? hasConnectedPlayers : sourceStatus.streaming)
-    }
-
-    /// Speakers are ticked, and none of them can be reached.
-    var selectedPlayersUnavailable: Bool {
-        let ticked = players.filter(\.isSelected)
-        return !ticked.isEmpty && ticked.allSatisfy {
-            $0.status?.connection != .connected && (!$0.isDiscovered || $0.status?.connection == .unavailable)
-        }
     }
 
     /// Music Assistant found this Mac, or is paired with it: the menu offers the choice.
@@ -140,20 +168,8 @@ final class BridgeController {
     /// Music Assistant can take the Mac's audio: chosen, paired and connected.
     var musicAssistantReady: Bool { destination == .musicAssistant && sourceStatus.paired }
 
-    /// The Mac's own output, which choosing it in the menu goes back to.
-    var macOutputName: String {
-        (isMacOutput ? returnOutputName : currentOutputName) ?? "This Mac"
-    }
-
-    /// For the Sendspin speakers row while something else is chosen: the ticked speakers, or
-    /// until one is ticked, the ones found.
-    var speakersSummary: String? {
-        let ticked = players.filter(\.isSelected)
-        let names = (ticked.isEmpty ? players : ticked).map(\.name)
-        return names.isEmpty ? nil : names.joined(separator: ", ")
-    }
-
-    var hasSelectedPlayers: Bool { players.contains(where: \.isSelected) }
+    /// A Sendspin speaker is ticked.
+    var hasSelectedSpeakers: Bool { speakers.contains(where: \.isSelected) }
 
     /// Sendspin speakers was chosen before any speaker could play: the Mac's output switches
     /// to Sendspin once one is connected, and until then the menu asks to tick one.
@@ -507,15 +523,42 @@ final class BridgeController {
 
     // MARK: The Mac's own speakers
 
-    /// The Mac's own speakers in the speaker list. They're no Sendspin player: `LocalPlayer`
-    /// plays the group's audio on them directly, on the same clock.
-    static let localKey = "local:built-in"
+    /// The Mac's own output in the speaker list: its speakers, AirPods, a USB DAC. It's no
+    /// Sendspin player: `LocalPlayer` plays the group's audio on it directly, on the same clock.
+    nonisolated static let localKey = "local:built-in"
 
-    /// The Mac's own output to play on: the one it used before Sendspin if that's built in
-    /// (the speakers, or on Apple silicon the headphones), or else its speakers.
+    /// The Mac's own output: the one it uses or used last besides Sendspin, while it's there,
+    /// or else its built-in speakers.
     nonisolated private static func localOutput(previousUID: String?) -> AudioDevice? {
-        let outputs = AudioDevice.builtInOutputs()
-        return outputs.first { $0.uid == previousUID } ?? outputs.first
+        previousUID.flatMap(AudioDevice.find(uid:)) ?? AudioDevice.builtInOutputs().first
+    }
+
+    /// It can play along with the Sendspin speakers. An AirPlay output can't: macOS only has
+    /// the device while it's the Mac's output, and removes it once Sendspin is.
+    var localCanPlayAlong: Bool {
+        localDevice?.transportType != kAudioDeviceTransportTypeAirPlay
+    }
+
+    /// Its icon, as the macOS Sound menu has it.
+    var localIcon: String {
+        guard let localDevice else { return "laptopcomputer" }
+        let name = localDevice.name ?? ""
+        switch localDevice.transportType {
+        case kAudioDeviceTransportTypeBuiltIn:
+            return name.localizedCaseInsensitiveContains("MacBook") ? "laptopcomputer" : "desktopcomputer"
+        case kAudioDeviceTransportTypeAirPlay:
+            if name.localizedCaseInsensitiveContains("HomePod mini") { return "homepodmini.fill" }
+            if name.localizedCaseInsensitiveContains("HomePod") { return "homepod.fill" }
+            if name.localizedCaseInsensitiveContains("Apple TV") { return "appletv.fill" }
+            return "airplayaudio"
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            if name.localizedCaseInsensitiveContains("AirPods Max") { return "airpodsmax" }
+            if name.localizedCaseInsensitiveContains("AirPods Pro") { return "airpodspro" }
+            if name.localizedCaseInsensitiveContains("AirPods") { return "airpods" }
+            return "headphones"
+        default:
+            return "speaker.wave.2.fill"
+        }
     }
 
     private func refreshLocalDevice() {
@@ -535,7 +578,7 @@ final class BridgeController {
 
     /// A player on the Mac's output while it's ticked; a new one when the output changed.
     private func reconcileLocal() {
-        let wanted = selected.contains(Self.localKey) ? localDevice : nil
+        let wanted = selected.contains(Self.localKey) && localCanPlayAlong ? localDevice : nil
         guard localPlayer?.device != wanted else { return }
         if let old = localPlayer {
             localPlayer = nil
@@ -553,17 +596,18 @@ final class BridgeController {
         updateLocalStatus()
     }
 
-    /// Its status in the list: always connected, with the device's own volume.
+    /// The device's own volume, 0…100: the slider in its row.
+    private var localVolume: Int?
+
+    /// Its status in the list: always connected, with the device's own volume. Only while
+    /// it's ticked does it count in the group (its volume, whether a speaker is connected).
     private func updateLocalStatus() {
+        localVolume = localDevice?.mainVolume.map { Int(($0 * 100).rounded()) }
         guard let localPlayer else {
             statuses[Self.localKey] = nil
             return
         }
-        var status = PlayerStatus()
-        status.connection = .connected
-        status.name = localPlayer.device.name
-        status.volume = localPlayer.volume
-        status.canSetVolume = status.volume != nil
+        var status = directStatus
         status.canMute = true
         status.muted = localPlayer.isMuted
         // The Mac's own output can need more than the speaker buffer gives: the group waits for it.
@@ -572,6 +616,87 @@ final class BridgeController {
         statuses[Self.localKey] = status
         syncDeviceToPlayers()
         applyLead()
+    }
+
+    /// Its row while the Mac plays on it directly: its volume is the Mac's volume then.
+    private var directStatus: PlayerStatus {
+        var status = PlayerStatus()
+        status.connection = .connected
+        status.name = localDevice?.name
+        status.volume = localVolume
+        status.canSetVolume = localVolume != nil
+        return status
+    }
+
+    // MARK: Ticking in the menu
+
+    /// The icon in a row: adding to or removing from the group. A Sendspin speaker needs
+    /// Sendspin as the Mac's output; the Mac's own output alone plays directly, as there's
+    /// nothing to keep in sync with.
+    func setTicked(_ instanceName: String, _ ticked: Bool) {
+        if instanceName == Self.localKey {
+            if ticked, !localCanPlayAlong {
+                playOnly(Self.localKey)
+            } else if ticked {
+                setSelected(Self.localKey, true)
+                if hasSelectedSpeakers { chooseSpeakers() } else { playDirect() }
+            } else if !isDirect {
+                // Played directly they're the Mac's only output: they stay ticked.
+                setSelected(Self.localKey, false)
+            }
+        } else if ticked {
+            if !showsSpeakerTicks {
+                // Ticking starts from what plays now, not from the speakers ticked before. The
+                // Mac's own output keeps playing, now in sync, unless it's AirPlay.
+                for name in selected where name != Self.localKey && name != instanceName { setSelected(name, false) }
+                setSelected(Self.localKey, isDirect && localCanPlayAlong)
+            }
+            setSelected(instanceName, true)
+            chooseSpeakers()
+        } else {
+            setSelected(instanceName, false)
+            leaveSendspinIfIdle()
+        }
+    }
+
+    /// What's in the group: what plays, and what's added and not playing yet.
+    var groupCount: Int { players.filter(\.isSelected).count }
+
+    /// Clicking a name, as in the Sound menu: play there only.
+    func playOnly(_ instanceName: String) {
+        if instanceName == Self.localKey {
+            for name in selected where name != Self.localKey { setSelected(name, false) }
+            setSelected(Self.localKey, true)
+            playDirect()
+        } else {
+            selectOnly(instanceName)
+            chooseSpeakers()
+        }
+    }
+
+    /// Without a Sendspin speaker ticked there's nothing to play along with: the Mac's own
+    /// speakers, when ticked, play directly, and otherwise the Mac goes back to its own output.
+    private func leaveSendspinIfIdle() {
+        guard isOn, destination == .speakers, !hasSelectedSpeakers else { return }
+        if selected.contains(Self.localKey) { playDirect() } else { chooseMac() }
+    }
+
+    /// The Mac's output becomes its own speakers.
+    private func playDirect() {
+        pendingSendspinOutput = false
+        guard let localDevice, !isDirect, !isSwitchingOutput else { return }
+        isSwitchingOutput = true
+        Task {
+            defer { isSwitchingOutput = false }
+            apply(await Task.detached {
+                do {
+                    try AudioDevice.setDefaultOutput(localDevice)
+                } catch {
+                    Log.error("Couldn't change the Mac's output: \(error)")
+                }
+                return Self.readOutput()
+            }.value)
+        }
     }
 
     // MARK: Music Assistant
@@ -609,13 +734,13 @@ final class BridgeController {
     /// Sendspin speakers: the Mac's output becomes Sendspin, now or once a speaker connects.
     /// With one speaker and nothing ticked, choosing Sendspin speakers means that one: it's ticked.
     func chooseSpeakers() {
-        let speakers = players.filter { $0.instanceName != Self.localKey }
-        if !hasSelectedPlayers, speakers.count == 1, let only = speakers.first {
+        let speakers = speakers
+        if !hasSelectedSpeakers, speakers.count == 1, let only = speakers.first {
             setSelected(only.instanceName, true)
         }
         setDestination(.speakers)
         guard !isMacOutput else { return }
-        if hasConnectedPlayers {
+        if hasConnectedSpeakers {
             pendingSendspinOutput = false
             Task { await setMacOutput(true) }
         } else {
@@ -741,7 +866,7 @@ final class BridgeController {
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
         statuses[name] = status
-        if pendingSendspinOutput, destination == .speakers, hasConnectedPlayers {
+        if pendingSendspinOutput, destination == .speakers, hasConnectedSpeakers {
             pendingSendspinOutput = false
             if !isMacOutput { Task { await setMacOutput(true) } }
         }
@@ -920,7 +1045,7 @@ final class BridgeController {
     }
 
     private func refreshDefaultOutput() {
-        apply(Self.readOutput(previousUID: defaults.string(forKey: "previousOutputUID")))
+        apply(Self.readOutput())
         refreshLocalDevice()
     }
 
@@ -929,22 +1054,18 @@ final class BridgeController {
         var isSendspin: Bool
         var currentUID: String?
         var currentName: String?
-        var returnName: String?
     }
 
-    nonisolated private static func readOutput(previousUID: String?) -> OutputState {
+    nonisolated private static func readOutput() -> OutputState {
         let output = AudioDevice.defaultOutput
-        let isSendspin = output?.uid == AudioDevice.sendspinUID
-        // The current output, unless it's Sendspin, is where leaving Sendspin later goes back to.
-        let returnUID = isSendspin ? previousUID : output?.uid
-        return OutputState(isSendspin: isSendspin, currentUID: output?.uid, currentName: output?.name,
-                           returnName: returnTarget(previousUID: returnUID)?.name)
+        return OutputState(isSendspin: output?.uid == AudioDevice.sendspinUID, currentUID: output?.uid,
+                           currentName: output?.name)
     }
 
     private func apply(_ state: OutputState) {
         isMacOutput = state.isSendspin
         currentOutputName = state.currentName
-        returnOutputName = state.returnName
+        currentOutputUID = state.currentUID
         // Remember the last other output, also when it was chosen in Control Center.
         if let uid = state.currentUID, !state.isSendspin {
             defaults.set(uid, forKey: "previousOutputUID")
@@ -1009,8 +1130,8 @@ final class BridgeController {
     // MARK: Menu actions
 
     func setPlayerVolume(_ instanceName: String, _ volume: Int) {
-        if instanceName == Self.localKey, let localPlayer {
-            localPlayer.volume = volume
+        if instanceName == Self.localKey {
+            localDevice?.mainVolume = Float32(volume) / 100
             updateLocalStatus()
         } else {
             Task { await sessions[instanceName]?.setVolume(volume) }
@@ -1115,7 +1236,7 @@ final class BridgeController {
                 Log.error("Couldn't change the Mac's output: \(error)")
             }
         }
-        return readOutput(previousUID: previousUID)
+        return readOutput()
     }
 
     /// The output to leave Sendspin for: the previous one, or else the first other output.

@@ -11,9 +11,11 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            header
             warnings
             if bridge.driverInstalled {
-                destinations
+                Divider()
+                outputs
             }
             Divider()
             HStack {
@@ -35,6 +37,27 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 340)
+    }
+
+    /// Whether Sendspin is in use: a dot, filled while the Mac plays through Sendspin, an empty
+    /// ring while it plays directly. Choosing where to play sets it; there's nothing to switch.
+    private var header: some View {
+        let label = bridge.isMacOutput ? "In use: the Mac plays through Sendspin" : "Not in use: the Mac plays directly"
+        return HStack {
+            Text("Sendspin")
+                .fontWeight(.semibold)
+            Spacer()
+            Circle()
+                .fill(bridge.isMacOutput ? Color.accentColor : Color.clear)
+                .overlay {
+                    if !bridge.isMacOutput { Circle().strokeBorder(Color.secondary.opacity(0.7), lineWidth: 1.5) }
+                }
+                .frame(width: 10, height: 10)
+                .padding(.trailing, 6)
+                .help(label)
+                .accessibilityElement()
+                .accessibilityLabel(label)
+        }
     }
 
     @ViewBuilder private var warnings: some View {
@@ -71,66 +94,23 @@ struct MenuView: View {
         }
     }
 
-    /// One list of where the Mac's sound can go, as in the macOS Sound menu: Sendspin speakers
-    /// (with the speakers within), Music Assistant once it found this Mac, and the Mac's own
-    /// output. What belongs to a destination hangs underneath it.
-    private var destinations: some View {
-        let onSpeakers = bridge.isMacOutput && bridge.destination == .speakers
-        // Sendspin speakers shows once there's a speaker (found or ticked), or while it's chosen.
-        let showsSpeakers = !bridge.players.isEmpty || onSpeakers || bridge.waitsForSpeaker
-        return VStack(alignment: .leading, spacing: 2) {
-            if !showsSpeakers && !bridge.offersMusicAssistant {
-                LookingRow()
-            }
-            if showsSpeakers {
-                DestinationRow(icon: .symbol("hifispeaker.fill"), title: "Sendspin speakers", chosen: onSpeakers,
-                               action: { bridge.chooseSpeakers() }) {
-                    // No group slider: the Mac's volume is the group's volume. Playing shows on
-                    // the menu bar icon; the row only says why it can't play.
-                    if onSpeakers, bridge.selectedPlayersUnavailable {
-                        reason("Unavailable")
-                    } else if !onSpeakers, let names = bridge.speakersSummary {
-                        Text(names)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-            }
-            if onSpeakers || bridge.waitsForSpeaker {
-                speakers
-            }
-            if bridge.offersMusicAssistant {
-                MusicAssistantRows(bridge: bridge)
-            }
-            DestinationRow(icon: .symbol("laptopcomputer"), title: bridge.macOutputName, chosen: !bridge.isMacOutput,
-                           action: { bridge.chooseMac() }) {
-                EmptyView()
-            }
-        }
-    }
-
-    /// The speakers within Sendspin speakers, after Apple Music's AirPlay list.
-    private var speakers: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if bridge.players.isEmpty {
-                Text("Looking for Sendspin speakers…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else if !bridge.hasSelectedPlayers {
-                Text("Tick a speaker to play on it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
-            }
+    /// Where the Mac's sound can go: its own speakers and the Sendspin speakers, which play
+    /// together in sync, then below a divider Music Assistant, which plays on what it chooses
+    /// and doesn't group with them.
+    private var outputs: some View {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(bridge.players) { player in
                 PlayerRow(player: player, bridge: bridge)
             }
+            if bridge.speakers.isEmpty && !bridge.offersMusicAssistant {
+                LookingRow()
+            }
+            if bridge.offersMusicAssistant {
+                Divider()
+                    .padding(.vertical, 4)
+                MusicAssistantRows(bridge: bridge)
+            }
         }
-        .padding(.leading, destinationIndent)
-        .padding(.bottom, 6)
     }
 }
 
@@ -326,18 +306,43 @@ private struct MusicAssistantRows: View {
     }
 }
 
-/// Name, then the volume slider (selected and connected) or a status, then a checkbox.
-/// There are no device icons: Sendspin doesn't say what kind of device a speaker is.
+/// A speaker. Its icon is the control: filled blue while it plays, a blue ring while it's in the
+/// group and not playing yet (connecting, unavailable), grey otherwise, with a + when it can
+/// join. Clicking it adds the speaker, or removes it (hovering shows −); clicking the name plays
+/// there only, as in the Sound menu. The volume slider shows while it plays, a status when
+/// something needs attention. The Mac's own output has its icon from the Sound menu (laptop,
+/// AirPods); Sendspin doesn't say what kind of device a speaker is, so they all have one.
 private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
     @State private var hovering = false
+    @State private var hoveringIcon = false
 
     var body: some View {
         HStack(spacing: 10) {
-            // Clicking the name, or the status beside it, plays on this speaker only, as
-            // AirPlay does; the checkbox adds or removes it. The slider has no such action, so
-            // dragging it never selects.
+            HStack(spacing: 0) {
+                // The whole column up to the name, the row's full height: the badge on the
+                // icon's corner is easy to hit.
+                Button(action: iconClicked) {
+                    iconView
+                        .frame(width: 36, height: 38, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hoveringIcon = $0 }
+                .help(iconLabel)
+                .accessibilityLabel(iconLabel)
+
+                nameButton
+            }
+
+            trailing
+        }
+        .frame(height: 38)
+    }
+
+    private var nameButton: some View {
+        Button(action: choose) {
             HStack(spacing: 6) {
                 // While hovering the name, the format this speaker receives takes its place.
                 // It's drawn over the name, so nothing moves: the row has no room for both.
@@ -358,23 +363,78 @@ private struct PlayerRow: View {
                 Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
-            .onTapGesture(perform: choose)
-
-            trailing
-
-            Toggle(player.name, isOn: Binding(get: { player.isSelected },
-                                              set: { isOn in
-                                                  bridge.setSelected(player.instanceName, isOn)
-                                                  if isOn { bridge.chooseSpeakers() }
-                                              }))
-                .toggleStyle(RoundedCheckboxStyle(name: player.name))
-                .labelsHidden()
         }
-        .frame(height: 30)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Play on \(player.name) only")
     }
 
+    // MARK: The icon
+
+    /// It can join what plays: not Music Assistant, which plays where it chooses, and an
+    /// AirPlay output can't be in a group at all. Then it's like a server's row: clicking it
+    /// plays there.
+    private var canJoin: Bool {
+        !bridge.playsOnMusicAssistant && (!player.isLocal || bridge.localCanPlayAlong)
+    }
+
+    /// It can leave the group: not when it's all that plays.
+    private var canLeave: Bool { player.isSelected && (bridge.groupCount > 1 || !player.isActive) }
+
+    private var iconLabel: String {
+        if player.isSelected { return canLeave ? "Remove \(player.name)" : "\(player.name) plays" }
+        return canJoin ? "Add \(player.name)" : "Play on \(player.name)"
+    }
+
+    private func iconClicked() {
+        if player.isSelected {
+            if canLeave { bridge.setTicked(player.instanceName, false) }
+        } else if canJoin {
+            bridge.setTicked(player.instanceName, true)
+        } else {
+            bridge.playOnly(player.instanceName)
+        }
+    }
+
+    private var iconView: some View {
+        let joining = player.isSelected && !player.isActive
+        let inviting = !player.isSelected && hoveringIcon
+        return Image(systemName: icon)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(player.isActive ? Color.white : joining || inviting ? Color.accentColor : Color.primary)
+            .frame(width: 26, height: 26)
+            .background(player.isActive ? Color.accentColor
+                        : joining ? Color.accentColor.opacity(0.1)
+                        : inviting ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.2),
+                        in: Circle())
+            .overlay {
+                if joining { Circle().strokeBorder(Color.accentColor, lineWidth: 1.5) }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if let badge {
+                    Image(systemName: badge)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(hoveringIcon ? Color.white : Color.accentColor)
+                        .frame(width: 13, height: 13)
+                        .background(hoveringIcon ? Color.accentColor : Color.white, in: Circle())
+                        .offset(x: 3, y: 3)
+                }
+            }
+    }
+
+    /// + where it can join, − on hover where it can leave.
+    private var badge: String? {
+        if !player.isSelected { return canJoin ? "plus" : nil }
+        return hoveringIcon && canLeave ? "minus" : nil
+    }
+
+    private var icon: String {
+        player.isLocal ? bridge.localIcon : "hifispeaker.fill"
+    }
+
+    // MARK: Beside the name
+
     @ViewBuilder private var trailing: some View {
-        if player.isSelected, let status = player.status, status.connection == .connected {
+        if player.isActive, let status = player.status, status.connection == .connected {
             if status.canSetVolume, let volume = status.volume {
                 Slider(value: Binding(get: { Double(volume) },
                                       set: { bridge.setPlayerVolume(player.instanceName, Int($0.rounded())) }),
@@ -399,8 +459,7 @@ private struct PlayerRow: View {
     }
 
     private func choose() {
-        bridge.selectOnly(player.instanceName)
-        bridge.chooseSpeakers()
+        bridge.playOnly(player.instanceName)
     }
 
     private var formatLabel: String? {
@@ -409,9 +468,9 @@ private struct PlayerRow: View {
         return "\(format.codec.uppercased()) · \(rateAndDepth)"
     }
 
-    /// Only for what needs attention; a connected speaker shows its slider instead.
+    /// Only for what needs attention; a playing speaker shows its slider instead.
     private var statusText: String? {
-        // Only a ticked speaker stays listed while it's gone: it plays again once it's back.
+        // Only a speaker in the group stays listed while it's gone: it plays again once it's back.
         guard player.isDiscovered else { return "Unavailable" }
         guard player.isSelected || player.status?.connection == .left else { return nil }
         switch player.status?.connection {
@@ -428,46 +487,22 @@ private struct PlayerRow: View {
 
     private var statusHelp: String {
         if !player.isDiscovered || player.status?.connection == .unavailable {
-            return "This speaker can't be reached. It plays again by itself once it's back on the network."
+            return player.isLocal ? "This Mac has no speakers of its own."
+                : "This speaker can't be reached. It plays again by itself once it's back on the network."
         }
         return switch player.status?.connection {
         case .disconnected:
-            "This speaker disconnected from this Mac. Untick and tick it to connect again."
+            "This speaker disconnected from this Mac. Remove it and add it again to connect again."
         case .left:
-            "This speaker is playing something else. Tick it to play your Mac's sound on it again."
+            "This speaker is playing something else. Add it to play your Mac's sound on it again."
         case .pairingRequired:
             "This speaker only plays for paired servers, and pairing isn't supported yet."
         case .notApproved:
             "This speaker presents a different identity than the one you allowed. "
-                + "If you trust it, untick and tick it again."
+                + "If you trust it, click its name."
         default:
             ""
         }
-    }
-}
-
-/// Apple Music's AirPlay checkbox: a rounded grey square, with a white check when on.
-private struct RoundedCheckboxStyle: ToggleStyle {
-    /// For VoiceOver: the style draws no label.
-    let name: String
-
-    func makeBody(configuration: Configuration) -> some View {
-        Button { configuration.isOn.toggle() } label: {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(.secondary.opacity(configuration.isOn ? 0.55 : 0.22))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    if configuration.isOn {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(name)
-        .accessibilityValue(configuration.isOn ? "on" : "off")
-        .accessibilityAddTraits(configuration.isOn ? [.isButton, .isSelected] : .isButton)
     }
 }
 
