@@ -878,9 +878,11 @@ final class BridgeController {
     // MARK: Capture
 
     /// Speakers to play to, or Music Assistant: as the destination, or with its stream open
-    /// (it keeps getting silence, so the stream lives on for when it's chosen again).
+    /// (it keeps getting silence, so the stream lives on for when it's chosen again). The Mac's
+    /// own output only while Sendspin is the Mac's output: played directly, it needs nothing.
     private var isCaptureWanted: Bool {
-        return destination == .speakers ? !sessions.isEmpty || localPlayer != nil || sourceStatus.streaming
+        return destination == .speakers
+            ? !sessions.isEmpty || (localPlayer != nil && isMacOutput) || sourceStatus.streaming
             : musicAssistantReady
     }
 
@@ -1047,6 +1049,7 @@ final class BridgeController {
     private func refreshDefaultOutput() {
         apply(Self.readOutput())
         refreshLocalDevice()
+        updateCapture()
     }
 
     /// What the Mac's output is, and where leaving Sendspin would go.
