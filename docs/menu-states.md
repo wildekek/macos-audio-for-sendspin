@@ -81,7 +81,7 @@ shows the format it receives (e.g. FLAC · 48 kHz · 16-bit) in place of the nam
 | Disconnected | Its user disconnected it from this Mac (`client/goodbye` with `user_request`). | The user unticks and ticks it. |
 | Can't connect | It answers, but setting up the connection fails. | It works; the app retries, up to 30 s apart. |
 | Needs pairing | It only plays for paired servers; the app can't pair speakers yet. | – |
-| Identity changed | It presents a different identity than the one the user allowed. | The user clicks its name (or unticks and ticks it), allowing the new one. |
+| Identity changed | It presents a different identity than the one the user allowed. | The user clicks its name or this status (or unticks and ticks it), allowing the new one. |
 | nothing | Unticked; also a speaker that connected to this Mac and waits to be allowed. | The user ticks it. |
 
 A speaker keeps the name it gave in its hello while it's unticked or away (mDNS often has only

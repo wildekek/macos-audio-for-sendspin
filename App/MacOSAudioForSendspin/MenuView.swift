@@ -335,8 +335,9 @@ private struct PlayerRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Clicking the name plays on this speaker only, as AirPlay does; the checkbox adds
-            // or removes it. The slider sits outside this area, so dragging it never selects.
+            // Clicking the name, or the status beside it, plays on this speaker only, as
+            // AirPlay does; the checkbox adds or removes it. The slider has no such action, so
+            // dragging it never selects.
             HStack(spacing: 6) {
                 // While hovering the name, the format this speaker receives takes its place.
                 // It's drawn over the name, so nothing moves: the row has no room for both.
@@ -357,10 +358,7 @@ private struct PlayerRow: View {
                 Spacer(minLength: 8)
             }
             .contentShape(Rectangle())
-            .onTapGesture {
-                bridge.selectOnly(player.instanceName)
-                bridge.chooseSpeakers()
-            }
+            .onTapGesture(perform: choose)
 
             trailing
 
@@ -394,7 +392,15 @@ private struct PlayerRow: View {
                 .lineLimit(1)
                 .fixedSize()
                 .help(statusHelp)
+                // "Identity changed" is what asks for the click, so the status takes one too.
+                .contentShape(Rectangle())
+                .onTapGesture(perform: choose)
         }
+    }
+
+    private func choose() {
+        bridge.selectOnly(player.instanceName)
+        bridge.chooseSpeakers()
     }
 
     private var formatLabel: String? {
