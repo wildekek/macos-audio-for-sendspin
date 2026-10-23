@@ -103,10 +103,32 @@ struct CaptureAssemblerTests {
         #expect(!output.usedCurrentTime)
     }
 
-    @Test func usesTheCurrentTimeOnceHalfASecondWaits() {
+    @Test func onceHalfASecondWaitsItGoesByTheCurrentTimeLessItsAge() {
         var assembler = Self.started()
         let output = assembler.take(Self.reply(start: 0, frames: Self.rate / 2), time: Self.noTime, now: Self.now)
         #expect(output.usedCurrentTime)
-        #expect(output.blocks.map(\.captureTimeUs) == [Self.now()])
+        // All of it goes, contiguous, the oldest block half a second before now.
+        #expect(output.blocks.count == 25)
+        #expect(output.blocks.map(\.captureTimeUs) == (0..<25).map { Self.now() - 500_000 + Int64($0) * 20_000 })
+
+        // Later blocks follow on until times are known again.
+        let later = assembler.take(Self.reply(start: 24_000, frames: Self.blockFrames), time: Self.noTime, now: Self.now)
+        #expect(later.blocks.map(\.captureTimeUs) == [Self.now() + 0])
+        let known = assembler.take(Self.reply(start: 24_960, frames: Self.blockFrames), time: Self.time, now: Self.now)
+        #expect(!known.usedCurrentTime)
+        #expect(known.blocks.map(\.captureTimeUs) == [Self.time(24_960)])
+    }
+
+    @Test func aReplyFromBeforeTheLastOnesEndIsARestart() {
+        var assembler = Self.started()
+        _ = assembler.take(Self.reply(start: 100_000, frames: 1_500), time: Self.time, now: Self.now)
+        // Same session, but the timeline went back (the driver bumps the session for this too).
+        let output = assembler.take(Self.reply(start: 2_000, frames: 1_000), time: Self.time, now: Self.now)
+        #expect(output.timeline == .restarted)
+        #expect(output.blocks.isEmpty)
+        #expect(assembler.nextSampleTime == -1)
+        let after = assembler.take(Self.reply(start: 3_000, frames: Self.blockFrames), time: Self.time, now: Self.now)
+        #expect(after.blocks.first?.captureTimeUs == Self.time(3_000))
+        #expect(after.blocks.first?.pcm.samples.first == 3_000)
     }
 }

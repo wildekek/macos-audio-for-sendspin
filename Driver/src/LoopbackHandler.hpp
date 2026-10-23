@@ -53,7 +53,8 @@ public:
         // Sample time of the first frame: the requested one, or the oldest (newest) frame
         // held when that's before (after) what the ring holds.
         int64_t start = 0;
-        // Goes up with every IO session; sample times of different sessions don't relate.
+        // Goes up with every IO session, and when the timeline jumps backwards within one;
+        // sample times of different sessions don't relate.
         uint64_t session = 0;
         std::vector<Float32> samples; // interleaved
     };

@@ -62,8 +62,10 @@ void LoopbackHandler::OnWriteMixedOutput(const std::shared_ptr<aspl::Stream>&,
 
     int64_t previousEnd = writeEnd_.load(std::memory_order_relaxed);
     if (start < validStart_.load(std::memory_order_relaxed) || start + frames < previousEnd - RingFrames) {
-        // The timeline jumped backwards: start a new one at this write.
+        // The timeline jumped backwards: start a new one at this write. For readers it's a
+        // new session, as after OnStartIO: their sample times no longer relate.
         validStart_.store(start, std::memory_order_relaxed);
+        session_.fetch_add(1, std::memory_order_relaxed);
         previousEnd = start;
     } else if (start > previousEnd) {
         // Silence any gap since the last write, so stale audio from a previous

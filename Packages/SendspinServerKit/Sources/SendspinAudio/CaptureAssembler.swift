@@ -15,11 +15,12 @@ struct DriverReply: Sendable {
 /// `DriverCapture`'s bookkeeping, apart from CoreAudio: turns the driver's replies into
 /// fixed-size blocks with server-clock times, across gaps and timeline restarts.
 ///
-/// A restart (a new `session`) drops what's pending and reads on from the newest frame, at
-/// the rate the device now runs. A gap of up to a second (a slow read) is filled with silence,
+/// A restart (a new `session`, or a reply from before where the last one ended) drops what's
+/// pending and reads on from the newest frame, at the rate the device now runs. A gap of up to a second (a slow read) is filled with silence,
 /// so the stream stays continuous; a longer one continues from now. A block whose time can't
 /// be known yet (the device is restarting its IO) waits for the next reply, unless half a
-/// second of audio waits: then the current time has to do.
+/// second of audio waits: then the current time has to do, minus the age of that audio, and
+/// the blocks after it follow on from there until times are known again.
 struct CaptureAssembler {
     enum Timeline: Equatable {
         case started
@@ -43,6 +44,8 @@ struct CaptureAssembler {
     private(set) var nextSampleTime: Int64 = -1
     private var pending: [Float] = []
     private var pendingStart: Int64 = 0
+    /// Where the next block starts when times are being made up (see `emit`).
+    private var fallbackTimeUs: Int64?
 
     init(sampleRate: Int, channels: Int, blockMs: Int) {
         self.sampleRate = sampleRate
@@ -57,12 +60,15 @@ struct CaptureAssembler {
     ///   - now: the current server-clock time, for when it stays unknown.
     mutating func take(_ reply: DriverReply, time: (Int64) -> Int64?, now: () -> Int64) -> Output {
         var output = Output()
-        if reply.session != session {
+        // A reply from before the last one's end can only be a timeline that went back.
+        let wentBack = nextSampleTime >= 0 && reply.start < nextSampleTime
+        if reply.session != session || wentBack {
             output.timeline = session == nil ? .started : .restarted
             session = reply.session
             sampleRate = reply.rate
             nextSampleTime = -1
             pending = []
+            fallbackTimeUs = nil
             return output
         }
 
@@ -77,6 +83,7 @@ struct CaptureAssembler {
                 emit(into: &output, time: time, now: now)
                 pending = []
                 pendingStart = reply.start
+                fallbackTimeUs = nil
                 output.skippedFrames = missing
             }
         }
@@ -91,12 +98,24 @@ struct CaptureAssembler {
         let blockSamples = blockFrames * channels
         var offset = 0
         while pending.count - offset >= blockSamples {
-            var captureTimeUs = time(pendingStart)
-            if captureTimeUs == nil, pending.count - offset >= sampleRate / 2 * channels {
-                captureTimeUs = now()
-                output.usedCurrentTime = true
+            let knownTimeUs = time(pendingStart)
+            var captureTimeUs = knownTimeUs
+            if knownTimeUs == nil {
+                if let fallback = fallbackTimeUs {
+                    captureTimeUs = fallback
+                } else if pending.count - offset >= sampleRate / 2 * channels {
+                    // The oldest waiting frame was played about as long ago as the audio waiting.
+                    let waitingUs = Int64((pending.count - offset) / channels) * 1_000_000 / Int64(sampleRate)
+                    captureTimeUs = now() - waitingUs
+                }
             }
             guard let captureTimeUs else { break }
+            if knownTimeUs == nil {
+                fallbackTimeUs = captureTimeUs + Int64(blockFrames) * 1_000_000 / Int64(sampleRate)
+                output.usedCurrentTime = true
+            } else {
+                fallbackTimeUs = nil
+            }
             output.blocks.append(CapturedBlock(
                 pcm: PCMBuffer(samples: Array(pending[offset..<offset + blockSamples]),
                                sampleRate: sampleRate, channels: channels),

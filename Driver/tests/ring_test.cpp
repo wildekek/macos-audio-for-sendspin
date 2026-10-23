@@ -103,8 +103,10 @@ int main()
 
     // A backwards jump without OnStartIO must not hide new audio either.
     Write(h, 1 << 20, Frames(512, 1));
+    const uint64_t sessionBeforeJump = h.ReadFrames(-1, 0).session;
     auto e = Frames(512, 700);
     Write(h, 2048, e);
+    Expect(h.ReadFrames(-1, 0).session != sessionBeforeJump, "a backwards jump starts a new session for readers");
     Expect(Read(h, 2048, 512) == e, "audio reads back after the timeline jumps backwards");
     Expect(AllZero(Read(h, 1024, 512)), "frames before the new timeline read as silence");
 
