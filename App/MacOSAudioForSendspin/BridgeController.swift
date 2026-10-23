@@ -22,6 +22,9 @@ final class BridgeController {
         var isActive: Bool
         var status: PlayerStatus?
         var isDiscovered: Bool
+        /// It can be in a group with the others: every Sendspin speaker, and the Mac's own
+        /// output unless it's AirPlay. Music Assistant isn't (see `playsGroupable`).
+        var isGroupable = true
         /// The Mac's own speakers, not a Sendspin speaker.
         var isLocal: Bool { instanceName == BridgeController.localKey }
     }
@@ -100,7 +103,7 @@ final class BridgeController {
                            isSelected: isDirect || (showsSpeakerTicks && selected.contains(Self.localKey)),
                            isActive: isDirect || (playsOnSpeakers && selected.contains(Self.localKey)),
                            status: statuses[Self.localKey] ?? (isDirect ? directStatus : nil),
-                           isDiscovered: localDevice != nil)
+                           isDiscovered: localDevice != nil, isGroupable: localCanPlayAlong)
         return [local] + speakers
     }
 
@@ -144,8 +147,13 @@ final class BridgeController {
     /// The speakers get the Mac's sound.
     private var playsOnSpeakers: Bool { isMacOutput && destination == .speakers }
 
-    /// Music Assistant gets the Mac's sound and plays it where it chooses: nothing can join it.
-    var playsOnMusicAssistant: Bool { isMacOutput && destination == .musicAssistant }
+    /// What plays now is groupable. Not Music Assistant, which plays where it chooses, nor an
+    /// AirPlay output played directly (macOS removes it once Sendspin is the output). While
+    /// it isn't, nothing can join it: the checks go, and a name plays there instead.
+    var playsGroupable: Bool {
+        !(isMacOutput && destination == .musicAssistant) && !(isDirect && !localCanPlayAlong)
+    }
+
 
     /// The group shows what plays, or will once an added speaker connects. While the Mac plays
     /// directly or Music Assistant plays, the Sendspin speakers show as not in it.

@@ -25,8 +25,12 @@ These hold across the menu. A new state should follow them, or change them here 
    the user adds, removes or picks a speaker.
 7. **Choosing is all there is.** No switch: where the Mac plays follows from what's chosen, and
    the dot at the top only shows whether that goes through Sendspin.
-8. **One indicator per row.** The icon shows what plays and is the control that adds or
-   removes; nothing beside it repeats that.
+8. **One indicator per row.** The check on the right is the group, as in Apple's AirPlay
+   picker; the device icon only says what kind of device it is, and nothing repeats the check.
+9. **Every output is groupable or not, and one rule follows from it.** Every Sendspin speaker
+   and the Mac's own output are groupable, unless that's AirPlay; an AirPlay output and Music
+   Assistant aren't. A row has its check when it's groupable and what plays now is too: while
+   something that isn't groupable plays, nothing can join it, and the names are the way in.
 6. **Show only what exists.** A destination appears once it's found (or chosen). Until
    anything is found, the menu says what it's looking for.
 
@@ -59,12 +63,12 @@ silence, as any output switch in macOS does. In the menu:
 
 - **The group shows what plays**, or will once an added speaker connects. While the Mac plays
   directly or Music Assistant plays, the Sendspin speakers show as not in it.
-- **Adding a Sendspin speaker** (its icon's +) plays through Sendspin, starting from what plays
+- **Adding a Sendspin speaker** (checking it) plays through Sendspin, starting from what plays
   now: the Mac's own output stays and plays along, in sync (unless it's AirPlay, see below).
-- **Removing the last Sendspin speaker** (its icon's −) plays on the Mac's own output directly
+- **Removing the last Sendspin speaker** (unchecking it) plays on the Mac's own output directly
   when it's in the group, and otherwise goes back to the Mac's own output anyway.
 - **Adding the Mac's own output** joins the Sendspin speakers when one is in the group, and
-  otherwise plays on it directly. What's all that plays can't be removed: it has no −.
+  otherwise plays on it directly. What's all that plays can't be unchecked.
 - **Clicking a name** plays there only, as in the Sound menu: the Mac's own output directly,
   a Sendspin speaker on its own.
 - **Music Assistant** plays through Music Assistant; adding a speaker plays on the speakers
@@ -79,23 +83,24 @@ silence, as any output switch in macOS does. In the menu:
 
 ## A speaker
 
-Each speaker: its icon, its name, then a volume slider or a status. The icon is the control:
+Each speaker, as in Apple's AirPlay picker: its device icon, its name, then a volume slider or
+a status, then a round check. The check is the control:
 
-| Icon | Means | Clicking it |
+| Check | Means | Clicking it |
 |---|---|---|
-| Filled (accent) | It plays. Hovering shows a − badge, unless it's all that plays. | Removes it. |
-| Accent ring | In the group, not playing yet: connecting, or gone (the status says which). Hovering shows −. | Removes it. |
-| Grey, with a + badge | It can join. Hovering tints it. | Adds it. |
-| Grey, no badge | It can't join what plays: Music Assistant plays (every speaker then), or it's an AirPlay output. Like a server's row. | Plays there. |
+| Filled (accent) | In the group: playing, or added and connecting or gone (the status says which). | Removes it, unless it's all that plays. |
+| Empty ring | Not in the group. | Adds it. |
+| none | Not groupable (an AirPlay output), or what plays isn't (an AirPlay output or Music Assistant): nothing can join it. Like a server's row. | – |
 
-Clicking the name plays there only. The Mac's own output has its icon from the macOS Sound
+Clicking the name plays there only; where there's no check, that's the only way in. The icon
+never changes with the state. The Mac's own output has its icon from the macOS Sound
 menu (laptop, desktop, AirPods, HomePod, AirPlay); every Sendspin speaker has the speaker icon,
 since Sendspin doesn't say what kind of device it is. Hovering a playing speaker's name shows
 the format it receives (e.g. FLAC · 48 kHz · 16-bit) in place of the name.
 
 | Shows | Means | Until |
 |---|---|---|
-| Volume slider | It plays the Mac's sound (filled icon). | – |
+| Volume slider | It plays the Mac's sound. | – |
 | Connecting… | Added, the first connection is under way. | It's connected. |
 | Unavailable | In the group and can't be reached: it lost power or the network, or isn't found. | It's back; the app keeps trying, at most 5 s apart. |
 | In use elsewhere | Another server took it over (still in the group), or it's playing something else (shown out of it). | The user clicks its name or adds it: the protocol doesn't let the app take it back by itself. |
@@ -119,9 +124,9 @@ buffer grows to its output latency when that's longer. Alone, the Mac plays on i
 without touching the device's own mute.
 
 An AirPlay output is direct only: macOS has the device only while it's the Mac's output and
-removes it once Sendspin is, so its icon has no badge. Adding a Sendspin speaker while the Mac
-plays on AirPlay moves the sound to the Sendspin speakers, and the row falls back to the
-built-in speakers.
+removes it once Sendspin is, so it isn't groupable: it has no check, and while it plays
+neither do the Sendspin speakers. Clicking a speaker's name moves the sound there, and the row
+falls back to the built-in speakers.
 
 ## Music Assistant, or another Sendspin server
 

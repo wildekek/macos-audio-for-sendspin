@@ -14,8 +14,8 @@ choose speakers and control their volume:
 
 <img src="docs/menu.png" width="464" alt="The speaker icon in the menu bar with its menu open: Sendspin with an empty dot, as the Mac plays directly; the MacBook Pro Speakers playing, with a blue icon and a volume slider; a Home Assistant Connect AUX-2 with a + on its icon, to add it; then, below a divider, Music Assistant.">
 
-Each speaker's icon shows how it plays, and is how you choose: the **+** adds it to what plays,
-the **−** (when you point at it) takes it out, and clicking a name plays there only.
+As in Apple's AirPlay picker, the round check beside a speaker adds it to what plays or takes it
+out, and clicking a name plays there only.
 
 <img src="docs/row-states.png" width="464" alt="Every state of a speaker in the menu. Plays: a blue icon and a volume slider. Can join: a grey icon with a +. Hovered while it plays: a blue icon with a −. Joining: a blue ring, Connecting…. Unavailable: a blue ring, still in the group. In use elsewhere: a grey icon with a +, which takes it back. The Mac alone: played directly, no −. AirPlay: plays directly, can't join a group, no badge. Music Assistant: plays where it chooses, below the divider, no badge.">
 

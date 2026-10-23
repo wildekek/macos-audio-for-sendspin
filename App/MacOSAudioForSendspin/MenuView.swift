@@ -306,125 +306,101 @@ private struct MusicAssistantRows: View {
     }
 }
 
-/// A speaker. Its icon is the control: filled blue while it plays, a blue ring while it's in the
-/// group and not playing yet (connecting, unavailable), grey otherwise, with a + when it can
-/// join. Clicking it adds the speaker, or removes it (hovering shows −); clicking the name plays
-/// there only, as in the Sound menu. The volume slider shows while it plays, a status when
-/// something needs attention. The Mac's own output has its icon from the Sound menu (laptop,
-/// AirPods); Sendspin doesn't say what kind of device a speaker is, so they all have one.
+/// A speaker, as in Apple's AirPlay picker: its device icon, its name, the volume slider while
+/// it plays or a status when something needs attention, then a round check. The check is the
+/// group: filled while the speaker is in it (playing, connecting or gone), an empty ring when
+/// it isn't; clicking it adds or removes the speaker. Clicking the name plays there only, as in
+/// the Sound menu. Every output is groupable or not (an AirPlay output and Music Assistant
+/// aren't), and one rule decides the check: it shows when the row is groupable and what plays
+/// now is too. While something that isn't groupable plays, nothing can join it, so there are
+/// no checks and the names are the way in. The Mac's own output has
+/// its icon from the Sound menu (laptop, AirPods); Sendspin doesn't say what kind of device a
+/// speaker is, so they all have one.
 private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
     @State private var hovering = false
-    @State private var hoveringIcon = false
 
     var body: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 0) {
-                // The whole column up to the name, the row's full height: the badge on the
-                // icon's corner is easy to hit.
-                Button(action: iconClicked) {
-                    iconView
-                        .frame(width: 36, height: 38, alignment: .leading)
+            Button(action: choose) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.primary)
+                        .frame(width: 26, height: 26)
+                        .background(Color.secondary.opacity(0.2), in: Circle())
+                    // While hovering the name, the format this speaker receives takes its place.
+                    // It's drawn over the name, so nothing moves: the row has no room for both.
+                    let format = hovering ? formatLabel : nil
+                    Text(player.name)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .opacity(format == nil ? 1 : 0)
+                        .overlay(alignment: .leading) {
+                            if let format {
+                                Text(format)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
+                        }
+                        .onHover { hovering = $0 }
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play on \(player.name) only")
+
+            trailing
+
+            if player.isGroupable && bridge.playsGroupable {
+                Button(action: checkClicked) {
+                    check
+                        // The row's full height and some room before it: easy to hit.
+                        .frame(width: 30, height: 38, alignment: .trailing)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .onHover { hoveringIcon = $0 }
-                .help(iconLabel)
-                .accessibilityLabel(iconLabel)
-
-                nameButton
+                .help(checkLabel)
+                .accessibilityLabel(checkLabel)
+                .accessibilityAddTraits(player.isSelected ? .isSelected : [])
             }
-
-            trailing
         }
         .frame(height: 38)
     }
 
-    private var nameButton: some View {
-        Button(action: choose) {
-            HStack(spacing: 6) {
-                // While hovering the name, the format this speaker receives takes its place.
-                // It's drawn over the name, so nothing moves: the row has no room for both.
-                let format = hovering ? formatLabel : nil
-                Text(player.name)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .opacity(format == nil ? 1 : 0)
-                    .overlay(alignment: .leading) {
-                        if let format {
-                            Text(format)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
-                    }
-                    .onHover { hovering = $0 }
-                Spacer(minLength: 8)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Play on \(player.name) only")
-    }
-
-    // MARK: The icon
-
-    /// It can join what plays: not Music Assistant, which plays where it chooses, and an
-    /// AirPlay output can't be in a group at all. Then it's like a server's row: clicking it
-    /// plays there.
-    private var canJoin: Bool {
-        !bridge.playsOnMusicAssistant && (!player.isLocal || bridge.localCanPlayAlong)
-    }
+    // MARK: The check
 
     /// It can leave the group: not when it's all that plays.
     private var canLeave: Bool { player.isSelected && (bridge.groupCount > 1 || !player.isActive) }
 
-    private var iconLabel: String {
+    private var checkLabel: String {
         if player.isSelected { return canLeave ? "Remove \(player.name)" : "\(player.name) plays" }
-        return canJoin ? "Add \(player.name)" : "Play on \(player.name)"
+        return "Add \(player.name)"
     }
 
-    private func iconClicked() {
+    private func checkClicked() {
         if player.isSelected {
             if canLeave { bridge.setTicked(player.instanceName, false) }
-        } else if canJoin {
-            bridge.setTicked(player.instanceName, true)
         } else {
-            bridge.playOnly(player.instanceName)
+            bridge.setTicked(player.instanceName, true)
         }
     }
 
-    private var iconView: some View {
-        let joining = player.isSelected && !player.isActive
-        let inviting = !player.isSelected && hoveringIcon
-        return Image(systemName: icon)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(player.isActive ? Color.white : joining || inviting ? Color.accentColor : Color.primary)
-            .frame(width: 26, height: 26)
-            .background(player.isActive ? Color.accentColor
-                        : joining ? Color.accentColor.opacity(0.1)
-                        : inviting ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.2),
-                        in: Circle())
-            .overlay {
-                if joining { Circle().strokeBorder(Color.accentColor, lineWidth: 1.5) }
+    private var check: some View {
+        ZStack {
+            if player.isSelected {
+                Circle().fill(Color.accentColor)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+            } else {
+                Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
             }
-            .overlay(alignment: .bottomTrailing) {
-                if let badge {
-                    Image(systemName: badge)
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(hoveringIcon ? Color.white : Color.accentColor)
-                        .frame(width: 13, height: 13)
-                        .background(hoveringIcon ? Color.accentColor : Color.white, in: Circle())
-                        .offset(x: 3, y: 3)
-                }
-            }
-    }
-
-    /// + where it can join, − on hover where it can leave.
-    private var badge: String? {
-        if !player.isSelected { return canJoin ? "plus" : nil }
-        return hoveringIcon && canLeave ? "minus" : nil
+        }
+        .frame(width: 22, height: 22)
     }
 
     private var icon: String {
