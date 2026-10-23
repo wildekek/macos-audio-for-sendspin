@@ -13,6 +13,8 @@ public actor PlaybackGroup {
     public private(set) var leadUs: Int64
     /// Bit depth to stream when players support it (16 or 24).
     public private(set) var preferredBitDepth = 16
+    /// A bit depth that takes over with the first block at this rate.
+    private var bitDepthForRate: (sampleRate: Int, bitDepth: Int)?
 
     private var sessions: [URL: (session: PlayerSession, task: Task<Void, Never>)] = [:]
     private var playing = false
@@ -27,9 +29,16 @@ public actor PlaybackGroup {
 
     public var isPlaying: Bool { playing }
 
-    public func setPreferredBitDepth(_ bitDepth: Int) {
-        // Players switch format at the next chunk (each session restarts its stream).
-        preferredBitDepth = bitDepth
+    /// Players switch format at the next chunk: each session restarts its stream. With
+    /// `sampleRate`, the bit depth waits for the first block at that rate, so that a new rate
+    /// and bit depth restart it once, together, however soon the blocks come.
+    public func setPreferredBitDepth(_ bitDepth: Int, fromSampleRate sampleRate: Int? = nil) {
+        if let sampleRate {
+            bitDepthForRate = (sampleRate, bitDepth)
+        } else {
+            bitDepthForRate = nil
+            preferredBitDepth = bitDepth
+        }
     }
 
     /// Change the lead. Players restart their stream, since shifting timestamps
@@ -60,6 +69,10 @@ public actor PlaybackGroup {
     /// Fan one captured block out to all players.
     /// - Parameter captureTimeUs: server-clock time of the block's first sample.
     public func push(_ pcm: PCMBuffer, captureTimeUs: Int64) async {
+        if let waiting = bitDepthForRate, pcm.sampleRate == waiting.sampleRate {
+            preferredBitDepth = waiting.bitDepth
+            bitDepthForRate = nil
+        }
         if !playing { await setPlaying(true) }
         let timestampUs = captureTimeUs + leadUs
         // Chunks that would arrive after their play time are useless to every player.

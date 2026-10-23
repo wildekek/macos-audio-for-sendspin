@@ -331,14 +331,17 @@ func apply(_ format: (sampleRate: Int, bitDepth: Int), device: AudioDevice, grou
                     for _ in 0..<30 where Int(device.nominalSampleRate) != rate {
                         try? await Task.sleep(for: .milliseconds(100))
                     }
-                    next += Int(device.nominalSampleRate) == rate
-                        ? formatSwitch.deviceRateChanged() : formatSwitch.deviceRateFailed()
+                    if Int(device.nominalSampleRate) == rate {
+                        formatSwitch.deviceRateChanged()
+                    } else {
+                        next += formatSwitch.deviceRateFailed()
+                    }
                 } catch {
                     Log.error("Couldn't switch the Sendspin device to \(rate) Hz: \(error)")
                     next += formatSwitch.deviceRateFailed()
                 }
-            case .setBitDepth(let bitDepth):
-                await group.setPreferredBitDepth(bitDepth)
+            case .setBitDepth(let bitDepth, let sampleRate):
+                await group.setPreferredBitDepth(bitDepth, fromSampleRate: sampleRate)
             }
         }
         actions = next

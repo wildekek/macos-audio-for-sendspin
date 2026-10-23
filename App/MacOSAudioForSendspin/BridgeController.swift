@@ -744,7 +744,7 @@ final class BridgeController {
         guard let rate = AudioDevice.sendspin.map({ Int($0.nominalSampleRate) }), rate != deviceSampleRate else { return }
         Log.info("Sendspin device now runs at \(rate) Hz")
         deviceSampleRate = rate
-        perform(formatSwitch.deviceRateChanged())
+        formatSwitch.deviceRateChanged()
     }
 
     private func setHasSound(_ sound: Bool) {
@@ -934,11 +934,13 @@ final class BridgeController {
     /// group streams, in the order `FormatSwitch` gives.
     private func applyFormat() {
         guard let format = activeFormat, let device = AudioDevice.sendspin else { return }
-        perform(formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
-                                    deviceRate: Int(device.nominalSampleRate)))
+        let actions = formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
+                                          deviceRate: Int(device.nominalSampleRate))
+        Task { await perform(actions) }
     }
 
-    private func perform(_ actions: [FormatSwitch.Action]) {
+    /// In order: the group hears of a bit depth before the rate it waits for changes.
+    private func perform(_ actions: [FormatSwitch.Action]) async {
         for action in actions {
             switch action {
             case .setDeviceRate(let rate):
@@ -946,10 +948,10 @@ final class BridgeController {
                     try AudioDevice.sendspin?.setNominalSampleRate(Double(rate))
                 } catch {
                     Log.error("Couldn't switch the Sendspin device to \(rate) Hz: \(error)")
-                    perform(formatSwitch.deviceRateFailed())
+                    await perform(formatSwitch.deviceRateFailed())
                 }
-            case .setBitDepth(let bitDepth):
-                Task { await group.setPreferredBitDepth(bitDepth) }
+            case .setBitDepth(let bitDepth, let sampleRate):
+                await group.setPreferredBitDepth(bitDepth, fromSampleRate: sampleRate)
             }
         }
     }
