@@ -57,7 +57,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
-            musicAssistant
+            pairedServer
 
             Section {
                 Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
@@ -104,7 +104,7 @@ struct SettingsView: View {
             Text("The Sendspin audio device and the app are removed, and you're asked for an administrator password. Mac audio stops for a moment; there's no need to restart.")
         }
         .alert("Forget the pairing with \(bridge.sourceServerName)?", isPresented: $confirmingForget) {
-            Button("Forget", role: .destructive) { bridge.forgetMusicAssistant() }
+            Button("Forget", role: .destructive) { bridge.forgetServerPairings() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("\(bridge.sourceServerName) can't play the Mac's audio until you pair it again.")
@@ -118,7 +118,7 @@ struct SettingsView: View {
     }
 
     /// Once paired: which server, and a way to forget it. Pairing itself happens in the menu.
-    @ViewBuilder private var musicAssistant: some View {
+    @ViewBuilder private var pairedServer: some View {
         let status = bridge.sourceStatus
         if status.hasPairing || status.paired {
             Section {

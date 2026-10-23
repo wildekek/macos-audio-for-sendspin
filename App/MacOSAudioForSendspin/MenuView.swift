@@ -36,7 +36,7 @@ struct MenuView: View {
             .buttonStyle(.plain)
         }
         .padding(14)
-        .frame(width: 340)
+        .frame(width: 360)
     }
 
     /// Whether Sendspin is in use: a dot, filled while the Mac plays through Sendspin, an empty
@@ -95,29 +95,37 @@ struct MenuView: View {
     }
 
     /// Where the Mac's sound can go: its own speakers and the Sendspin speakers, which play
-    /// together in sync, then below a divider Music Assistant, which plays on what it chooses
-    /// and doesn't group with them.
+    /// together in sync, then below a divider the server (Music Assistant or another), which
+    /// plays on what it chooses and doesn't group with them.
     private var outputs: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(bridge.players) { player in
                 PlayerRow(player: player, bridge: bridge)
             }
-            if bridge.speakers.isEmpty && !bridge.offersMusicAssistant {
+            if bridge.speakers.isEmpty && !bridge.offersServer {
                 LookingRow()
             }
-            if bridge.offersMusicAssistant {
+            if bridge.offersServer {
                 Divider()
                     .padding(.vertical, 4)
-                MusicAssistantRows(bridge: bridge)
+                ServerRows(bridge: bridge)
             }
         }
     }
 }
 
+/// A darker orange than the system's in light mode, so the warning stands out on the light
+/// menu; the system's own in dark mode.
+private let warningOrange = Color(nsColor: NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(srgbRed: 1, green: 0.62, blue: 0.04, alpha: 1)
+        : NSColor(srgbRed: 0.76, green: 0.37, blue: 0, alpha: 1)
+})
+
 /// Where what hangs under a destination starts: past its icon.
 private let destinationIndent: CGFloat = 36
 
-/// Before any speaker or Music Assistant is found: what the app is looking for, and where to
+/// Before any speaker or server is found: what the app is looking for, and where to
 /// read which speakers work with it.
 private struct LookingRow: View {
     var body: some View {
@@ -140,16 +148,6 @@ private struct LookingRow: View {
         }
         .padding(.vertical, 6)
     }
-}
-
-/// Why a destination can't play, on the right of its row. Whether it plays shows on the menu
-/// bar icon, not in the rows: the Mac's own output couldn't tell, and a working destination
-/// needs no word.
-private func reason(_ text: String) -> some View {
-    Text(text)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize()
 }
 
 /// A link that looks like one: underlined, with the pointing hand, while hovered.
@@ -190,68 +188,85 @@ private enum DestinationIcon {
     }
 }
 
-/// A destination: a round icon, blue when chosen, its name, and on the right whatever it
-/// shows: why it can't play, the speakers in it, or the pairing token.
-private struct DestinationRow<Trailing: View>: View {
+/// An output's round icon, for speakers and servers alike: blue while it plays where there's
+/// no check to say it (`SpeakerMenu.Row.iconIsBlue`), as in the Sound menu.
+private struct OutputIcon: View {
     let icon: DestinationIcon
-    let title: String
-    let chosen: Bool
-    let action: () -> Void
-    @ViewBuilder var trailing: Trailing
+    let isBlue: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            // The icon and name keep their size, and what's on the right gets the space that's
-            // left, so a long list of speakers truncates instead of widening the menu.
-            Button(action: action) {
-                HStack(spacing: 10) {
-                    icon.image
-                        .foregroundStyle(chosen ? Color.white : Color.primary)
-                        .frame(width: 26, height: 26)
-                        .background(chosen ? Color.accentColor : Color.secondary.opacity(0.2), in: Circle())
-                    Text(title)
-                        .fontWeight(chosen ? .semibold : .regular)
-                        .lineLimit(1)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .accessibilityAddTraits(chosen ? .isSelected : [])
-            trailing
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .frame(height: 38)
-        // The whole row chooses, not only the icon and name.
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
+        icon.image
+            .foregroundStyle(isBlue ? Color.white : Color.primary)
+            .frame(width: 26, height: 26)
+            .background(isBlue ? Color.accentColor : Color.secondary.opacity(0.2), in: Circle())
     }
 }
 
-/// A server this Mac is a source for, such as Music Assistant, as a destination. Until it's
-/// paired, the row opens the server's setup page (when known), and choosing it would only
+/// Why an output can't play, on the right of its row, for speakers and servers alike: with a
+/// warning triangle when something is wrong (`SpeakerMenu.Row.showsWarning`).
+private struct StatusLabel: View {
+    let text: String
+    let showsWarning: Bool
+    var help = ""
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if showsWarning {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(warningOrange)
+            }
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .fixedSize()
+        .help(help)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(showsWarning ? "Warning: \(text)" : text)
+    }
+}
+
+/// A Sendspin server this Mac is a source for, such as Music Assistant, as a destination. Until
+/// it's paired, the row opens the server's setup page (when known), and choosing it would only
 /// silence the Mac; once paired, choosing it hands the Mac's audio to the server, which picks
 /// the speakers and the volume. Pairing is by a code this Mac shows, here and in a window:
 /// servers support every method, so the code always works. The pairing token is for automated
 /// pairing between systems, not for people (the implementation guide), so it's in Settings.
 /// Music Assistant only adds its logo and links to its own pages.
-private struct MusicAssistantRows: View {
+private struct ServerRows: View {
     let bridge: BridgeController
 
     var body: some View {
         let status = bridge.sourceStatus
         let needsPairing = status.connected && !status.paired
-        let chosen = bridge.isMacOutput && bridge.destination == .musicAssistant && !needsPairing
+        let chosen = bridge.serverChosen
         let server = bridge.sourceServerName
+        let row = bridge.serverRow
+        let action = { needsPairing ? openSetupPage() : bridge.chooseServer() }
         VStack(alignment: .leading, spacing: 2) {
-            DestinationRow(icon: bridge.sourceServerIsMusicAssistant ? .asset("MusicAssistantIcon") : .symbol("server.rack"),
-                           title: server, chosen: chosen,
-                           action: { needsPairing ? openSetupPage() : bridge.chooseMusicAssistant() }) {
-                if !status.connected {
-                    reason("Unavailable")
+            HStack(spacing: 10) {
+                Button(action: action) {
+                    HStack(spacing: 10) {
+                        OutputIcon(icon: bridge.sourceServerIsMusicAssistant ? .asset("MusicAssistantIcon")
+                                       : .symbol("server.rack"),
+                                   isBlue: row.iconIsBlue)
+                        Text(server)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(chosen ? .isSelected : [])
+                .accessibilityHint(needsPairing ? "Opens \(server) to pair this Mac" : "")
+                if let text = row.status {
+                    StatusLabel(text: text, showsWarning: row.showsWarning,
+                                help: "\(server) can't be reached. It connects to this Mac again by itself.")
                 }
             }
-            .accessibilityHint(needsPairing ? "Opens \(server) to pair this Mac" : "")
+            .frame(height: 38)
 
             if let code = status.pairingCode {
                 // The server is pairing by a code shown here (and in its window).
@@ -310,12 +325,13 @@ private struct MusicAssistantRows: View {
 /// it plays or a status when something needs attention, then a round check. The check is the
 /// group: filled while the speaker is in it (playing, connecting or gone), an empty ring when
 /// it isn't; clicking it adds or removes the speaker. Clicking the name plays there only, as in
-/// the Sound menu. Every output is groupable or not (an AirPlay output and Music Assistant
+/// the Sound menu. Every output is groupable or not (an AirPlay output and a server
 /// aren't), and one rule decides the check: it shows when the row is groupable and what plays
 /// now is too. While something that isn't groupable plays, nothing can join it, so there are
 /// no checks and the names are the way in. The Mac's own output has
 /// its icon from the Sound menu (laptop, AirPods); Sendspin doesn't say what kind of device a
-/// speaker is, so they all have one.
+/// speaker is, so they all have one. One indicator per row: the check where it's groupable, and
+/// where it isn't, a blue icon while it plays, as in the Sound menu and the server's row.
 private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
@@ -325,11 +341,7 @@ private struct PlayerRow: View {
         HStack(spacing: 10) {
             Button(action: choose) {
                 HStack(spacing: 10) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.primary)
-                        .frame(width: 26, height: 26)
-                        .background(Color.secondary.opacity(0.2), in: Circle())
+                    OutputIcon(icon: .symbol(icon), isBlue: row.iconIsBlue)
                     // While hovering the name, the format this speaker receives takes its place.
                     // It's drawn over the name, so nothing moves: the row has no room for both.
                     let format = hovering ? formatLabel : nil
@@ -355,7 +367,7 @@ private struct PlayerRow: View {
 
             trailing
 
-            if player.isGroupable && bridge.playsGroupable {
+            if row.check != .none {
                 Button(action: checkClicked) {
                     check
                         // The row's full height and some room before it: easy to hit.
@@ -371,32 +383,40 @@ private struct PlayerRow: View {
         .frame(height: 38)
     }
 
+    /// How the row shows its state: `SpeakerMenu` decides.
+    private var row: SpeakerMenu.Row { bridge.row(for: player) }
+
     // MARK: The check
 
-    /// It can leave the group: not when it's all that plays.
-    private var canLeave: Bool { player.isSelected && (bridge.groupCount > 1 || !player.isActive) }
-
     private var checkLabel: String {
-        if player.isSelected { return canLeave ? "Remove \(player.name)" : "\(player.name) plays" }
-        return "Add \(player.name)"
+        switch (row.check, row.click) {
+        case (.spinner, _): "Connecting to \(player.name); click to remove it"
+        case (.empty, _): "Add \(player.name)"
+        case (_, .remove): "Remove \(player.name)"
+        default: "\(player.name) plays"
+        }
     }
 
     private func checkClicked() {
-        if player.isSelected {
-            if canLeave { bridge.setTicked(player.instanceName, false) }
-        } else {
-            bridge.setTicked(player.instanceName, true)
+        switch row.click {
+        case .add: bridge.perform(.add(player.instanceName))
+        case .remove: bridge.perform(.remove(player.instanceName))
+        case nil: break
         }
     }
 
     private var check: some View {
         ZStack {
-            if player.isSelected {
-                Circle().fill(Color.accentColor)
+            switch row.check {
+            case .spinner:
+                ProgressView()
+                    .controlSize(.small)
+            case .filled, .grey:
+                Circle().fill(row.check == .grey ? Color.secondary.opacity(0.5) : Color.accentColor)
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white)
-            } else {
+            case .empty, .none:
                 Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
             }
         }
@@ -418,47 +438,25 @@ private struct PlayerRow: View {
                     .controlSize(.small)
                     // Neutral like Apple Music's AirPlay sliders, not the accent colour.
                     .tint(.primary.opacity(0.8))
-                    .frame(width: 90)
+                    .frame(width: 80)
                     .accessibilityLabel("\(player.name) volume")
             }
-        } else if let statusText {
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-                .help(statusHelp)
-                // "Identity changed" is what asks for the click, so the status takes one too.
-                .contentShape(Rectangle())
-                .onTapGesture(perform: choose)
+        } else if let statusText = row.status {
+            StatusLabel(text: statusText, showsWarning: row.showsWarning, help: statusHelp)
+            // "Identity changed" is what asks for the click, so the status takes one too.
+            .contentShape(Rectangle())
+            .onTapGesture(perform: choose)
         }
     }
 
     private func choose() {
-        bridge.playOnly(player.instanceName)
+        bridge.perform(.playOnly(player.instanceName))
     }
 
     private var formatLabel: String? {
         guard let format = player.status?.streamFormat else { return nil }
         let rateAndDepth = BridgeController.StreamFormat(sampleRate: format.sampleRate, bitDepth: format.bitDepth).label
         return "\(format.codec.uppercased()) · \(rateAndDepth)"
-    }
-
-    /// Only for what needs attention; a playing speaker shows its slider instead.
-    private var statusText: String? {
-        // Only a speaker in the group stays listed while it's gone: it plays again once it's back.
-        guard player.isDiscovered else { return "Unavailable" }
-        guard player.isSelected || player.status?.connection == .left else { return nil }
-        switch player.status?.connection {
-        case .connected: return nil
-        case .taken, .left: return "In use elsewhere"
-        case .pairingRequired: return "Needs pairing"
-        case .notApproved: return "Identity changed"
-        case .unavailable: return "Unavailable"
-        case .disconnected: return "Disconnected"
-        case .failed: return "Can't connect"
-        case .connecting, .awaitingApproval, nil: return "Connecting…"
-        }
     }
 
     private var statusHelp: String {

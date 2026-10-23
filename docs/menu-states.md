@@ -2,37 +2,44 @@
 
 What the menu bar menu shows, what each state means, and why. The menu is
 `App/MacOSAudioForSendspin/MenuView.swift`; the state behind it is `BridgeController`.
-Change this file when you change what the menu shows.
+
+How a speaker's or a server's row shows its state, and what a choice in the menu leads to, are
+`SpeakerMenu` in `Packages/SendspinServerKit`, and its rules are the tests in
+`SpeakerMenuTests`: one test per rule, named after it, with why it is so. This file doesn't
+repeat them; it holds the rest of the menu, and the rules the whole menu follows. Change a
+rule here, or a test there, together with the code.
 
 ## Rules
 
 These hold across the menu. A new state should follow them, or change them here first.
 
 1. **What you chose stays; what you didn't, leaves.** A speaker in the group or a paired Music
-   Assistant that goes away stays in the list as **Unavailable** and comes back by itself. An
-   speaker out of the group, or a Music Assistant that was never paired, leaves the list.
-2. **One word for gone: Unavailable.** For a speaker and for Music Assistant. Not "Offline".
+   Assistant that goes away stays in the list as **Unavailable** and comes back by itself. A
+   speaker out of the group, or a server that was never paired, leaves the list.
+2. **One word for gone: Unavailable.** For a speaker and for a server. Not "Offline".
 3. **Playing shows on the menu bar icon, not in the rows.** The icon fills while the Mac's
-   sound is going out: to a connected speaker, or through Music Assistant's open stream
+   sound is going out: to a connected speaker, or through the server's open stream
    (`isPlaying`: sound in the last 3 s). Otherwise it's the outline. Both are templates, in the
    menu bar's own colour (a coloured icon looked out of place on Liquid Glass). The rows don't say Playing or Idle: the Mac's own output couldn't (the app
    can't hear it), and a destination that works needs no word.
 4. **A row only says why it can't play.** "Unavailable" on the right, or a caption saying what
-   to set up (select the Mac as an input in Music Assistant). There's no
+   to set up (select the Mac as an input on the server). There's no
    "Ready" or "Idle".
 5. **No automatic fallback.** When every speaker in the group is gone, the Mac's output stays on
    Sendspin. Switching output by itself would be unpredictable; the output only changes when
    the user adds, removes or picks a speaker.
-7. **Choosing is all there is.** No switch: where the Mac plays follows from what's chosen, and
-   the dot at the top only shows whether that goes through Sendspin.
-8. **One indicator per row.** The check on the right is the group, as in Apple's AirPlay
-   picker; the device icon only says what kind of device it is, and nothing repeats the check.
-9. **Every output is groupable or not, and one rule follows from it.** Every Sendspin speaker
-   and the Mac's own output are groupable, unless that's AirPlay; an AirPlay output and Music
-   Assistant aren't. A row has its check when it's groupable and what plays now is too: while
-   something that isn't groupable plays, nothing can join it, and the names are the way in.
 6. **Show only what exists.** A destination appears once it's found (or chosen). Until
    anything is found, the menu says what it's looking for.
+7. **Choosing is all there is.** No switch: where the Mac plays follows from what's chosen, and
+   the dot at the top only shows whether that goes through Sendspin.
+8. **One indicator per row.** Where an output is groupable, the check on the right is the
+   group, as in Apple's AirPlay picker, and the icon only says what kind of device it is. Where
+   it isn't, there's no check, and the icon turns blue while it plays, as in the Sound menu.
+9. **Every output is groupable or not, and one rule follows from it.** Every Sendspin speaker
+   and the Mac's own output are groupable, unless that's AirPlay; an AirPlay output and Music
+   Assistant aren't. While something that isn't groupable plays, nothing can join it.
+10. **Something always plays after a choice.** When nothing left in the group could play, the
+    Mac's own output takes over.
 
 ## Rows
 
@@ -44,8 +51,8 @@ From top to bottom.
 | Notice | The driver is missing or outdated, or Local Network access is denied. One at a time, in that order. Without the driver there are no rows below. |
 | The Mac's own output | Always (its built-in speakers when nothing else is there). First, as in AirPlay's list. |
 | The Sendspin speakers | Each speaker found or in the group. |
-| Looking for speakers… | No Sendspin speaker is found or in the group, and Music Assistant isn't connected or paired. Links to [which speakers work](https://www.sendspin-audio.com/#speakers). |
-| Divider, then Music Assistant (or another server) | A server is connected to this Mac as its source, or paired with it (`offersMusicAssistant`). Named after the server; see below. The divider: servers play on what they choose and don't group with the speakers. |
+| Looking for speakers… | No Sendspin speaker is found or in the group, and no server is connected or paired. Links to [which speakers work](https://www.sendspin-audio.com/#speakers). |
+| Divider, then the server (Music Assistant or another) | A server is connected to this Mac as its source, or paired with it (`offersServer`). Named after the server; see below. The divider: servers play on what they choose and don't group with the speakers. |
 
 ## Sendspin or direct follows what's chosen
 
@@ -58,57 +65,41 @@ the speaker buffer's delay.
 | Only the Mac's own output (speakers, AirPods, AirPlay) | That output | Empty | None |
 | Any Sendspin speaker, with or without the Mac's own output | Sendspin | Filled | The speaker buffer, 300 ms or more (longer when the Mac's own output needs it) |
 
-Changing between the first two rows switches the Mac's output, which costs a moment of
-silence, as any output switch in macOS does. In the menu:
-
-- **The group shows what plays**, or will once an added speaker connects. While the Mac plays
-  directly or Music Assistant plays, the Sendspin speakers show as not in it.
-- **Adding a Sendspin speaker** (checking it) plays through Sendspin, starting from what plays
-  now: the Mac's own output stays and plays along, in sync (unless it's AirPlay, see below).
-- **Removing the last Sendspin speaker** (unchecking it) plays on the Mac's own output directly
-  when it's in the group, and otherwise goes back to the Mac's own output anyway.
-- **Adding the Mac's own output** joins the Sendspin speakers when one is in the group, and
-  otherwise plays on it directly. What's all that plays can't be unchecked.
-- **Clicking a name** plays there only, as in the Sound menu: the Mac's own output directly,
-  a Sendspin speaker on its own.
-- **Music Assistant** plays through Music Assistant; adding a speaker plays on the speakers
-  again.
+Changing between the two switches the Mac's output, which costs a moment of silence, as any
+output switch in macOS does. What each choice leads to (adding, removing, clicking a name,
+choosing a server) is in `SpeakerMenuTests`.
 
 ## Menu bar icon
 
 | Shows | Means |
 |---|---|
-| Filled (`MenuBarIconPlaying`) | The Mac's sound is going out: through Sendspin with a speaker in the group connected, or Music Assistant chosen with its stream open; and the Mac made sound in the last 3 s. VoiceOver: "Sendspin, playing". |
+| Filled (`MenuBarIconPlaying`) | The Mac's sound is going out: through Sendspin with a speaker in the group connected, or a server chosen with its stream open; and the Mac made sound in the last 3 s. VoiceOver: "Sendspin, playing". |
 | Outline (`MenuBarIcon`) | Anything else, including while the Mac plays directly. |
 
 ## A speaker
 
 Each speaker, as in Apple's AirPlay picker: its device icon, its name, then a volume slider or
-a status, then a round check. The check is the control:
+a status, then a round check: filled while it plays, grey while it's in the group but can't
+play, a spinner while it connects, an empty ring when it's out of the group. Which, and what
+clicking it does, is in `SpeakerMenuTests`.
 
-| Check | Means | Clicking it |
-|---|---|---|
-| Filled (accent) | In the group: playing, or added and connecting or gone (the status says which). | Removes it, unless it's all that plays. |
-| Empty ring | Not in the group. | Adds it. |
-| none | Not groupable (an AirPlay output), or what plays isn't (an AirPlay output or Music Assistant): nothing can join it. Like a server's row. | – |
-
-Clicking the name plays there only; where there's no check, that's the only way in. The icon
-never changes with the state. The Mac's own output has its icon from the macOS Sound
-menu (laptop, desktop, AirPods, HomePod, AirPlay); every Sendspin speaker has the speaker icon,
+The Mac's own output has its icon from the macOS Sound menu (laptop, desktop, AirPods, HomePod, AirPlay); every Sendspin speaker has the speaker icon,
 since Sendspin doesn't say what kind of device it is. Hovering a playing speaker's name shows
 the format it receives (e.g. FLAC · 48 kHz · 16-bit) in place of the name.
+
+What each status means, and until when it shows:
 
 | Shows | Means | Until |
 |---|---|---|
 | Volume slider | It plays the Mac's sound. | – |
-| Connecting… | Added, the first connection is under way. | It's connected. |
-| Unavailable | In the group and can't be reached: it lost power or the network, or isn't found. | It's back; the app keeps trying, at most 5 s apart. |
+| Connecting… | The first connection is under way, where there's no check to turn into a spinner. | It's connected. |
+| Unavailable | It can't be reached: it lost power or the network, or isn't found. | It's back; the app keeps trying, at most 5 s apart. |
 | In use elsewhere | Another server took it over (still in the group), or it's playing something else (shown out of it). | The user clicks its name or adds it: the protocol doesn't let the app take it back by itself. |
 | Disconnected | Its user disconnected it from this Mac (`client/goodbye` with `user_request`). | The user removes it and adds it again. |
 | Can't connect | It answers, but setting up the connection fails. | It works; the app retries, up to 30 s apart. |
 | Needs pairing | It only plays for paired servers; the app can't pair speakers yet. | – |
 | Identity changed | It presents a different identity than the one the user allowed. | The user clicks its name or this status (or removes it and adds it again), allowing the new one. |
-| nothing | Not in the group (as every Sendspin speaker shows while the Mac plays directly or Music Assistant is chosen); also a speaker that connected to this Mac and waits to be allowed. | The user adds it. |
+| nothing | Not in the group (as every Sendspin speaker shows while the Mac plays directly or a server is chosen); also a speaker that connected to this Mac and waits to be allowed. | The user adds it. |
 
 A speaker keeps the name it gave in its hello while it's out of the group or away (mDNS often has only
 an ID).
@@ -123,12 +114,11 @@ buffer grows to its output latency when that's longer. Alone, the Mac plays on i
 (see above). Either way the slider is the device's own volume. Muting the Mac mutes it too,
 without touching the device's own mute.
 
-An AirPlay output is direct only: macOS has the device only while it's the Mac's output and
-removes it once Sendspin is, so it isn't groupable: it has no check, and while it plays
-neither do the Sendspin speakers. Clicking a speaker's name moves the sound there, and the row
+An AirPlay output isn't groupable: macOS has the device only while it's the Mac's output, and
+removes it once Sendspin is. Choosing a Sendspin speaker moves the sound there, and the row
 falls back to the built-in speakers.
 
-## Music Assistant, or another Sendspin server
+## A Sendspin server, such as Music Assistant
 
 The Mac is a Sendspin source for one server at a time, usually Music Assistant. The row is
 the same for any server, with two Music Assistant extras: its logo, and links to its own pages.
@@ -137,14 +127,9 @@ name (it remembers the names it has seen, so an offline Music Assistant keeps it
 other server shows its own name with a generic icon (`server.rack`), and its captions have no
 links.
 
-The right side:
-
-| Shows | Means |
-|---|---|
-| Unavailable | Paired, not connected (chosen or not). |
-| nothing | Not paired yet (the caption says how), or paired and connected (chosen or not; while it's chosen, the caption says what's left to do). |
-
-The caption under it:
+Its row follows the same rules as a speaker's (`SpeakerMenuTests`): it isn't groupable, so its
+icon turns blue while it plays, and "Unavailable", with its warning, while it's paired and
+not connected. The caption under it:
 
 | When | Caption |
 |---|---|
@@ -187,6 +172,6 @@ this menu"). The Pairing PSK method itself stays: every client must implement it
 | A speaker out of the group loses power or the network | It leaves the list within about 20 s: every speaker is checked every 15 s, and mDNS is asked to verify one that doesn't answer. | It appears as soon as it announces itself. |
 | A speaker in the group shuts down properly | Unavailable while it's gone. | It reconnects once it announces itself again: a fresh start. |
 | A speaker out of the group shuts down properly | It leaves the list at once. | It appears as soon as it announces itself. |
-| Music Assistant goes offline, paired | Unavailable, chosen or not. | Music Assistant connects to the Mac again by itself. |
-| Music Assistant goes away, never paired | Its row leaves the list. | It appears again, ready to pair. |
+| A paired server goes offline | Unavailable, chosen or not. | The server connects to the Mac again by itself. |
+| A server that was never paired goes away | Its row leaves the list. | It appears again, ready to pair. |
 | Its pairing is forgotten (Settings › Forget) | Connected: ready to pair again. Not connected: the row leaves, and the speakers become the destination. | Pairing again needs the token. |

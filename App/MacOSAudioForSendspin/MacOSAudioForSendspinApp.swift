@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: Pairing code
 
-    /// Music Assistant started pairing by a code shown here: show it, near the top of the
+    /// A server started pairing by a code shown here: show it, near the top of the
     /// screen, without taking focus from where it's typed. When it ends, the window says how
     /// for a moment, then closes.
     private func pairingCodeChanged(_ code: String?) {
