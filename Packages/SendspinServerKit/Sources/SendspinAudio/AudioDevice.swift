@@ -1,3 +1,4 @@
+import AudioToolbox
 import CoreAudio
 import Foundation
 
@@ -80,10 +81,21 @@ public struct AudioDevice: Hashable, Sendable {
         return device
     }
 
+    /// The Mac's own outputs: its speakers, and on Apple silicon its headphone jack.
+    public static func builtInOutputs() -> [AudioDevice] {
+        all().filter {
+            $0.transportType == kAudioDeviceTransportTypeBuiltIn
+                && $0.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0
+        }
+    }
+
     // MARK: Properties
 
     public var name: String? { string(kAudioObjectPropertyName) }
     public var uid: String? { string(kAudioDevicePropertyDeviceUID) }
+    public var transportType: UInt32? {
+        scalar(kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, as: UInt32.self)
+    }
 
     public func channelCount(scope: AudioObjectPropertyScope) -> Int {
         var address = Self.address(kAudioDevicePropertyStreamConfiguration, scope)
@@ -102,6 +114,20 @@ public struct AudioDevice: Hashable, Sendable {
         nonmutating set {
             guard let newValue else { return }
             setScalar(kAudioDevicePropertyVolumeScalar, kAudioObjectPropertyScopeOutput, max(0, min(1, newValue)))
+        }
+    }
+
+    /// The output volume as the menu bar's volume control shows it, 0…1, also for devices
+    /// whose volume is per channel (the built-in speakers); nil if it has none.
+    public var mainVolume: Float32? {
+        get {
+            scalar(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioObjectPropertyScopeOutput,
+                   as: Float32.self)
+        }
+        nonmutating set {
+            guard let newValue else { return }
+            setScalar(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioObjectPropertyScopeOutput,
+                      max(0, min(1, newValue)))
         }
     }
 
@@ -267,19 +293,28 @@ extension AudioDevice {
     /// render timestamp a sample is heard; for input, how long before its capture
     /// timestamp a sample actually reached the device.
     public func reportedLatencyUs(scope: AudioObjectPropertyScope) -> Int64 {
-        func frames(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
-                    _ scope: AudioObjectPropertyScope) -> UInt32 {
-            AudioDevice(id: object).scalar(selector, scope, as: UInt32.self) ?? 0
-        }
-        var total = frames(id, kAudioDevicePropertyLatency, scope) + frames(id, kAudioDevicePropertySafetyOffset, scope)
+        let frames = latencyFrames(id, kAudioDevicePropertyLatency, scope)
+            + latencyFrames(id, kAudioDevicePropertySafetyOffset, scope) + streamLatencyFrames(scope: scope)
+        return Int64(Double(frames) / nominalSampleRate * 1_000_000)
+    }
+
+    /// The first stream's latency alone, in µs.
+    public func streamLatencyUs(scope: AudioObjectPropertyScope) -> Int64 {
+        Int64(Double(streamLatencyFrames(scope: scope)) / nominalSampleRate * 1_000_000)
+    }
+
+    private func latencyFrames(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                               _ scope: AudioObjectPropertyScope) -> UInt32 {
+        AudioDevice(id: object).scalar(selector, scope, as: UInt32.self) ?? 0
+    }
+
+    private func streamLatencyFrames(scope: AudioObjectPropertyScope) -> UInt32 {
         var address = Self.address(kAudioDevicePropertyStreams, scope)
         var size: UInt32 = 0
-        if AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size > 0 {
-            var streams = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-            if AudioObjectGetPropertyData(id, &address, 0, nil, &size, &streams) == noErr, let first = streams.first {
-                total += frames(first, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal)
-            }
-        }
-        return Int64(Double(total) / nominalSampleRate * 1_000_000)
+        guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size > 0 else { return 0 }
+        var streams = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &streams) == noErr, let first = streams.first
+        else { return 0 }
+        return latencyFrames(first, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal)
     }
 }

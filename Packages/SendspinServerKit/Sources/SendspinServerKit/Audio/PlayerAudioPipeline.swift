@@ -157,13 +157,13 @@ private struct Dither {
 
 /// Streaming sample-rate converter for interleaved float audio. Keeps the filter state
 /// between chunks, so consecutive chunks join seamlessly.
-final class Resampler {
+public final class Resampler {
     private let converter: AVAudioConverter
     private let inputFormat: AVAudioFormat
     private let outputFormat: AVAudioFormat
     private let ratio: Double
 
-    init?(from inputRate: Int, to outputRate: Int, channels: Int) {
+    public init?(from inputRate: Int, to outputRate: Int, channels: Int) {
         guard let input = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(inputRate),
                                         channels: AVAudioChannelCount(channels), interleaved: true),
               let output = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(outputRate),
@@ -178,11 +178,11 @@ final class Resampler {
         ratio = Double(outputRate) / Double(inputRate)
     }
 
-    func reset() {
+    public func reset() {
         converter.reset()
     }
 
-    func process(_ samples: [Float]) -> [Float] {
+    public func process(_ samples: [Float]) -> [Float] {
         let channels = Int(inputFormat.channelCount)
         let inputFrames = samples.count / channels
         guard inputFrames > 0,

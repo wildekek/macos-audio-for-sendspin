@@ -87,6 +87,25 @@ shows the format it receives (e.g. FLAC · 48 kHz · 16-bit) in place of the nam
 A speaker keeps the name it gave in its hello while it's unticked or away (mDNS often has only
 an ID).
 
+### The Mac's own speakers
+
+First in the list, as in AirPlay's: the Mac's built-in output (e.g. MacBook Pro Speakers; on
+Apple silicon, the headphone jack when that was the Mac's output before Sendspin). Ticked, it
+plays the Mac's sound in sync with the ticked Sendspin speakers. It isn't a Sendspin speaker:
+the app plays on it directly, on the same clock (`LocalPlayer`). It's listed once there's a
+Sendspin speaker to play along with, or while it's ticked. Its slider is the device's own
+volume, and it's in the group volume like any speaker; muting the Mac mutes it too, without
+touching the device's own mute.
+
+| Shows | Means |
+|---|---|
+| Volume slider | Ticked. It's never Connecting…: there's nothing to connect to. |
+| Unavailable | Ticked, and the Mac has no built-in output (a Mac without speakers). |
+| nothing | Unticked. |
+
+Choosing Sendspin speakers with one Sendspin speaker and nothing ticked still ticks that
+speaker, not the Mac's own: the Mac's speakers alone are the This Mac row.
+
 ## Music Assistant, or another Sendspin server
 
 The Mac is a Sendspin source for one server at a time, usually Music Assistant. The row is

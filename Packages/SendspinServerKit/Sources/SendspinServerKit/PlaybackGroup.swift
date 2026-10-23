@@ -1,5 +1,14 @@
 import Foundation
 
+/// Audio output in a group that isn't a Sendspin player, such as this Mac's own speakers. It
+/// gets the group's audio with each block's play time on the server clock, and keeps it in
+/// sync with the players itself.
+public protocol GroupOutput: AnyObject, Sendable {
+    func play(_ pcm: PCMBuffer, timestampUs: Int64)
+    /// The group stopped (idle, or its lead changed): drop what's queued.
+    func stop()
+}
+
 /// A set of players that play the same live audio in sync.
 ///
 /// Every chunk is scheduled at its capture time plus a fixed lead. Capture time comes
@@ -17,6 +26,7 @@ public actor PlaybackGroup {
     private var bitDepthForRate: (sampleRate: Int, bitDepth: Int)?
 
     private var sessions: [URL: (session: PlayerSession, task: Task<Void, Never>)] = [:]
+    private var outputs: [ObjectIdentifier: any GroupOutput] = [:]
     private var playing = false
     private var lateChunks = 0
 
@@ -66,6 +76,15 @@ public actor PlaybackGroup {
         await entry.session.shutdown()
     }
 
+    public func add(output: any GroupOutput) {
+        outputs[ObjectIdentifier(output)] = output
+    }
+
+    public func remove(output: any GroupOutput) {
+        outputs[ObjectIdentifier(output)]?.stop()
+        outputs[ObjectIdentifier(output)] = nil
+    }
+
     /// Fan one captured block out to all players.
     /// - Parameter captureTimeUs: server-clock time of the block's first sample.
     public func push(_ pcm: PCMBuffer, captureTimeUs: Int64) async {
@@ -81,6 +100,9 @@ public actor PlaybackGroup {
             if lateChunks.isMultiple(of: 50) { Log.warning("dropped \(lateChunks) late chunks") }
             return
         }
+        for output in outputs.values {
+            output.play(pcm, timestampUs: timestampUs)
+        }
         for (session, _) in sessions.values {
             await session.deliver(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth)
         }
@@ -93,11 +115,17 @@ public actor PlaybackGroup {
         for (session, _) in sessions.values {
             await session.setPlaying(playing)
         }
+        if !playing {
+            for output in outputs.values { output.stop() }
+        }
     }
 
     public func shutdown() async {
         for url in Array(sessions.keys) {
             await remove(url: url)
+        }
+        for output in Array(outputs.values) {
+            remove(output: output)
         }
     }
 }

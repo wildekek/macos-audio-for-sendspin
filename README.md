@@ -216,6 +216,17 @@ Release/build-dmg.sh
   (`sendspin-bridge --measure-latency` reports 0.00 ms), so the driver reports exactly the
   buffer as output latency, and video players keep lip sync.
   Verified acoustically on an HA Connect AUX-2 (`sendspin-bridge --measure-sync`): +0.5 ms.
+- **The Mac's own speakers.** Ticked in the speaker list, they play along in sync. They're
+  no Sendspin player: the app plays the group's audio on them itself (`LocalPlayer`). The server
+  clock is host time, as are CoreAudio's output timestamps, so there's no clock to synchronize:
+  each frame is heard at its render timestamp plus the output stream's latency. Not the full
+  latency apps are told (device latency + safety offset + stream): measured acoustically on a
+  MacBook Pro, that played 2.0 ms ahead of an HA Connect AUX-2; the stream latency alone puts
+  them 0.3 ms apart, the sound's way to the mic. The speakers'
+  own clock drifts from host time (about 5 ppm on a MacBook Pro), which single frames dropped or
+  repeated follow, as the player role's suggested strategy does: within a 100 µs dead band, at
+  most 0.5% of the frames, with a one-shot resync at the start, after an underrun, and past
+  1 ms. `sendspin-bridge --local "MacBook Pro Speakers"` does the same from the command line.
   Safari honours it. Firefox reads the latency but doesn't delay video by it, as with
   Bluetooth headphones. Use Safari, a smaller buffer, or a video-delay extension there.
 - **Format.** The device runs at 44.1–192 kHz in 32-bit float. Settings offers the

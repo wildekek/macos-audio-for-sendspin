@@ -1,3 +1,4 @@
+import AudioToolbox
 import CoreAudio
 import Foundation
 import Observation
@@ -93,7 +94,8 @@ final class BridgeController {
     var players: [Player] {
         var names = Set(discovered.map(\.instanceName)).union(selected)
         names.formUnion(statuses.keys)
-        return names.sorted().map { name in
+        names.remove(Self.localKey)
+        let speakers = names.sorted().map { name in
             let discovery = discovered.first { $0.instanceName == name }
             return Player(instanceName: name,
                           // The name it told us, also while it's away: mDNS often has only an ID.
@@ -104,6 +106,13 @@ final class BridgeController {
                           // A player that connected to us is "discovered" while it's connected.
                           isDiscovered: discovery != nil || (Self.isIncoming(name) && sessions[name] != nil))
         }
+        // The Mac's own speakers come first, as in AirPlay's list, once there's a Sendspin
+        // speaker to play along with (or they're ticked).
+        guard !speakers.isEmpty || selected.contains(Self.localKey) else { return speakers }
+        let local = Player(instanceName: Self.localKey, name: localDevice?.name ?? "This Mac",
+                           isSelected: selected.contains(Self.localKey), status: statuses[Self.localKey],
+                           isDiscovered: localDevice != nil)
+        return [local] + speakers
     }
 
     var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
@@ -224,6 +233,11 @@ final class BridgeController {
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
     private var sessions: [String: PlayerSession] = [:]
+    /// The Mac's own output, while there is one: in the speaker list as `localKey`.
+    private var localDevice: AudioDevice?
+    /// Plays on it while it's ticked, in sync with the Sendspin speakers.
+    private var localPlayer: LocalPlayer?
+    private var localObservations: [PropertyObservation] = []
     private var capture: DriverCapture?
     private var isStartingCapture = false
     private var formatSwitch = FormatSwitch()
@@ -466,6 +480,7 @@ final class BridgeController {
         for player in discovered where selected.contains(player.instanceName) && sessions[player.instanceName] == nil {
             addSession(for: player)
         }
+        reconcileLocal()
         updateCapture()
     }
 
@@ -488,6 +503,72 @@ final class BridgeController {
         guard let session = sessions.removeValue(forKey: name) else { return }
         statuses[name] = nil
         Task { await group.remove(url: session.url) }
+    }
+
+    // MARK: The Mac's own speakers
+
+    /// The Mac's own speakers in the speaker list. They're no Sendspin player: `LocalPlayer`
+    /// plays the group's audio on them directly, on the same clock.
+    static let localKey = "local:built-in"
+
+    /// The Mac's own output to play on: the one it used before Sendspin if that's built in
+    /// (the speakers, or on Apple silicon the headphones), or else its speakers.
+    nonisolated private static func localOutput(previousUID: String?) -> AudioDevice? {
+        let outputs = AudioDevice.builtInOutputs()
+        return outputs.first { $0.uid == previousUID } ?? outputs.first
+    }
+
+    private func refreshLocalDevice() {
+        let device = Self.localOutput(previousUID: defaults.string(forKey: "previousOutputUID"))
+        guard device != localDevice else { return }
+        localDevice = device
+        // Its volume can change elsewhere too, e.g. in Audio MIDI Setup.
+        localObservations = device.map { device in
+            [device.observe(kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                            scope: kAudioObjectPropertyScopeOutput) { [weak self] in
+                Task { @MainActor in self?.updateLocalStatus() }
+            }]
+        } ?? []
+        reconcileLocal()
+        updateCapture()
+    }
+
+    /// A player on the Mac's output while it's ticked; a new one when the output changed.
+    private func reconcileLocal() {
+        let wanted = selected.contains(Self.localKey) ? localDevice : nil
+        guard localPlayer?.device != wanted else { return }
+        if let old = localPlayer {
+            localPlayer = nil
+            Task.detached { [group] in
+                await group.remove(output: old)
+                old.shutdown()
+            }
+        }
+        if let wanted {
+            let player = LocalPlayer(device: wanted)
+            player.isMuted = deviceMuted
+            localPlayer = player
+            Task { await group.add(output: player) }
+        }
+        updateLocalStatus()
+    }
+
+    /// Its status in the list: always connected, with the device's own volume.
+    private func updateLocalStatus() {
+        guard let localPlayer else {
+            statuses[Self.localKey] = nil
+            return
+        }
+        var status = PlayerStatus()
+        status.connection = .connected
+        status.name = localPlayer.device.name
+        status.volume = localPlayer.volume
+        status.canSetVolume = status.volume != nil
+        status.canMute = true
+        status.muted = localPlayer.isMuted
+        guard status != statuses[Self.localKey] else { return }
+        statuses[Self.localKey] = status
+        syncDeviceToPlayers()
     }
 
     // MARK: Music Assistant
@@ -525,7 +606,8 @@ final class BridgeController {
     /// Sendspin speakers: the Mac's output becomes Sendspin, now or once a speaker connects.
     /// With one speaker and nothing ticked, choosing Sendspin speakers means that one: it's ticked.
     func chooseSpeakers() {
-        if !hasSelectedPlayers, players.count == 1, let only = players.first {
+        let speakers = players.filter { $0.instanceName != Self.localKey }
+        if !hasSelectedPlayers, speakers.count == 1, let only = speakers.first {
             setSelected(only.instanceName, true)
         }
         setDestination(.speakers)
@@ -670,7 +752,8 @@ final class BridgeController {
     /// Speakers to play to, or Music Assistant: as the destination, or with its stream open
     /// (it keeps getting silence, so the stream lives on for when it's chosen again).
     private var isCaptureWanted: Bool {
-        return destination == .speakers ? !sessions.isEmpty || sourceStatus.streaming : musicAssistantReady
+        return destination == .speakers ? !sessions.isEmpty || localPlayer != nil || sourceStatus.streaming
+            : musicAssistantReady
     }
 
     private func updateCapture() {
@@ -835,6 +918,7 @@ final class BridgeController {
 
     private func refreshDefaultOutput() {
         apply(Self.readOutput(previousUID: defaults.string(forKey: "previousOutputUID")))
+        refreshLocalDevice()
     }
 
     /// What the Mac's output is, and where leaving Sendspin would go.
@@ -878,7 +962,7 @@ final class BridgeController {
         let target = Int((volume * 100).rounded())
         guard GroupVolume.level(current) != target else { return }
         for (name, level) in GroupVolume.redistribute(current, to: target) where current[name] != level {
-            Task { await sessions[name]?.setVolume(level) }
+            setPlayerVolume(name, level)
         }
     }
 
@@ -890,6 +974,8 @@ final class BridgeController {
         for session in targets {
             Task { await session.setMuted(muted) }
         }
+        localPlayer?.isMuted = muted
+        updateLocalStatus()
     }
 
     /// A player's own volume changed (its knob, Music Assistant, or our command):
@@ -920,7 +1006,12 @@ final class BridgeController {
     // MARK: Menu actions
 
     func setPlayerVolume(_ instanceName: String, _ volume: Int) {
-        Task { await sessions[instanceName]?.setVolume(volume) }
+        if instanceName == Self.localKey, let localPlayer {
+            localPlayer.volume = volume
+            updateLocalStatus()
+        } else {
+            Task { await sessions[instanceName]?.setVolume(volume) }
+        }
     }
 
     func selectFormat(_ format: StreamFormat) {

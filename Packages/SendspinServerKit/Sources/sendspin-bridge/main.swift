@@ -4,6 +4,7 @@ import SendspinServerKit
 
 let usage = """
     usage: sendspin-bridge [options] <player>...
+           sendspin-bridge [options] --local NAME [<player>...]
            sendspin-bridge --list
            sendspin-bridge --measure-latency | --check-loopback | --check-rate-switch
            sendspin-bridge --cycle-formats RATE/BITS,... [--every S] <player>...
@@ -28,9 +29,11 @@ let usage = """
       --measure-sync    measure lip sync acoustically: play chirps into the Sendspin device
                         (the app must be streaming to the speakers) and listen with a mic
       --mic NAME        microphone for --measure-sync (default: the default input)
-      --output NAME     play the chirps on this device instead of Sendspin (validates the
-                        probe itself: e.g. "MacBook Pro Speakers" should give ~0 ms error)
+      --output NAME     play the chirps on this device instead of Sendspin: e.g. "MacBook Pro
+                        Speakers" gives -1.9 ms, as they report 2 ms more latency than they have
       --device NAME     input device name or substring (default: Sendspin)
+      --local NAME      also play on this Mac output (e.g. "MacBook Pro Speakers"), in sync
+                        with the players, as the app does with the Mac's own speakers
       --tone            send a 440 Hz test tone (-20 dBFS) instead of capturing
       --lead-ms N       playback lead / player buffer in ms (default: 1000)
       --name NAME       server name shown to players (default: Sendspin Bridge)
@@ -48,6 +51,7 @@ struct Options {
     var source = false
     var microphone: String?
     var output: String?
+    var local: String?
     var device = "Sendspin"
     var tone = false
     var leadMs = 1000
@@ -84,6 +88,7 @@ func parseOptions() -> Options {
         case "--mic": options.microphone = value(for: arg)
         case "--output": options.output = value(for: arg)
         case "--device": options.device = value(for: arg)
+        case "--local": options.local = value(for: arg)
         case "--tone": options.tone = true
         case "--lead-ms":
             guard let ms = Int(value(for: arg)), ms > 0 else { fail("--lead-ms needs a positive number") }
@@ -96,7 +101,7 @@ func parseOptions() -> Options {
             options.players.append(arg)
         }
     }
-    if !options.list && !options.measureLatency && !options.checkLoopback && !options.checkRateSwitch && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
+    if !options.list && !options.measureLatency && !options.checkLoopback && !options.checkRateSwitch && !options.measureSync && !options.source && options.local == nil && options.players.isEmpty { fail("give at least one player (use --list)") }
     return options
 }
 
@@ -232,6 +237,15 @@ func run() async {
         Log.info("Connecting to \(url.absoluteString)")
         await group.add(session)
     }
+    var localPlayer: LocalPlayer?
+    if let local = options.local {
+        do {
+            localPlayer = LocalPlayer(device: try AudioDevice.output(matching: local))
+        } catch {
+            fail("\(error)")
+        }
+        await group.add(output: localPlayer!)
+    }
 
     let pump = Task {
         for await block in source {
@@ -245,6 +259,7 @@ func run() async {
     pump.cancel()
     stopCapture()
     await group.shutdown()
+    localPlayer?.shutdown()
     try? await Task.sleep(for: .milliseconds(200))
 }
 
