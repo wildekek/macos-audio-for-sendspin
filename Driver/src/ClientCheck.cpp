@@ -3,12 +3,12 @@
 
 #include "ClientCheck.hpp"
 
-#include <libproc.h>
 #include <os/log.h>
 
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <optional>
 
 // Asks the kernel about a process's code signature. Not in the SDK headers (it's in xnu's
 // sys/codesign.h), but exported by libSystem. The Security framework's own checks can't
@@ -21,6 +21,7 @@ namespace sendspin {
 namespace {
 
 constexpr unsigned int CsOpsStatus = 0;
+constexpr unsigned int CsOpsCDHash = 5;
 constexpr unsigned int CsOpsIdentity = 11;
 constexpr unsigned int CsOpsTeamID = 14;
 constexpr uint32_t CsValid = 0x00000001;
@@ -39,31 +40,44 @@ os_log_t Log()
     return log;
 }
 
-// The team that signed this driver; empty when it's signed ad hoc.
-std::string TeamID(CFBundleRef driverBundle)
+// Most verdicts kept; a client's checked again once they're cleared.
+constexpr size_t MaxVerdicts = 64;
+
+// How this driver is signed. Only its own signature can say ad hoc: anything that can't be
+// read leaves both unset, and nobody gets the audio.
+ClientCheck::Signature DriverSignature(CFBundleRef driverBundle)
 {
     CFURLRef url = driverBundle ? CFBundleCopyBundleURL(driverBundle) : nullptr;
     if (!url) {
-        return "";
+        return {};
     }
     SecStaticCodeRef code = nullptr;
     OSStatus status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
     CFRelease(url);
     if (status != errSecSuccess) {
         os_log_error(Log(), "can't read the driver's signature (%d)", int(status));
-        return "";
+        return {};
     }
     CFDictionaryRef info = nullptr;
     status = SecCodeCopySigningInformation(code, kSecCSSigningInformation, &info);
     CFRelease(code);
     if (status != errSecSuccess || !info) {
-        return "";
+        os_log_error(Log(), "can't read the driver's signing information (%d)", int(status));
+        return {};
     }
+    ClientCheck::Signature signature;
     char buffer[64] = {};
     auto team = static_cast<CFStringRef>(CFDictionaryGetValue(info, kSecCodeInfoTeamIdentifier));
-    const bool ok = team && CFStringGetCString(team, buffer, sizeof(buffer), kCFStringEncodingUTF8);
+    if (team && CFStringGetCString(team, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+        signature.team = buffer;
+    }
+    uint32_t flags = 0;
+    auto flagsNumber = static_cast<CFNumberRef>(CFDictionaryGetValue(info, kSecCodeInfoFlags));
+    if (signature.team.empty() && flagsNumber && CFNumberGetValue(flagsNumber, kCFNumberSInt32Type, &flags)) {
+        signature.adHoc = flags & kSecCodeSignatureAdhoc;
+    }
     CFRelease(info);
-    return ok ? buffer : "";
+    return signature;
 }
 
 // A string the kernel returns for csops: an 8-byte blob header, then the text.
@@ -81,33 +95,36 @@ std::string KernelString(pid_t pid, unsigned int op)
     return blob.text;
 }
 
-// When the process started, or 0 if that can't be read.
-uint64_t StartTime(pid_t pid)
+// The hash of the process's code directory, or nothing if the kernel doesn't say.
+std::optional<ClientCheck::CodeHash> CodeHashOf(pid_t pid)
 {
-    proc_bsdinfo info = {};
-    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)) {
-        return 0;
+    ClientCheck::CodeHash hash = {};
+    if (csops(pid, CsOpsCDHash, hash.data(), hash.size()) != 0) {
+        return std::nullopt;
     }
-    return info.pbi_start_tvsec * 1000000 + info.pbi_start_tvusec;
+    return hash;
 }
 
 } // namespace
 
 ClientCheck::ClientCheck(CFBundleRef driverBundle)
-    : team_(TeamID(driverBundle))
+    : driver_(DriverSignature(driverBundle))
 {
-    if (team_.empty()) {
+    if (!driver_.team.empty()) {
+        os_log(Log(), "audio goes to clients signed by team %{public}s", driver_.team.c_str());
+    } else if (driver_.adHoc) {
         os_log(Log(), "ad-hoc driver: audio goes to clients by identifier only");
     } else {
-        os_log(Log(), "audio goes to clients signed by team %{public}s", team_.c_str());
+        os_log_error(Log(), "unknown driver signature: audio goes to nobody");
     }
 }
 
 bool ClientCheck::Allows(pid_t pid)
 {
-    const uint64_t startTime = StartTime(pid);
+    // Without its code hash a reused PID can't be told apart, so such a verdict isn't kept.
+    const auto codeHash = CodeHashOf(pid);
     std::lock_guard<std::mutex> lock(mutex_);
-    if (auto it = verdicts_.find(pid); it != verdicts_.end() && it->second.startTime == startTime) {
+    if (auto it = verdicts_.find(pid); codeHash && it != verdicts_.end() && it->second.codeHash == *codeHash) {
         return it->second.allowed;
     }
 
@@ -118,9 +135,11 @@ bool ClientCheck::Allows(pid_t pid)
     bool allowed = valid
         && std::any_of(std::begin(AllowedIdentifiers), std::end(AllowedIdentifiers),
             [&](const char* allowedIdentifier) { return identifier == allowedIdentifier; });
-    if (!team_.empty()) {
+    if (!driver_.team.empty()) {
         // An ad-hoc signature can claim any identifier; a team's certificate can't be faked.
-        allowed = allowed && team == team_ && !(flags & (CsAdhoc | CsLinkerSigned));
+        allowed = allowed && team == driver_.team && !(flags & (CsAdhoc | CsLinkerSigned));
+    } else if (!driver_.adHoc) {
+        allowed = false;
     }
 
     if (allowed) {
@@ -129,7 +148,12 @@ bool ClientCheck::Allows(pid_t pid)
         os_log_error(Log(), "audio refused to %{public}s (pid %d, team %{public}s, flags 0x%x)",
             identifier.c_str(), int(pid), team.c_str(), flags);
     }
-    verdicts_[pid] = Verdict{startTime, allowed};
+    if (codeHash) {
+        if (verdicts_.size() >= MaxVerdicts) {
+            verdicts_.clear();
+        }
+        verdicts_[pid] = Verdict{*codeHash, allowed};
+    }
     return allowed;
 }
 
