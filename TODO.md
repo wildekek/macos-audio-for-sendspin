@@ -25,8 +25,9 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 ## The app
 
 3. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
-   it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
-   is slow (for minutes after many restarts without a reboot), that freezes the menu.
+   it; reading the device after device, volume and format changes doesn't yet, and neither does
+   setting the device's sample rate. When coreaudiod is slow (for minutes after many restarts
+   without a reboot), that freezes the menu.
 4. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
 5. **More under Music Assistant.** Show and control what Music Assistant does with the
@@ -54,6 +55,8 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 8. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
 9. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+   The interop test player can offer only 44.1 kHz, which makes it a check in
+   `Tests/device-tests.sh`.
 10. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
     a per-speaker delay for external amplifiers).
 
@@ -65,9 +68,20 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
   list, but confirm with the Open Home Foundation (the logo is already gone from the icons).
 - Release builds print a harmless "failed with exit code 0" line from an Xcode build step.
 - "Move to Applications" now copies in the background ("Moving…"); not yet tested by hand.
+- Idle sleep: while a speaker is ticked, capture runs, its silent output keeps the device
+  running, and coreaudiod holds a PreventUserIdleSystemSleep assertion all along. Check
+  whether the Mac still sleeps by itself with the app open (the input capture of 0.6 likely
+  did the same), and whether capture should rest while nothing plays.
+- `Driver/install.sh` without a terminal (the admin dialog) fails on a driver path with spaces
+  or parentheses, such as the dev app's: the `printf %q` escapes aren't valid in an AppleScript
+  string.
+- CI (`.github/workflows/test.yml`) hasn't run yet; the device tests are local only. Find out
+  whether a GitHub macOS runner can install the driver and restart coreaudiod.
 
 Done: the signed, notarized disk image with a welcome window that installs the driver (each
-`v*` tag builds a draft release), the AirPlay-style speaker list, FLAC, Sendspin 1 over Noise,
+`v*` tag builds a draft release), capture straight from the driver with no microphone
+permission, unit tests in CI, device and interop tests, the AirPlay-style speaker list, FLAC,
+Sendspin 1 over Noise,
 client-initiated connections (speakers that connect to us wait, unticked, until allowed), a
 notice when Local Network access is denied, opening at login, speakers that leave the
 group (unavailable or `client/leave`) staying out until the user ticks them again, and playing

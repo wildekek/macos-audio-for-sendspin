@@ -90,7 +90,7 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
 
 | Path | What |
 | --- | --- |
-| `Driver/` | Audio Server plug-in on libASPL: the loopback device, with volume/mute and a reported latency. |
+| `Driver/` | Audio Server plug-in on libASPL: the output-only Sendspin device, which hands what's played to it to the app, with volume/mute and a reported latency. |
 | `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`); CoreAudio capture and device control (`SendspinAudio`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). |
 | `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
 | `Release/` | Builds the disk image; signs and notarizes it for releases. |
@@ -116,7 +116,9 @@ coreaudiod busy for minutes (driven by AirPlayXPCHelper). A reboot clears it.
 
 Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`),
 with their own settings and permissions, so they don't mix with an installed release. Both use
-the same driver; don't run them at the same time. A dev build run from the build folder can't
+the same driver; don't run them at the same time. A build carrying another driver version offers
+to install its own (an older release would put its old driver back): decline it there. A dev
+build run from the build folder can't
 advertise itself to speakers: mDNSResponder can't read its Info.plist inside your home folder,
 and refuses the announcement (`NoAuth`). To test client-initiated connections, copy the dev
 app to /Applications and run it from there.
@@ -175,8 +177,9 @@ One-time setup, with a paid Apple Developer membership:
 
 `Release/build-dmg.sh` builds `build/release/macOS-Audio-for-Sendspin-<version>.dmg`; it needs
 [create-dmg](https://github.com/create-dmg/create-dmg) (`brew install create-dmg`). Without
-signing variables the app is signed ad hoc: fine on your own Mac, not for distribution. To sign
-and notarize locally, with the certificate from step 1 in your keychain and a notarytool profile
+signing variables the app is signed ad hoc: fine on your own Mac, not for distribution.
+`DEVELOPER_ID_APP` alone signs it without notarizing, which is enough on your own Mac too. To sign
+and notarize, with the certificate from step 1 in your keychain and a notarytool profile
 (`xcrun notarytool store-credentials notary --key … --key-id … --issuer …`):
 
 ```sh
@@ -191,7 +194,7 @@ Release/build-dmg.sh
   (`KKpsk2`, ChaChaPoly or AES-GCM, whichever the speaker picks). The app identifies itself
   with a Curve25519 key kept in the Keychain. Speakers are unpaired: ticking one in the menu
   allows it, bound to the identity it presents then, so another device using its name gets
-  no audio until you allow it again (untick and tick). Both ways of connecting work: the app
+  no audio until you allow it again (click it, or untick and tick). Both ways of connecting work: the app
   dials speakers that advertise `_sendspin._tcp`, and advertises itself as
   `_sendspin-server._tcp` (port 8927, or a free one) for speakers that look for a server. Those
   appear unticked and wait, with no activities, until you tick them; unticking one closes its
@@ -204,9 +207,9 @@ Release/build-dmg.sh
 - **Device.** *Sendspin* is an output only, like a speaker: the app reads what's played to it
   straight from the driver, sample-exact, so it needs no microphone permission. The driver
   hands that audio only to this app (and `sendspin-bridge`), going by the kernel's record of
-  their code signatures. Its volume and mute controls aren't applied to the audio: the app forwards them to the
-  speakers, so the volume keys and Control Center control the speakers (with Sendspin
-  speakers chosen; with Music Assistant, its own volume applies).
+  their code signatures. Its volume and mute controls aren't applied to the audio: the app
+  forwards them to the speakers, so the volume keys and Control Center control the speakers
+  (with Sendspin speakers chosen; with Music Assistant, its own volume applies).
 - **Timing.** Each captured block is scheduled at its capture host time plus the *speaker
   buffer* (300 ms / 600 ms / 1 s), or more when a connected speaker asks for it
   (its `min_buffer_ms` plus `output_delay_ms`; Settings then shows why). Capture timestamps equal the output timestamps apps see
@@ -217,7 +220,8 @@ Release/build-dmg.sh
   Bluetooth headphones. Use Safari, a smaller buffer, or a video-delay extension there.
 - **Format.** The device runs at 44.1–192 kHz in 32-bit float. Settings offers the
   sample rate and bit depth (16/24) combinations the selected speakers support; picking
-  one switches the device rate and the stream. A speaker that can't take the active format
+  one switches the device rate and the stream, with one restart of each: a rate switch drops
+  about 150 ms of audio, a bit-depth switch nothing. A speaker that can't take the active format
   gets the closest one it supports: resampled (96 → 48 kHz, 88.2 → 44.1 kHz) and/or at its
   own bit depth, with TPDF dither for 16-bit (only on samples that aren't 16-bit values
   already, so 16-bit sources and silence pass bit-perfect). Each speaker gets PCM or FLAC
@@ -249,7 +253,7 @@ Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….d
 
 Implements Sendspin 1 (release candidate): as a server with unpaired access, and as a client
 with the source role, paired by dynamic pairing code (or the pairing token). Tested against aiosendspin 10.2.1, Music
-Assistant 2.10.7 and an HA Connect AUX-2 (firmware 2026.10.2). The pre-1.0 unencrypted protocol
+Assistant 2.10.7 and an HA Connect AUX-2 (firmware 2026.10.3). The pre-1.0 unencrypted protocol
 isn't supported. Speakers that only admit paired servers show "Needs pairing". Not yet done:
 pairing with speakers (the server side), Opus, and a test of 44.1 kHz-only speakers (the
 resampler should already handle them).
