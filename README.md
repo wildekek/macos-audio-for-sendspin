@@ -17,7 +17,7 @@ choose speakers and control their volume:
 As in Apple's AirPlay picker, the round check beside a speaker adds it to what plays or takes it
 out, and clicking a name plays there only.
 
-<img src="docs/row-states.png" width="464" alt="Every state of a speaker in the menu. Plays: a filled blue check and a volume slider. Can join: an empty check; the name plays there only. Joining: a spinner in place of the check, which cancels it. Unavailable: a grey check and a warning by the status. In use elsewhere: an empty check, which takes it back. The Mac alone: played directly, its check stays. AirPlay: not groupable, no check, a blue icon while it plays. While AirPlay or Music Assistant plays: no checks; a name plays there. Music Assistant: not groupable, below the divider, a blue icon while it plays.">
+<img src="docs/row-states.png" width="464" alt="Every state of a row in the menu, drawn by the app's own view. Plays: a filled blue check and a volume slider. Can join: an empty check; the name plays there only. Joining: a spinner in place of the check, which cancels it. Unavailable: a grey check, and a warning by the status. In use elsewhere: an empty check, which takes it back. The Mac alone: played directly, its check stays. AirPlay: not groupable, no check, a blue icon while it plays. While AirPlay or a server plays: no checks; a name plays there. A server: not groupable, below the divider, a blue icon while it plays. A server, unavailable: with the warning, chosen or not.">
 
 > Sendspin is a protocol of the Open Home Foundation;
 > this project is not affiliated with or endorsed by it.
@@ -96,10 +96,10 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
 | Path | What |
 | --- | --- |
 | `Driver/` | Audio Server plug-in on libASPL: the output-only Sendspin device, which hands what's played to it to the app, with volume/mute and a reported latency. |
-| `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`); CoreAudio capture and device control (`SendspinAudio`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). |
+| `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`, also the menu's rules: `SpeakerMenu`); CoreAudio capture and device control (`SendspinAudio`); the menu's rows in SwiftUI (`SendspinMenuUI`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). Its `Tests/` holds the unit tests, which `swift test` runs anywhere, CI included: the menu's rules, one test each (`SpeakerMenuTests`), and snapshots of every row state (`RowSnapshotTests`, on a Mac only). |
 | `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
 | `Release/` | Builds the disk image; signs and notarizes it for releases. |
-| `Tests/` | Tests that need the installed driver (`device-tests.sh`), and a test player built on aiosendspin (`interop/`). |
+| `Tests/` | Tests of the whole system, run by hand on a Mac: the ones that need the installed driver (`device-tests.sh`), and a test player built on aiosendspin (`interop/`). The Swift unit tests are the package's: SwiftPM keeps a test target inside its package. |
 | `docs/menu-states.md` | What the menu shows in each situation, what every state means, and the rules behind them. Keep it in step with the menu. |
 
 ## Build and run

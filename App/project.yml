@@ -28,6 +28,8 @@ targets:
         product: SendspinServerKit
       - package: SendspinServerKit
         product: SendspinAudio
+      - package: SendspinServerKit
+        product: SendspinMenuUI
     # The app carries the audio driver and installs it itself (see DriverInstaller). This runs
     # before Xcode signs the app, so the app's signature covers the driver too.
     postBuildScripts:

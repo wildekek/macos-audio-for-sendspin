@@ -22,3 +22,6 @@ App/Local.xcconfig
 
 # Release screenshots, before cropping
 /Screenshots/
+
+# Snapshot tests write a differing image beside its recorded one, to compare.
+*.actual.png
