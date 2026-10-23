@@ -93,6 +93,16 @@ public struct AudioDevice: Hashable, Sendable {
 
     public var name: String? { string(kAudioObjectPropertyName) }
     public var uid: String? { string(kAudioDevicePropertyDeviceUID) }
+    /// Its output is headphones, by its first output stream's terminal type: as USB Audio has it
+    /// (0x302, which a Mac's headphone jack reports), or as CoreAudio's own constant.
+    public var isHeadphones: Bool {
+        guard let stream = firstStream(scope: kAudioObjectPropertyScopeOutput),
+              let terminal = AudioDevice(id: stream).scalar(kAudioStreamPropertyTerminalType,
+                                                           kAudioObjectPropertyScopeGlobal, as: UInt32.self)
+        else { return false }
+        return terminal == 0x302 || terminal == kAudioStreamTerminalTypeHeadphones
+    }
+
     public var transportType: UInt32? {
         scalar(kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, as: UInt32.self)
     }
@@ -309,12 +319,16 @@ extension AudioDevice {
     }
 
     private func streamLatencyFrames(scope: AudioObjectPropertyScope) -> UInt32 {
+        guard let stream = firstStream(scope: scope) else { return 0 }
+        return latencyFrames(stream, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal)
+    }
+
+    fileprivate func firstStream(scope: AudioObjectPropertyScope) -> AudioObjectID? {
         var address = Self.address(kAudioDevicePropertyStreams, scope)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size > 0 else { return 0 }
+        guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
         var streams = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &streams) == noErr, let first = streams.first
-        else { return 0 }
-        return latencyFrames(first, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &streams) == noErr else { return nil }
+        return streams.first
     }
 }

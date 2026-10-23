@@ -11,8 +11,8 @@ import SendspinServerKit
 /// timestamp as apps add it for lip sync, and the drift of the output's own clock, which
 /// `PlayoutBuffer` follows. The audio is converted to the output's rate when they differ.
 ///
-/// The output runs only while the group plays. Its volume is the device's own (`volume`);
-/// mute is applied here, so the device is left as the user set it.
+/// The output runs only while the group plays. Its volume is the device's own; mute is applied
+/// here, so the device is left as the user set it.
 public final class LocalPlayer: GroupOutput, @unchecked Sendable {
     public let device: AudioDevice
 
@@ -68,12 +68,6 @@ public final class LocalPlayer: GroupOutput, @unchecked Sendable {
             AudioOutputUnitStop(unit)
             AudioComponentInstanceDispose(unit)
         }
-    }
-
-    /// The device's volume, 0…100; nil if it has none to set.
-    public var volume: Int? {
-        get { device.mainVolume.map { Int(($0 * 100).rounded()) } }
-        set { device.mainVolume = newValue.map { Float32($0) / 100 } }
     }
 
     /// How long after its render timestamp a frame is heard, in µs (`outputLatencyUs(_:)`).

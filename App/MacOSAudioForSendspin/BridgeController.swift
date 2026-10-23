@@ -75,8 +75,6 @@ final class BridgeController {
     /// Discovery found that macOS allows Local Network access (neither is known before then).
     private(set) var localNetworkAllowed = false
     private(set) var isMacOutput = false
-    /// Name of the Mac's current output, e.g. "MacBook Pro Speakers".
-    private(set) var currentOutputName: String?
     private var currentOutputUID: String?
     private(set) var isSwitchingOutput = false
     /// The Sendspin device's volume and mute, linked to the speakers (volume keys, Control Center).
@@ -528,9 +526,27 @@ final class BridgeController {
     nonisolated static let localKey = "local:built-in"
 
     /// The Mac's own output: the one it uses or used last besides Sendspin, while it's there,
-    /// or else its built-in speakers.
+    /// or else its built-in headphones when plugged in, or its speakers.
     nonisolated private static func localOutput(previousUID: String?) -> AudioDevice? {
-        previousUID.flatMap(AudioDevice.find(uid:)) ?? AudioDevice.builtInOutputs().first
+        if let previous = previousUID.flatMap(AudioDevice.find(uid:)) { return previous }
+        let builtIn = AudioDevice.builtInOutputs()
+        return builtIn.first(where: \.isHeadphones) ?? builtIn.first
+    }
+
+    /// Whether the built-in headphones were there at the last look; nil before the first.
+    private var headphonesPluggedIn: Bool?
+
+    /// Plugging in headphones makes them the Mac's own output in place of its built-in
+    /// speakers, as macOS does when it plays on those: also while it plays through Sendspin.
+    private func followPluggedInHeadphones() {
+        let headphones = AudioDevice.builtInOutputs().first(where: \.isHeadphones)
+        defer { headphonesPluggedIn = headphones != nil }
+        guard headphonesPluggedIn == false, let headphones, let uid = headphones.uid,
+              let previous = defaults.string(forKey: "previousOutputUID").flatMap(AudioDevice.find(uid:)),
+              previous.transportType == kAudioDeviceTransportTypeBuiltIn, !previous.isHeadphones
+        else { return }
+        Log.info("Headphones plugged in: the Mac's own output is \(headphones.name ?? uid)")
+        defaults.set(uid, forKey: "previousOutputUID")
     }
 
     /// It can play along with the Sendspin speakers. An AirPlay output can't: macOS only has
@@ -545,6 +561,7 @@ final class BridgeController {
         let name = localDevice.name ?? ""
         switch localDevice.transportType {
         case kAudioDeviceTransportTypeBuiltIn:
+            if localDevice.isHeadphones { return "headphones" }
             return name.localizedCaseInsensitiveContains("MacBook") ? "laptopcomputer" : "desktopcomputer"
         case kAudioDeviceTransportTypeAirPlay:
             if name.localizedCaseInsensitiveContains("HomePod mini") { return "homepodmini.fill" }
@@ -562,6 +579,7 @@ final class BridgeController {
     }
 
     private func refreshLocalDevice() {
+        followPluggedInHeadphones()
         let device = Self.localOutput(previousUID: defaults.string(forKey: "previousOutputUID"))
         guard device != localDevice else { return }
         localDevice = device
@@ -1056,18 +1074,15 @@ final class BridgeController {
     struct OutputState: Sendable {
         var isSendspin: Bool
         var currentUID: String?
-        var currentName: String?
     }
 
     nonisolated private static func readOutput() -> OutputState {
         let output = AudioDevice.defaultOutput
-        return OutputState(isSendspin: output?.uid == AudioDevice.sendspinUID, currentUID: output?.uid,
-                           currentName: output?.name)
+        return OutputState(isSendspin: output?.uid == AudioDevice.sendspinUID, currentUID: output?.uid)
     }
 
     private func apply(_ state: OutputState) {
         isMacOutput = state.isSendspin
-        currentOutputName = state.currentName
         currentOutputUID = state.currentUID
         // Remember the last other output, also when it was chosen in Control Center.
         if let uid = state.currentUID, !state.isSendspin {

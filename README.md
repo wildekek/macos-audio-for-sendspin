@@ -37,19 +37,19 @@ release candidate in October 2026). Sendspin's own site keeps
 
 ### Already running Music Assistant?
 
-Then **Music Assistant** shows up in the menu, next to Sendspin speakers. Set this Mac up in
+Then **Music Assistant** shows up in the menu, below the speakers. Set this Mac up in
 Music Assistant and enter the code the Mac shows, and Music Assistant can play the Mac's
 audio on any of its speakers and groups, AirPlay, Chromecast and Sonos included: choose it in
 the menu, and select this Mac as an input source there. Music Assistant chooses the speakers
-and the volume, and it isn't in sync with the Sendspin speakers in the menu, so the Mac plays
-to one or the other.
+and the volume, and it isn't in sync with the speakers in the menu, so the Mac plays to one or
+the other.
 
 ## Install
 
 Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases),
 open it and drag the app to Applications. On first launch it installs its audio driver (your
-password once) and asks for local network access. Then tick your speakers in the
-menu bar app: that switches the Mac to Sendspin speakers. The current release is a beta.
+password once) and asks for local network access. Then click the + on your speakers in the
+menu bar app: that switches the Mac to Sendspin. The current release is a beta.
 
 ## Why not just AirPlay?
 
@@ -147,7 +147,7 @@ new stream. They switch the device's rate and put it back.
 
 `Tests/interop/test_player.py play` is a player to listen with: it plays on the Mac's speakers
 at any rate, and announces itself on this Mac only, so the app lists it at once and drops it
-when it exits (tick it to play). It needs [uv](https://docs.astral.sh/uv/).
+when it exits (add it to play). It needs [uv](https://docs.astral.sh/uv/).
 
 ## Release
 
@@ -192,14 +192,14 @@ Release/build-dmg.sh
 
 - **Connection.** Sendspin 1: every connection is end-to-end encrypted with Noise
   (`KKpsk2`, ChaChaPoly or AES-GCM, whichever the speaker picks). The app identifies itself
-  with a Curve25519 key kept in the Keychain. Speakers are unpaired: ticking one in the menu
+  with a Curve25519 key kept in the Keychain. Speakers are unpaired: adding one in the menu
   allows it, bound to the identity it presents then, so another device using its name gets
-  no audio until you allow it again (click it, or untick and tick). Both ways of connecting work: the app
+  no audio until you allow it again (click its name, or remove and add it). Both ways of connecting work: the app
   dials speakers that advertise `_sendspin._tcp`, and advertises itself as
   `_sendspin-server._tcp` (port 8927, or a free one) for speakers that look for a server. Those
-  appear unticked and wait, with no activities, until you tick them; unticking one closes its
-  connection, and it comes back unticked when it reconnects. Connections are pinged every 2 s:
-  a speaker that answers nothing for 6 s shows as Unavailable while ticked, and the app keeps
+  appear out of the group and wait, with no activities, until you add them; removing one closes
+  its connection, and it comes back out of the group when it reconnects. Connections are pinged
+  every 2 s: a speaker that answers nothing for 6 s shows as Unavailable while in the group, and the app keeps
   trying until it plays again. The list is what mDNS reports. A speaker that loses power can't
   say goodbye, and mDNS would keep it for up to 75 minutes, so each one is checked every 15 s:
   for one that doesn't answer, mDNSResponder is asked to verify its records, which drops it
@@ -216,19 +216,25 @@ Release/build-dmg.sh
   (`sendspin-bridge --measure-latency` reports 0.00 ms), so the driver reports exactly the
   buffer as output latency, and video players keep lip sync.
   Verified acoustically on an HA Connect AUX-2 (`sendspin-bridge --measure-sync`): +0.5 ms.
-- **The Mac's own speakers.** Ticked in the speaker list, they play along in sync. They're
-  no Sendspin player: the app plays the group's audio on them itself (`LocalPlayer`). The server
+  Safari honours it. Firefox reads the latency but doesn't delay video by it, as with
+  Bluetooth headphones. Use Safari, a smaller buffer, or a video-delay extension there.
+- **The Mac's own output.** Its speakers, AirPods or a USB DAC play along in sync when added
+  next to a Sendspin speaker, and directly, without the buffer's delay, on their own. Playing
+  along, they're no Sendspin player: the app plays the group's audio on them itself
+  (`LocalPlayer`). The server
   clock is host time, as are CoreAudio's output timestamps, so there's no clock to synchronize:
-  each frame is heard at its render timestamp plus the output stream's latency. Not the full
+  on the built-in outputs each frame is heard at its render timestamp plus the stream's latency.
+  Not the full
   latency apps are told (device latency + safety offset + stream): measured acoustically on a
   MacBook Pro, that played 2.0 ms ahead of an HA Connect AUX-2; the stream latency alone puts
   them 0.3 ms apart, the sound's way to the mic. The speakers'
   own clock drifts from host time (about 5 ppm on a MacBook Pro), which single frames dropped or
   repeated follow, as the player role's suggested strategy does: within a 100 µs dead band, at
   most 0.5% of the frames, with a one-shot resync at the start, after an underrun, and past
-  1 ms. `sendspin-bridge --local "MacBook Pro Speakers"` does the same from the command line.
-  Safari honours it. Firefox reads the latency but doesn't delay video by it, as with
-  Bluetooth headphones. Use Safari, a smaller buffer, or a video-delay extension there.
+  1 ms. Other outputs use the full latency macOS reports (AirPods Pro: in sync by ear), and
+  an output that needs more than the buffer raises it. AirPlay can't play along: macOS only has
+  the device while it's the Mac's output. `sendspin-bridge --local "MacBook Pro Speakers"`
+  does the same from the command line.
 - **Format.** The device runs at 44.1–192 kHz in 32-bit float. Settings offers the
   sample rate and bit depth (16/24) combinations the selected speakers support; picking
   one switches the device rate and the stream, with one restart of each: a rate switch drops
