@@ -100,6 +100,18 @@ func parseOptions() -> Options {
     return options
 }
 
+/// The device checks play into the Sendspin device and read it back, or switch its rate:
+/// anything else playing into it would mix in, or switch it too.
+func requireQuietDevice(_ device: AudioDevice) {
+    guard device.isRunningSomewhere else { return }
+    FileHandle.standardError.write(Data("""
+        error: something else is playing into the Sendspin device. Quit macOS Audio for Sendspin, \
+        and pause other audio or switch the Mac's output away from Sendspin.
+
+        """.utf8))
+    exit(2)
+}
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("error: \(message)\n\n\(usage)\n".utf8))
     exit(2)
@@ -154,6 +166,7 @@ func run() async {
     if options.measureLatency {
         do {
             guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+            requireQuietDevice(device)
             print("Measuring on \(device.name ?? "?") (keep other audio off this device)…")
             let result = try await LoopbackLatencyProbe.measure(device: device)
             let ms = result.offsetsUs.map { String(format: "%.2f", Double($0) / 1000) }
@@ -260,7 +273,8 @@ func audioSource(_ options: Options) -> (AsyncStream<CapturedBlock>, @Sendable (
 
 func checkRateSwitch() async {
     guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
-    print("Switching \(device.name ?? "Sendspin") through its sample rates (keep the app quit)…")
+    requireQuietDevice(device)
+    print("Switching \(device.name ?? "Sendspin") through its sample rates…")
     do {
         let result = try await RateSwitchCheck.run(device: device)
         for change in result.switches {
@@ -281,6 +295,7 @@ func checkRateSwitch() async {
 /// check what a switch does to the stream. The first format is in place before players join.
 func cycleFormats(_ formats: [(sampleRate: Int, bitDepth: Int)], urls: [URL], options: Options) async {
     guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+    requireQuietDevice(device)
     let originalRate = device.nominalSampleRate
     let capture: DriverCapture
     do {
@@ -350,6 +365,7 @@ func apply(_ format: (sampleRate: Int, bitDepth: Int), device: AudioDevice, grou
 
 func checkLoopback() async {
     guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+    requireQuietDevice(device)
     print("Playing noise into \(device.name ?? "Sendspin") (keep other audio off this device)…")
     do {
         let result = try await LoopbackCheck.run(device: device)

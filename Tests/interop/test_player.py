@@ -137,11 +137,13 @@ class Output:
         self.queue: collections.deque = collections.deque()
         self.pending = None
         self.stream = None
+        self.rate = None
         self.underruns = 0
 
     def open(self, rate: int):
         import numpy as np
         self.close()
+        self.rate = rate
         self.pending = np.zeros((0, 2), dtype=np.float32)
 
         def stream():
@@ -161,6 +163,7 @@ class Output:
             self.stream.stop()
             self.stream.close()
             self.stream = None
+            self.rate = None
         with self.lock:
             self.queue.clear()
 
@@ -218,6 +221,9 @@ async def play(args):
             pcm = fmt.pcm_format
             if new_format:
                 log(f"format {pcm.sample_rate} Hz {pcm.bit_depth}-bit")
+            # A new rate needs a new output; a new bit depth plays on, so what's queued stays
+            # and any gap heard is the stream's, not this player's.
+            if pcm.sample_rate != output.rate:
                 output.open(pcm.sample_rate)
                 # Start playing when the first chunk is due.
                 delay = max(0, client.compute_play_time(ts) - client.now_us()) / 1e6
