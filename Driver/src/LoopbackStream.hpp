@@ -7,6 +7,7 @@
 #include <aspl/Stream.hpp>
 
 #include <array>
+#include <atomic>
 
 namespace sendspin {
 
@@ -28,6 +29,13 @@ public:
         std::shared_ptr<aspl::Device> device,
         const aspl::StreamParameters& params);
 
+    // Presentation latency, set by the app as a duration (µs) and reported in frames at
+    // whatever rate the device runs: a rate change then needs no latency change of its own.
+    // Every configuration change restarts the device's IO, which is a gap in the audio.
+    UInt32 GetLatency() const override;
+    UInt32 GetPresentationLatencyUs() const;
+    void SetPresentationLatencyUs(UInt32 latencyUs);
+
     AudioStreamBasicDescription GetPhysicalFormat() const override;
     AudioStreamBasicDescription GetVirtualFormat() const override;
     std::vector<AudioStreamRangedDescription> GetAvailablePhysicalFormats() const override;
@@ -43,6 +51,7 @@ private:
 
     const std::weak_ptr<aspl::Device> device_;
     const UInt32 channelCount_;
+    std::atomic<UInt32> presentationLatencyUs_{0};
 };
 
 } // namespace sendspin

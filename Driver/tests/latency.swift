@@ -1,13 +1,13 @@
-// Read or set the Sendspin device's presentation latency (custom property 'sslt'),
+// Read or set the Sendspin device's presentation latency (custom property 'sslu', µs),
 // and show the output latency apps see as a result.
 //
 //   swift Driver/tests/latency.swift            # print
-//   swift Driver/tests/latency.swift 28800      # set to 28800 frames (600 ms at 48 kHz)
+//   swift Driver/tests/latency.swift 600000     # set to 600 ms
 
 import CoreAudio
 import Foundation
 
-let presentationLatency: AudioObjectPropertySelector = 0x7373_6C74 // 'sslt'
+let presentationLatency: AudioObjectPropertySelector = 0x7373_6C75 // 'sslu'
 
 func address(_ selector: AudioObjectPropertySelector,
              _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
@@ -44,12 +44,12 @@ func outputStream(_ device: AudioObjectID) -> AudioObjectID? {
 
 guard let device = sendspinDevice() else { print("Sendspin device not found"); exit(1) }
 
-if let arg = CommandLine.arguments.dropFirst().first, let frames = Int32(arg) {
+if let arg = CommandLine.arguments.dropFirst().first, let microseconds = Int32(arg) {
     var addr = address(presentationLatency)
-    var number: CFPropertyList = frames as CFNumber
+    var number: CFPropertyList = microseconds as CFNumber
     let status = AudioObjectSetPropertyData(device, &addr, 0, nil,
                                             UInt32(MemoryLayout<CFPropertyList>.size), &number)
-    print("set sslt=\(frames): status \(status)")
+    print("set sslu=\(microseconds): status \(status)")
     Thread.sleep(forTimeInterval: 0.3) // the HAL applies latency changes asynchronously
 }
 
@@ -58,10 +58,14 @@ var value: Unmanaged<CFPropertyList>?
 var size = UInt32(MemoryLayout<CFPropertyList>.size)
 let status = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &value)
 let current = (value?.takeRetainedValue() as? NSNumber)?.intValue
-print("sslt: \(current.map(String.init) ?? "unreadable (status \(status))") frames")
+print("sslu: \(current.map(String.init) ?? "unreadable (status \(status))") µs")
 
 let deviceLatency = uint32(device, kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput)
 let safety = uint32(device, kAudioDevicePropertySafetyOffset, kAudioObjectPropertyScopeOutput)
+var rateAddr = address(kAudioDevicePropertyNominalSampleRate)
+var nominalRate: Float64 = 48_000
+var rateSize = UInt32(MemoryLayout<Float64>.size)
+AudioObjectGetPropertyData(device, &rateAddr, 0, nil, &rateSize, &nominalRate)
 let streamLatency = outputStream(device).map { uint32($0, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal) } ?? 0
 print("output: device latency \(deviceLatency), stream latency \(streamLatency), safety offset \(safety) frames"
-    + " → \(Double(deviceLatency + streamLatency + safety) / 48) ms")
+    + " → \(Double(deviceLatency + streamLatency + safety) / nominalRate * 1000) ms at \(Int(nominalRate)) Hz")

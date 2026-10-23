@@ -34,7 +34,5 @@
 	<string>Licensed under the Apache License, Version 2.0</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>macOS Audio for Sendspin captures the audio played to the Sendspin output device, to stream it to your speakers.</string>
 </dict>
 </plist>

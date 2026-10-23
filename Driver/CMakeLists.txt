@@ -14,7 +14,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CODESIGN_ID "-" CACHE STRING "Codesign identity")
 
 set(DRIVER_NAME "MacOSAudioForSendspin")
-set(DRIVER_VERSION "0.2.1")
+set(DRIVER_VERSION "0.3.0")
 set(DRIVER_IDENTIFIER "eu.vooijs.MacOSAudioForSendspin.Driver")
 set(DRIVER_FACTORY_UUID "A82861F5-3A3A-4365-9F25-96577E9B97A8")
 set(DRIVER_ENTRYPOINT "SendspinDriverEntryPoint")
@@ -42,9 +42,11 @@ ExternalProject_Add(libASPL
 
 # A MODULE library is a Mach-O loadable bundle; CMake wraps it in Foo.driver/.
 add_library(${DRIVER_NAME} MODULE
+  src/ClientCheck.cpp
   src/Driver.cpp
   src/LoopbackHandler.cpp
   src/LoopbackStream.cpp
+  src/SendspinDevice.cpp
   resources/SendspinDevice.icns
 )
 # Device icon, the same as the app icon (regenerate with App/make-app-icon.swift), copied into
@@ -58,8 +60,9 @@ target_compile_definitions(${DRIVER_NAME} PRIVATE
 )
 find_library(CORE_FOUNDATION CoreFoundation REQUIRED)
 find_library(CORE_AUDIO CoreAudio REQUIRED)
+find_library(SECURITY Security REQUIRED)
 target_link_libraries(${DRIVER_NAME} PRIVATE
-  ${LIBASPL_PREFIX}/lib/libASPL.a ${CORE_FOUNDATION} ${CORE_AUDIO})
+  ${LIBASPL_PREFIX}/lib/libASPL.a ${CORE_FOUNDATION} ${CORE_AUDIO} ${SECURITY})
 
 set_target_properties(${DRIVER_NAME} PROPERTIES
   OUTPUT_NAME "${DRIVER_NAME}"

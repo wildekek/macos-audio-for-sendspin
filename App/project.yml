@@ -58,19 +58,12 @@ targets:
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.music
         NSHumanReadableCopyright: Licensed under the Apache License, Version 2.0
-        NSMicrophoneUsageDescription: >-
-          macOS Audio for Sendspin captures the audio played to the Sendspin output device,
-          to stream it to your speakers.
         NSLocalNetworkUsageDescription: >-
           macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.
         NSBonjourServices:
           - _sendspin._tcp
           - _sendspin-server._tcp
           - _mass._tcp
-    entitlements:
-      path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
-      properties:
-        com.apple.security.device.audio-input: true
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

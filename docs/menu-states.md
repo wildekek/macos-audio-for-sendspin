@@ -33,7 +33,7 @@ From top to bottom; a notice can sit above them.
 
 | Row | Shown when |
 |---|---|
-| Notice | The driver is missing or outdated, or microphone or Local Network access is denied. One at a time, in that order. Without the driver there are no rows. |
+| Notice | The driver is missing or outdated, or Local Network access is denied. One at a time, in that order. Without the driver there are no rows. |
 | Looking for speakers… | No speaker is found or ticked, Music Assistant isn't connected or paired, and Sendspin speakers isn't chosen. Closes as soon as either is found. Links to [which speakers work](https://www.sendspin-audio.com/#speakers). |
 | Sendspin speakers | A speaker is found or ticked, or Sendspin speakers is chosen. The speakers are listed under it while it's chosen. |
 | Music Assistant (or another server) | A server is connected to this Mac as its source, or paired with it (`offersMusicAssistant`). Named after the server; see below. |

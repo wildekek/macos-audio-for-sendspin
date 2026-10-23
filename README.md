@@ -48,7 +48,7 @@ to one or the other.
 
 Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases),
 open it and drag the app to Applications. On first launch it installs its audio driver (your
-password once) and asks for the microphone and local network. Then tick your speakers in the
+password once) and asks for local network access. Then tick your speakers in the
 menu bar app: that switches the Mac to Sendspin speakers. The current release is a beta.
 
 ## Why not just AirPlay?
@@ -82,7 +82,7 @@ Most Sendspin speakers today play 48 kHz/16-bit; for hi-res you need a hi-res pl
 
 ```
 apps ─► "Sendspin" output device (Driver/, HAL plug-in)
-           │ loopback, same host clock
+           │ read back from the driver, same host clock
            ▼
         menu bar app (App/) ── SendspinServerKit (Packages/) ── ws:// ──► speakers
                                          └── ws:// ──► Music Assistant (as a source)
@@ -108,9 +108,10 @@ open "build/Build/Products/Debug/macOS Audio for Sendspin (Dev).app"
 
 The build compiles the driver with CMake and embeds it in the app
 (`Contents/Library/Audio/Plug-Ins/HAL`). On first launch the welcome window installs it, which
-restarts coreaudiod (audio drops for a moment), and asks for microphone access (to read the
-Sendspin device's loopback) and local network access (to find speakers). When working on the
-driver alone, `Driver/install.sh` installs a CMake build directly.
+restarts coreaudiod (audio drops for a moment), and asks for local network access (to find
+speakers). When working on the driver alone, `Driver/install.sh` installs a CMake build
+directly. Each install restarts coreaudiod; after many without a reboot, macOS can keep
+coreaudiod busy for minutes (driven by AirPlayXPCHelper). A reboot clears it.
 
 Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`),
 with their own settings and permissions, so they don't mix with an installed release. Both use
@@ -182,8 +183,10 @@ Release/build-dmg.sh
   say goodbye, and mDNS would keep it for up to 75 minutes, so each one is checked every 15 s:
   for one that doesn't answer, mDNSResponder is asked to verify its records, which drops it
   when it's really gone. Its announcement when it's back adds it again straight away.
-- **Device.** Audio played to *Sendspin* is looped back to the device's input, sample-exact.
-  Its volume and mute controls aren't applied to the audio: the app forwards them to the
+- **Device.** *Sendspin* is an output only, like a speaker: the app reads what's played to it
+  straight from the driver, sample-exact, so it needs no microphone permission. The driver
+  hands that audio only to this app (and `sendspin-bridge`), going by the kernel's record of
+  their code signatures. Its volume and mute controls aren't applied to the audio: the app forwards them to the
   speakers, so the volume keys and Control Center control the speakers (with Sendspin
   speakers chosen; with Music Assistant, its own volume applies).
 - **Timing.** Each captured block is scheduled at its capture host time plus the *speaker

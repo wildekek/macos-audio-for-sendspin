@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
         welcomeWindow = window
         // A menu bar app never becomes the active app, so after a system prompt (password,
-        // microphone) macOS hands focus back to whatever was active before. While the welcome
+        // local network) macOS hands focus back to whatever was active before. While the welcome
         // window is open the app is a regular one, with a Dock icon, and keeps its focus.
         NSApp.setActivationPolicy(.regular)
         bringWelcomeToFront()

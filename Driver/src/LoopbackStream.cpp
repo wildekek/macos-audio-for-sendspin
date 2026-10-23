@@ -4,6 +4,7 @@
 #include "LoopbackStream.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace sendspin {
 
@@ -58,6 +59,25 @@ std::vector<AudioStreamRangedDescription> LoopbackStream::AvailableFormats() con
         formats.push_back(format);
     }
     return formats;
+}
+
+UInt32 LoopbackStream::GetLatency() const
+{
+    return UInt32(std::lround(presentationLatencyUs_.load() * CurrentSampleRate() / 1e6));
+}
+
+UInt32 LoopbackStream::GetPresentationLatencyUs() const
+{
+    return presentationLatencyUs_.load();
+}
+
+void LoopbackStream::SetPresentationLatencyUs(UInt32 latencyUs)
+{
+    if (latencyUs == presentationLatencyUs_.load()) {
+        return;
+    }
+    // The HAL re-reads the latency in the configuration change.
+    RequestConfigurationChange([this, latencyUs] { presentationLatencyUs_.store(latencyUs); });
 }
 
 std::vector<AudioStreamRangedDescription> LoopbackStream::GetAvailablePhysicalFormats() const

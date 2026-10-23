@@ -4,11 +4,17 @@ import Foundation
 public enum AudioDeviceError: Error, CustomStringConvertible {
     case notFound(String)
     case coreAudio(String, OSStatus)
+    /// The installed Sendspin driver predates reading its audio directly.
+    case driverTooOld
+    /// The Sendspin driver only hands its audio to this app and sendspin-bridge, signed by its team.
+    case driverRefused
 
     public var description: String {
         switch self {
         case .notFound(let what): "no audio device \(what)"
         case .coreAudio(let call, let status): "\(call) failed (OSStatus \(status))"
+        case .driverTooOld: "the installed Sendspin driver is too old to read its audio"
+        case .driverRefused: "the Sendspin driver refused its audio to this program (it must be signed like the driver)"
         }
     }
 }
@@ -23,8 +29,8 @@ public struct AudioDevice: Hashable, Sendable {
 
     /// UID of the device published by the Sendspin driver.
     public static let sendspinUID = "eu.vooijs.MacOSAudioForSendspin.Device"
-    /// Custom driver property 'sslt': output presentation latency in frames.
-    static let presentationLatencySelector: AudioObjectPropertySelector = 0x7373_6C74
+    /// Custom driver property 'sslu': output presentation latency in µs.
+    static let presentationLatencySelector: AudioObjectPropertySelector = 0x7373_6C75
 
     public init(id: AudioObjectID) {
         self.id = id
@@ -113,10 +119,20 @@ public struct AudioDevice: Hashable, Sendable {
             .map { $0 != 0 } ?? false
     }
 
-    /// Ask the Sendspin driver to report this output latency, so apps can keep A/V sync.
-    public func setPresentationLatency(frames: Int) throws {
+    /// The output latency the Sendspin driver was asked to report, in µs.
+    public var presentationLatencyMicroseconds: Int? {
         var address = Self.globalAddress(Self.presentationLatencySelector)
-        var number: CFPropertyList = NSNumber(value: Int32(clamping: frames))
+        var value: Unmanaged<CFPropertyList>?
+        var size = UInt32(MemoryLayout<CFPropertyList>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return (value?.takeRetainedValue() as? NSNumber)?.intValue
+    }
+
+    /// Ask the Sendspin driver to report this output latency, so apps can keep A/V sync. It's a
+    /// duration: the driver reports it in frames at whatever rate the device runs.
+    public func setPresentationLatency(microseconds: Int) throws {
+        var address = Self.globalAddress(Self.presentationLatencySelector)
+        var number: CFPropertyList = NSNumber(value: Int32(clamping: microseconds))
         let status = withUnsafePointer(to: &number) {
             AudioObjectSetPropertyData(id, &address, 0, nil, UInt32(MemoryLayout<CFPropertyList>.size), $0)
         }

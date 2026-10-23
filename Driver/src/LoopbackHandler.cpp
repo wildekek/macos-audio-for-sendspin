@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <thread>
 
 namespace sendspin {
 
@@ -17,8 +18,12 @@ LoopbackHandler::LoopbackHandler(UInt32 channelCount)
 OSStatus LoopbackHandler::OnStartIO()
 {
     // Runs on the control thread before the first IO cycle of a session.
+    writeSeq_.fetch_add(1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
     validStart_.store(0, std::memory_order_relaxed);
-    writeEnd_.store(0, std::memory_order_release);
+    writeEnd_.store(0, std::memory_order_relaxed);
+    session_.fetch_add(1, std::memory_order_relaxed);
+    writeSeq_.fetch_add(1, std::memory_order_release);
     return kAudioHardwareNoError;
 }
 
@@ -52,6 +57,9 @@ void LoopbackHandler::OnWriteMixedOutput(const std::shared_ptr<aspl::Stream>&,
     const int64_t frames = bytesCount / (sizeof(Float32) * channelCount_);
     const int64_t start = static_cast<int64_t>(timestamp);
 
+    writeSeq_.fetch_add(1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+
     int64_t previousEnd = writeEnd_.load(std::memory_order_relaxed);
     if (start < validStart_.load(std::memory_order_relaxed) || start + frames < previousEnd - RingFrames) {
         // The timeline jumped backwards: start a new one at this write.
@@ -69,34 +77,44 @@ void LoopbackHandler::OnWriteMixedOutput(const std::shared_ptr<aspl::Stream>&,
         std::memcpy(slot, samples + i * channelCount_, channelCount_ * sizeof(Float32));
     }
 
-    writeEnd_.store(std::max(previousEnd, start + frames), std::memory_order_release);
+    writeEnd_.store(std::max(previousEnd, start + frames), std::memory_order_relaxed);
+    writeSeq_.fetch_add(1, std::memory_order_release);
 }
 
-void LoopbackHandler::OnReadClientInput(const std::shared_ptr<aspl::Client>&,
-    const std::shared_ptr<aspl::Stream>&,
-    Float64,
-    Float64 timestamp,
-    void* bytes,
-    UInt32 bytesCount)
+LoopbackHandler::Frames LoopbackHandler::ReadFrames(int64_t from, int64_t maxFrames) const
 {
-    auto* samples = static_cast<Float32*>(bytes);
-    const int64_t frames = bytesCount / (sizeof(Float32) * channelCount_);
-    const int64_t start = static_cast<int64_t>(timestamp);
-    const int64_t writeEnd = writeEnd_.load(std::memory_order_acquire);
-    const int64_t oldestValid =
-        std::max(validStart_.load(std::memory_order_relaxed), writeEnd - RingFrames);
+    // A write lasts microseconds, and comes once per IO cycle: a few tries always do.
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const uint64_t seq = writeSeq_.load(std::memory_order_acquire);
+        if (seq & 1) {
+            std::this_thread::yield();
+            continue;
+        }
+        const int64_t writeEnd = writeEnd_.load(std::memory_order_relaxed);
+        const int64_t oldestValid =
+            std::max(validStart_.load(std::memory_order_relaxed), writeEnd - RingFrames);
 
-    for (int64_t i = 0; i < frames; ++i) {
-        const int64_t t = start + i;
-        Float32* out = samples + i * channelCount_;
-        if (t >= writeEnd || t < oldestValid) {
-            std::memset(out, 0, channelCount_ * sizeof(Float32));
-        } else {
-            const Float32* slot =
-                &ring_[static_cast<size_t>(t & (RingFrames - 1)) * channelCount_];
-            std::memcpy(out, slot, channelCount_ * sizeof(Float32));
+        Frames result;
+        result.session = session_.load(std::memory_order_relaxed);
+        result.start = from < 0 ? writeEnd : std::clamp(from, oldestValid, writeEnd);
+        const int64_t end = std::min(writeEnd, result.start + std::min(maxFrames, RingFrames));
+        const int64_t count = std::max<int64_t>(0, end - result.start);
+        result.samples.resize(static_cast<size_t>(count) * channelCount_);
+        for (int64_t i = 0; i < count; ++i) {
+            const int64_t t = result.start + i;
+            const Float32* slot = &ring_[static_cast<size_t>(t & (RingFrames - 1)) * channelCount_];
+            std::memcpy(&result.samples[static_cast<size_t>(i) * channelCount_], slot,
+                channelCount_ * sizeof(Float32));
+        }
+
+        // The copy is only good if no write started meanwhile.
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (writeSeq_.load(std::memory_order_relaxed) == seq) {
+            return result;
         }
     }
+    // Nothing this time; the app reads again shortly.
+    return Frames{std::max<int64_t>(from, 0), session_.load(std::memory_order_relaxed), {}};
 }
 
 } // namespace sendspin

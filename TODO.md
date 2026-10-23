@@ -24,17 +24,15 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 
 ## The app
 
-3. **Capture without the microphone permission.** The welcome window explains it (nothing is
-   recorded), but a capture method that doesn't need it would be one prompt fewer.
-4. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
+3. **No CoreAudio calls on the main thread.** Switching the output and starting capture run off
    it; reading the device after device, volume and format changes doesn't yet. When coreaudiod
    is slow (for minutes after many restarts without a reboot), that freezes the menu.
-5. **README for end users.** Install and the screenshot lead now; the protocol, build and
+4. **README for end users.** Install and the screenshot lead now; the protocol, build and
    `defaults write` details should move to a "For developers" section.
-6. **More under Music Assistant.** Show and control what Music Assistant does with the
+5. **More under Music Assistant.** Show and control what Music Assistant does with the
    Mac's input (where it plays, its volume, stop): a source can't, so this needs Music
    Assistant's own API.
-7. **More than one server.** The spec allows one admitted connection at a time (Multiple
+6. **More than one server.** The spec allows one admitted connection at a time (Multiple
    servers, server-initiated): playback outranks pairing outranks idle, a pairing attempt is
    never displaced, and between two idle servers only the last one that played may take over.
    The displaced server gets `another_server` and SHOULD NOT reconnect by itself, so pairing a
@@ -44,7 +42,7 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    one holds the connection and which were set aside, each with Forget. Also consider the
    spec's MAY: holding one pairing connection alongside a playing one, so pairing another
    server doesn't interrupt what plays.
-8. **Auto-updater.** Today every update is a manual download and drag to Applications, as the
+7. **Auto-updater.** Today every update is a manual download and drag to Applications, as the
    release notes explain. AirPlay never asks for that. Check for new releases and install them
    from the app (Sparkle is the usual choice: an EdDSA-signed appcast, which the release
    workflow would publish next to the disk image). An update that changes the audio driver
@@ -53,10 +51,10 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
 
 ## Audio: recommended or optional
 
-9. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
+8. **The player's preferred format** (`format` in `client/state`, a SHOULD): honour it when we
    can produce it.
-10. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
-11. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
+9. **44.1 kHz-only speakers:** the resampler should already convert 48 → 44.1 kHz; add a test.
+10. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
     a per-speaker delay for external amplifiers).
 
 ## Loose ends

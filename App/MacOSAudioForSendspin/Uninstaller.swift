@@ -13,8 +13,9 @@ enum Uninstaller {
         try? LoginItem.set(false)
         var removed = false
         defer { if wasLoginItem && !removed { try? LoginItem.set(true) } }
-        // Forget the microphone permission (privacy settings are per user, so as the user).
-        // This has to happen while the app still exists: tccutil looks the bundle ID up.
+        // Forget its privacy permissions, such as the microphone access older versions
+        // asked for (privacy settings are per user, so as the user). This has to happen while
+        // the app still exists: tccutil looks the bundle ID up.
         let bundleID = Bundle.main.bundleIdentifier ?? releaseBundleID
         var commands = [
             "{ launchctl asuser \(getuid()) sudo -u \(AdminScript.quoted(NSUserName())) tccutil reset All \(AdminScript.quoted(bundleID)) >/dev/null 2>&1 || true; }",

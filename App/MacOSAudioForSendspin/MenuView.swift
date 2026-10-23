@@ -49,14 +49,6 @@ struct MenuView: View {
                 Button(update ? "Update Driver…" : "Install Driver…") { installDriver() }
                     .disabled(bridge.isInstallingDriver)
             }
-        } else if bridge.microphoneAccess == .denied || bridge.microphoneAccess == .restricted {
-            Notice(text: "Allow microphone access so macOS Audio for Sendspin can capture the Sendspin output.",
-                   systemImage: "mic.slash.fill") {
-                Button("Open Privacy Settings") {
-                    NSWorkspace.shared.open(URL(string:
-                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-                }
-            }
         } else if bridge.localNetworkDenied {
             Notice(text: "Allow Local Network access so the app can find your speakers.",
                    systemImage: "network.slash") {

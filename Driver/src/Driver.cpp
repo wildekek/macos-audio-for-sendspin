@@ -1,12 +1,13 @@
 // Copyright (c) macOS Audio for Sendspin authors
 // Licensed under the Apache License, Version 2.0
 //
-// Audio Server plug-in providing the "Sendspin" output device. Apps play into its
-// output; the macOS Audio for Sendspin app captures the same audio from its input
-// (loopback) and streams it to Sendspin players.
+// Audio Server plug-in providing the "Sendspin" output device. Apps play into it; the
+// macOS Audio for Sendspin app reads the same audio back (device property 'ssau') and
+// streams it to Sendspin players.
 
 #include "LoopbackHandler.hpp"
 #include "LoopbackStream.hpp"
+#include "SendspinDevice.hpp"
 
 #include <aspl/Driver.hpp>
 
@@ -21,15 +22,21 @@ namespace {
 constexpr UInt32 DefaultSampleRate = 48000;
 constexpr UInt32 ChannelCount = 2;
 
-// Custom device property 'sslt': output presentation latency in frames (CFNumber),
-// set by the macOS Audio for Sendspin app to the players' playback lead.
-constexpr AudioObjectPropertySelector PresentationLatencySelector = 'sslt';
-constexpr UInt32 MaxPresentationLatencySeconds = 5;
+// Custom device property 'sslu': output presentation latency in µs (CFNumber), set by the
+// macOS Audio for Sendspin app to the players' playback lead.
+constexpr AudioObjectPropertySelector PresentationLatencySelector = 'sslu';
+constexpr SInt32 MaxPresentationLatencyUs = 5'000'000;
 
-// file:// URL of the device icon inside this plug-in's bundle, wherever it's installed.
+// This plug-in's bundle, wherever it's installed.
+CFBundleRef DriverBundle()
+{
+    return CFBundleGetBundleWithIdentifier(CFSTR("eu.vooijs.MacOSAudioForSendspin.Driver"));
+}
+
+// file:// URL of the device icon inside this plug-in's bundle.
 std::string IconURL()
 {
-    CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("eu.vooijs.MacOSAudioForSendspin.Driver"));
+    CFBundleRef bundle = DriverBundle();
     if (!bundle) {
         return "";
     }
@@ -63,7 +70,8 @@ std::shared_ptr<aspl::Driver> CreateDriver()
     // Alerts and UI sounds shouldn't play through the house speakers.
     deviceParams.CanBeDefaultForSystemSounds = false;
 
-    auto device = std::make_shared<aspl::Device>(context, deviceParams);
+    auto handler = std::make_shared<sendspin::LoopbackHandler>(ChannelCount);
+    auto device = std::make_shared<sendspin::SendspinDevice>(context, deviceParams, handler, DriverBundle());
 
     // The app switches the rate to match the stream it sends to the speakers.
     std::vector<AudioValueRange> rates;
@@ -83,34 +91,27 @@ std::shared_ptr<aspl::Driver> CreateDriver()
 
     // The app sets how far behind the speakers play (their buffer), and we report it
     // as output latency, so video players delay the picture to keep lip sync.
-    std::weak_ptr<aspl::Stream> weakOutput = outputStream;
+    std::weak_ptr<sendspin::LoopbackStream> weakOutput = outputStream;
     device->RegisterCustomProperty(
         PresentationLatencySelector,
         [weakOutput]() -> CFPropertyListRef {
             auto stream = weakOutput.lock();
-            SInt32 frames = stream ? SInt32(stream->GetLatency()) : 0;
-            return CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &frames);
+            SInt32 latencyUs = stream ? SInt32(stream->GetPresentationLatencyUs()) : 0;
+            return CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &latencyUs);
         },
         [weakOutput](CFPropertyListRef value) {
-            SInt32 frames = 0;
+            SInt32 latencyUs = 0;
             if (!value || CFGetTypeID(value) != CFNumberGetTypeID() ||
-                !CFNumberGetValue(CFNumberRef(value), kCFNumberSInt32Type, &frames)) {
+                !CFNumberGetValue(CFNumberRef(value), kCFNumberSInt32Type, &latencyUs)) {
                 return;
             }
-            const Float64 maxRate = sendspin::SupportedSampleRates.back();
-            frames = std::clamp<SInt32>(frames, 0, SInt32(MaxPresentationLatencySeconds * maxRate));
-            if (auto stream = weakOutput.lock(); stream && stream->GetLatency() != UInt32(frames)) {
-                stream->SetLatencyAsync(UInt32(frames));
+            if (auto stream = weakOutput.lock()) {
+                stream->SetPresentationLatencyUs(UInt32(std::clamp<SInt32>(latencyUs, 0, MaxPresentationLatencyUs)));
             }
         });
 
-    // Input carrying the loopback that the app captures.
-    aspl::StreamParameters inputParams;
-    inputParams.Direction = aspl::Direction::Input;
-    inputParams.Format = sendspin::Float32Format(DefaultSampleRate, ChannelCount);
-    device->AddStreamAsync(std::make_shared<sendspin::LoopbackStream>(context, device, inputParams));
-
-    auto handler = std::make_shared<sendspin::LoopbackHandler>(ChannelCount);
+    // No input stream: the app reads the audio through 'ssau', so the device is a
+    // speaker only, and nothing needs microphone access to stream it.
     device->SetControlHandler(handler);
     device->SetIOHandler(handler);
 

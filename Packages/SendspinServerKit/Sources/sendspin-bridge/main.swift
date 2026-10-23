@@ -5,7 +5,7 @@ import SendspinServerKit
 let usage = """
     usage: sendspin-bridge [options] <player>...
            sendspin-bridge --list
-           sendspin-bridge --measure-latency [--device NAME]
+           sendspin-bridge --measure-latency | --check-loopback
            sendspin-bridge --measure-sync [--mic NAME]
            sendspin-bridge --source [--tone] [--device NAME]
 
@@ -14,7 +14,8 @@ let usage = """
 
     options:
       --list            list Sendspin players on the network and exit
-      --measure-latency measure capture vs. output timestamps on the device and exit
+      --measure-latency measure capture vs. output timestamps on the Sendspin device and exit
+      --check-loopback  check that the Sendspin driver hands back its audio sample-exact
       --source          be a Sendspin source instead (source@v1 client): advertise as
                         _sendspin._tcp, print the pairing token for Music Assistant, and
                         stream the audio to the server that pairs and asks for it
@@ -33,6 +34,7 @@ let usage = """
 struct Options {
     var list = false
     var measureLatency = false
+    var checkLoopback = false
     var measureSync = false
     var source = false
     var microphone: String?
@@ -55,6 +57,7 @@ func parseOptions() -> Options {
         switch arg {
         case "--list": options.list = true
         case "--measure-latency": options.measureLatency = true
+        case "--check-loopback": options.checkLoopback = true
         case "--measure-sync": options.measureSync = true
         case "--source": options.source = true
         case "--mic": options.microphone = value(for: arg)
@@ -72,7 +75,7 @@ func parseOptions() -> Options {
             options.players.append(arg)
         }
     }
-    if !options.list && !options.measureLatency && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
+    if !options.list && !options.measureLatency && !options.checkLoopback && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
     return options
 }
 
@@ -129,7 +132,7 @@ func run() async {
 
     if options.measureLatency {
         do {
-            let device = try AudioDevice.input(matching: options.device)
+            guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
             print("Measuring on \(device.name ?? "?") (keep other audio off this device)…")
             let result = try await LoopbackLatencyProbe.measure(device: device)
             let ms = result.offsetsUs.map { String(format: "%.2f", Double($0) / 1000) }
@@ -144,6 +147,11 @@ func run() async {
         return
     }
 
+    if options.checkLoopback {
+        await checkLoopback()
+        return
+    }
+
     if options.measureSync {
         await measureSync(options)
         return
@@ -155,7 +163,7 @@ func run() async {
     }
 
     let urls = await resolvePlayers(options.players)
-    let (source, capture) = audioSource(options)
+    let (source, stopCapture) = audioSource(options)
 
     let identity = loadIdentity(name: options.name)
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
@@ -189,22 +197,47 @@ func run() async {
 
     Log.info("Shutting down")
     pump.cancel()
-    capture?.stop()
+    stopCapture()
     await group.shutdown()
     try? await Task.sleep(for: .milliseconds(200))
 }
 
-/// The audio to stream: the test tone, or the input device.
-func audioSource(_ options: Options) -> (AsyncStream<CapturedBlock>, AudioCapture?) {
+/// The audio to stream: the test tone, the Sendspin device (read from its driver), or another
+/// input device. Comes with what stops it.
+func audioSource(_ options: Options) -> (AsyncStream<CapturedBlock>, @Sendable () -> Void) {
     if options.tone {
         Log.info("Audio: 440 Hz test tone")
-        return (ToneSource.blocks(), nil)
+        return (ToneSource.blocks(), {})
     }
     do {
+        if let sendspin = AudioDevice.sendspin, sendspin.name?.localizedCaseInsensitiveContains(options.device) == true {
+            let capture = try DriverCapture(device: sendspin)
+            try capture.start()
+            Log.info("Audio: \(capture.deviceName) (from its driver), \(capture.sampleRate) Hz float stereo")
+            return (capture.blocks, capture.stop)
+        }
         let capture = try AudioCapture(deviceName: options.device)
         try capture.start()
         Log.info("Audio: \(capture.deviceName), \(capture.sampleRate) Hz float stereo")
-        return (capture.blocks, capture)
+        return (capture.blocks, capture.stop)
+    } catch {
+        fail("\(error)")
+    }
+}
+
+func checkLoopback() async {
+    guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+    print("Playing noise into \(device.name ?? "Sendspin") (keep other audio off this device)…")
+    do {
+        let result = try await LoopbackCheck.run(device: device)
+        print("\(result.signalFrames) frames at \(result.sampleRate) Hz: "
+            + (result.mismatchedFrames == 0 ? "sample-exact" : "\(result.mismatchedFrames) frames differ or are missing"))
+        print(result.framesAfterBurst == 0 ? "silence after the burst" : "\(result.framesAfterBurst) non-silent frames after the burst")
+        if let offset = result.offsetUs {
+            print(String(format: "capture − output offset: %.2f ms", Double(offset) / 1000))
+        }
+        print(result.passed ? "PASS" : "FAIL")
+        exit(result.passed ? 0 : 1)
     } catch {
         fail("\(error)")
     }
@@ -244,7 +277,7 @@ func loadSourceCredentials() -> (SourceCredentials, @Sendable (SourceCredentials
 }
 
 func runSource(_ options: Options) async {
-    let (source, capture) = audioSource(options)
+    let (source, stopCapture) = audioSource(options)
     let (credentials, save) = loadSourceCredentials()
     let client = SourceClient(name: options.name, softwareVersion: "sendspin-bridge", credentials: credentials, save: save)
     print("Pairing token: \(client.pairingToken)")
@@ -271,7 +304,7 @@ func runSource(_ options: Options) async {
     Log.info("Shutting down")
     pump.cancel()
     statusTask.cancel()
-    capture?.stop()
+    stopCapture()
     await client.stop()
     try? await Task.sleep(for: .milliseconds(200))
 }

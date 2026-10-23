@@ -79,7 +79,7 @@ struct SettingsView: View {
                         .disabled(uninstalling)
                 } label: {
                     Text("Uninstall")
-                    Text("Removes the Sendspin audio device, this app and its microphone permission. Your settings are kept.")
+                    Text("Removes the Sendspin audio device and this app. Your settings are kept.")
                 }
             } footer: {
                 // A minimal about: the version, and where the source lives.

@@ -10,7 +10,7 @@ import SendspinServerKit
 /// its *capture* timestamp plus the lead. So the latency to report for A/V sync is
 /// `lead + (captureTime − outputTime)`, and this probe measures that difference: it plays
 /// single-sample clicks through an AUHAL output unit, records each click's output host
-/// time, and finds the clicks again in `AudioCapture`'s stream.
+/// time, and finds the clicks again in `DriverCapture`'s stream.
 public enum LoopbackLatencyProbe {
     public struct Result: Sendable {
         /// captureTime − outputTime per detected click, µs.
@@ -25,7 +25,7 @@ public enum LoopbackLatencyProbe {
 
     public static func measure(device: AudioDevice, clicks: Int = 10,
                                interval: Duration = .milliseconds(300)) async throws -> Result {
-        let capture = try AudioCapture(device: device, sampleRate: 48_000, blockMs: 10)
+        let capture = try DriverCapture(device: device, blockMs: 10)
         let detector = Task {
             var detected: [Int64] = []
             for await block in capture.blocks {
@@ -39,8 +39,8 @@ public enum LoopbackLatencyProbe {
         }
         try capture.start()
 
-        let player = try SignalPlayer(device: device, signal: [0.9],
-                                      intervalFrames: Int(interval / .milliseconds(1)) * 48)
+        let player = try SignalPlayer(device: device, signal: [0.9], sampleRate: capture.sampleRate,
+                                      intervalFrames: Int(interval / .milliseconds(1)) * capture.sampleRate / 1000)
         try await Task.sleep(for: .milliseconds(200)) // let capture settle before the first click
         try player.start()
         try await Task.sleep(for: interval * Double(clicks) + .milliseconds(150))
@@ -60,31 +60,33 @@ public enum LoopbackLatencyProbe {
     }
 }
 
-/// Plays `signal` (48 kHz mono, sent to both channels) every `intervalFrames` into a
-/// device and records the output host time (µs) at which each repetition starts, as
-/// reported in the render timestamps.
+/// Plays `signal` (mono, sent to both channels) every `intervalFrames` into a device and
+/// records the output host time (µs) at which each repetition starts, as reported in the
+/// render timestamps.
 final class SignalPlayer: @unchecked Sendable {
     private var unit: AudioUnit?
     private let state: State
 
     final class State: @unchecked Sendable {
         let signal: [Float32]
+        let sampleRate: Int
         let intervalFrames: Int
         var frame = 0
         let lock = NSLock()
         var startTimes: [Int64] = []
 
-        init(signal: [Float32], intervalFrames: Int) {
+        init(signal: [Float32], sampleRate: Int, intervalFrames: Int) {
             self.signal = signal
+            self.sampleRate = sampleRate
             self.intervalFrames = intervalFrames
         }
     }
 
     var startTimesUs: [Int64] { state.lock.withLock { state.startTimes } }
 
-    init(device: AudioDevice, signal: [Float32], intervalFrames: Int) throws {
+    init(device: AudioDevice, signal: [Float32], sampleRate: Int = 48_000, intervalFrames: Int) throws {
         precondition(signal.count < intervalFrames, "signal must fit in the interval")
-        state = State(signal: signal, intervalFrames: intervalFrames)
+        state = State(signal: signal, sampleRate: sampleRate, intervalFrames: intervalFrames)
         var description = AudioComponentDescription(
             componentType: kAudioUnitType_Output, componentSubType: kAudioUnitSubType_HALOutput,
             componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0)
@@ -102,7 +104,7 @@ final class SignalPlayer: @unchecked Sendable {
             &deviceID, UInt32(MemoryLayout<AudioObjectID>.size)))
 
         var format = AudioStreamBasicDescription(
-            mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+            mSampleRate: Float64(sampleRate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
             mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
             mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
@@ -124,7 +126,7 @@ final class SignalPlayer: @unchecked Sendable {
                     samples[2 * i + 1] = value
                     if position == 0 {
                         state.lock.withLock {
-                            state.startTimes.append(hostUs + Int64(i) * 1_000_000 / 48_000)
+                            state.startTimes.append(hostUs + Int64(i) * 1_000_000 / Int64(state.sampleRate))
                         }
                     }
                     state.frame += 1

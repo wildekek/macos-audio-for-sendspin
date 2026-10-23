@@ -1,4 +1,3 @@
-import AVFoundation
 import CoreAudio
 import Foundation
 import Observation
@@ -66,7 +65,6 @@ final class BridgeController {
     private(set) var isInstallingDriver = false
     /// Installed, but the device didn't appear: coreaudiod didn't load it, a restart will.
     private(set) var driverNeedsRestart = false
-    private(set) var microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
     /// macOS refuses Local Network access: no speaker can be found or reached.
     private(set) var localNetworkDenied = false
     /// Discovery found that macOS allows Local Network access (neither is known before then).
@@ -226,8 +224,9 @@ final class BridgeController {
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
     private var sessions: [String: PlayerSession] = [:]
-    private var capture: AudioCapture?
+    private var capture: DriverCapture?
     private var isStartingCapture = false
+    private var formatSwitch = FormatSwitch()
     private var pumpTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var musicAssistantTask: Task<Void, Never>?
@@ -286,7 +285,6 @@ final class BridgeController {
         // On the first launch the welcome window asks for each permission at its step.
         if isWelcomeDone {
             startDiscovery()
-            await requestMicrophoneAccess()
         }
     }
 
@@ -301,7 +299,6 @@ final class BridgeController {
         isWelcomeDone = true
         defaults.set(true, forKey: "welcomeDone")
         startDiscovery()
-        await requestMicrophoneAccess()
     }
 
     var isDiscovering: Bool { discoveryTask != nil }
@@ -353,13 +350,6 @@ final class BridgeController {
             }
         }
         reconcile()
-    }
-
-    func requestMicrophoneAccess() async {
-        guard microphoneAccess == .notDetermined else { return }
-        microphoneAccess = await AVCaptureDevice.requestAccess(for: .audio) ? .authorized : .denied
-        Log.info("Microphone access \(microphoneAccess == .authorized ? "granted" : "denied")")
-        updateCapture()
     }
 
     /// Players configured by address (`manualPlayers`: ws:// URLs), for networks
@@ -640,8 +630,7 @@ final class BridgeController {
     /// Speakers to play to, or Music Assistant: as the destination, or with its stream open
     /// (it keeps getting silence, so the stream lives on for when it's chosen again).
     private var isCaptureWanted: Bool {
-        let wanted = destination == .speakers ? !sessions.isEmpty || sourceStatus.streaming : musicAssistantReady
-        return wanted && microphoneAccess == .authorized
+        return destination == .speakers ? !sessions.isEmpty || sourceStatus.streaming : musicAssistantReady
     }
 
     private func updateCapture() {
@@ -655,8 +644,8 @@ final class BridgeController {
                 // device noticeably: keep it off the main thread. Capture at the device's own
                 // rate: no conversion before the speakers.
                 let started = await Task.detached {
-                    Result { () throws -> AudioCapture in
-                        let capture = try AudioCapture(device: device)
+                    Result { () throws -> DriverCapture in
+                        let capture = try DriverCapture(device: device)
                         try capture.start()
                         return capture
                     }
@@ -694,17 +683,14 @@ final class BridgeController {
         capture = nil
     }
 
-    /// The device switched sample rate (from us, or e.g. Audio MIDI Setup): capture at
-    /// the new rate. Players get a new stream/start in their (possibly new) format.
+    /// The device switched sample rate (from us, or e.g. Audio MIDI Setup). Capture follows
+    /// by itself (each block carries its rate), and the bit depth that waited for the rate
+    /// goes with it: players get one new stream/start in their (possibly new) format.
     private func deviceSampleRateChanged() {
         guard let rate = AudioDevice.sendspin.map({ Int($0.nominalSampleRate) }), rate != deviceSampleRate else { return }
         Log.info("Sendspin device now runs at \(rate) Hz")
         deviceSampleRate = rate
-        applyPresentationLatency()
-        if capture != nil {
-            stopCapture()
-            updateCapture()
-        }
+        perform(formatSwitch.deviceRateChanged())
     }
 
     private func setHasSound(_ sound: Bool) {
@@ -890,18 +876,28 @@ final class BridgeController {
         applyFormat()
     }
 
-    /// Put the active format into effect: the device's sample rate (capture follows via
-    /// `deviceSampleRateChanged`) and the bit depth the group streams.
+    /// Put the active format into effect: the device's sample rate and the bit depth the
+    /// group streams, in the order `FormatSwitch` gives.
     private func applyFormat() {
         guard let format = activeFormat, let device = AudioDevice.sendspin else { return }
-        if Int(device.nominalSampleRate) != format.sampleRate {
-            do {
-                try device.setNominalSampleRate(Double(format.sampleRate))
-            } catch {
-                Log.error("Couldn't switch the Sendspin device to \(format.sampleRate) Hz: \(error)")
+        perform(formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
+                                    deviceRate: Int(device.nominalSampleRate)))
+    }
+
+    private func perform(_ actions: [FormatSwitch.Action]) {
+        for action in actions {
+            switch action {
+            case .setDeviceRate(let rate):
+                do {
+                    try AudioDevice.sendspin?.setNominalSampleRate(Double(rate))
+                } catch {
+                    Log.error("Couldn't switch the Sendspin device to \(rate) Hz: \(error)")
+                    perform(formatSwitch.deviceRateFailed())
+                }
+            case .setBitDepth(let bitDepth):
+                Task { await group.setPreferredBitDepth(bitDepth) }
             }
         }
-        Task { await group.setPreferredBitDepth(format.bitDepth) }
     }
 
     func setLead(_ lead: Lead) {
@@ -938,7 +934,7 @@ final class BridgeController {
     /// `sendspin-bridge --measure-latency`), so the lead is the entire latency.
     private func applyPresentationLatency() {
         do {
-            try AudioDevice.sendspin?.setPresentationLatency(frames: appliedLeadMs * deviceSampleRate / 1000)
+            try AudioDevice.sendspin?.setPresentationLatency(microseconds: appliedLeadMs * 1000)
         } catch {
             Log.warning("Couldn't set presentation latency: \(error)")
         }

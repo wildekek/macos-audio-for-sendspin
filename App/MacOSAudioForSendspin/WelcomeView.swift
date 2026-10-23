@@ -2,7 +2,7 @@ import AppKit
 import SendspinServerKit
 import SwiftUI
 
-/// First launch: the three things the app needs, each explained where it's asked for.
+/// First launch: the two things the app needs, each explained where it's asked for.
 struct WelcomeView: View {
     @Bindable var bridge: BridgeController
     let done: () -> Void
@@ -36,10 +36,7 @@ struct WelcomeView: View {
                          detail: "Adds Sendspin as a sound output on your Mac. It asks for your password "
                              + "once, and your Mac's sound pauses for a moment.",
                          state: driverStep)
-                    Step(number: 2, title: "Microphone",
-                         detail: "Lets the app pick up the sound you send to Sendspin. Nothing is recorded.",
-                         state: microphoneStep)
-                    Step(number: 3, title: "Local network",
+                    Step(number: 2, title: "Local network",
                          detail: "Lets the app find the speakers on your network.",
                          state: networkStep)
                 }
@@ -85,27 +82,8 @@ struct WelcomeView: View {
         }
     }
 
-    private var microphoneStep: Step.State {
-        guard bridge.driverState == .current else { return .waiting }
-        switch bridge.microphoneAccess {
-        case .authorized: return .done("Allowed")
-        case .notDetermined:
-            return .action("Allow…") {
-                Task {
-                    await bridge.requestMicrophoneAccess()
-                    refocus()
-                }
-            }
-        default:
-            return .action("Open Settings…") {
-                NSWorkspace.shared.open(URL(string:
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-            }
-        }
-    }
-
     private var networkStep: Step.State {
-        guard bridge.driverState == .current, bridge.microphoneAccess != .notDetermined else { return .waiting }
+        guard bridge.driverState == .current else { return .waiting }
         guard bridge.isDiscovering else { return .action("Allow…") { bridge.startDiscovery() } }
         if bridge.localNetworkDenied {
             return .action("Open Settings…") {
