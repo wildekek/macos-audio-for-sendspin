@@ -286,6 +286,38 @@ final class BridgeController {
         if isWelcomeDone {
             startDiscovery()
         }
+        Self.forgetMicrophonePermission()
+    }
+
+    /// Versions up to 0.6.1 recorded the Sendspin device's input, so they asked for the
+    /// microphone; this one reads its audio from the driver and can't use the microphone at
+    /// all. A drag-and-drop update keeps that permission, and the app would stay listed under
+    /// Microphone in Privacy & Security: forget it, once. It's the user's own privacy setting,
+    /// so no administrator rights are needed; until it works, it's tried at each launch.
+    private nonisolated static func forgetMicrophonePermission() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "microphonePermissionForgotten"),
+              let bundleID = Bundle.main.bundleIdentifier else { return }
+        Task.detached {
+            let tccutil = Process()
+            tccutil.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            tccutil.arguments = ["reset", "Microphone", bundleID]
+            tccutil.standardOutput = FileHandle.nullDevice
+            tccutil.standardError = FileHandle.nullDevice
+            do {
+                try tccutil.run()
+                tccutil.waitUntilExit()
+            } catch {
+                Log.warning("Couldn't forget the microphone permission: \(error)")
+                return
+            }
+            guard tccutil.terminationStatus == 0 else {
+                Log.warning("Couldn't forget the microphone permission (tccutil \(tccutil.terminationStatus))")
+                return
+            }
+            defaults.set(true, forKey: "microphonePermissionForgotten")
+            Log.info("Forgot the microphone permission earlier versions asked for")
+        }
     }
 
     // MARK: First launch
