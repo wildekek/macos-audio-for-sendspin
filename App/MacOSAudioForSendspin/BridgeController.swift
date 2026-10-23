@@ -700,9 +700,10 @@ final class BridgeController {
                         return
                     }
                     self.capture = capture
-                    pumpTask = Task.detached { [group, source, speakerRoute] in
+                    pumpTask = Task.detached { [self, group, source, speakerRoute] in
                         await Self.pump(capture.blocks, into: group, source: source, route: speakerRoute,
                                         soundChanged: soundChanged)
+                        await captureEnded(capture)
                     }
                     Log.info("Capturing from \(capture.deviceName) at \(capture.sampleRate) Hz")
                 case .failure(let error):
@@ -721,6 +722,19 @@ final class BridgeController {
         pumpTask?.cancel()
         if let capture { Task.detached { capture.stop() } }  // stopping waits on coreaudiod too
         capture = nil
+    }
+
+    /// The capture's blocks ended. Unless it was stopped here, it ended by itself: its reads
+    /// kept failing, as when coreaudiod restarts and the device comes back under another
+    /// object ID. Start again on the device as it is now, after a moment, so a device that
+    /// keeps failing doesn't spin.
+    private func captureEnded(_ ended: DriverCapture) async {
+        guard capture === ended else { return }
+        Log.info("Capture ended; starting again")
+        capture = nil
+        hasSound = false
+        try? await Task.sleep(for: .seconds(1))
+        updateCapture()
     }
 
     /// The device switched sample rate (from us, or e.g. Audio MIDI Setup). Capture follows

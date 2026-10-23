@@ -12,13 +12,17 @@ import SendspinServerKit
 /// same line the output render timestamps of apps playing into the device sit on.
 ///
 /// When the device changes sample rate, capture carries on at the new rate: each block
-/// carries its own. The bookkeeping is `CaptureAssembler`'s.
+/// carries its own. When reads keep failing (the device went away, e.g. coreaudiod restarted
+/// and the device is back under another object ID), capture ends by itself: `blocks`
+/// finishes, so the owner can start again. The bookkeeping is `CaptureAssembler`'s.
 public final class DriverCapture: @unchecked Sendable {
     public static let channels = 2
     /// Custom driver property 'ssau': audio from a sample time on.
     static let audioSelector: AudioObjectPropertySelector = 0x7373_6175
     /// The most frames the driver returns per read.
     static let maxReadFrames = 1 << 15
+    /// Failed reads in a row (half a second) after which capture ends.
+    static let maxFailedReads = 50
 
     public let deviceName: String
     /// The device's rate when capture started; blocks carry the rate they're at.
@@ -28,6 +32,9 @@ public final class DriverCapture: @unchecked Sendable {
     private let device: AudioDevice
     private let continuation: AsyncStream<CapturedBlock>.Continuation
     private let queue = DispatchQueue(label: "sendspin.capture", qos: .userInteractive)
+    // Set by start, taken by stop, which runs on the owner's thread or, when capture ends by
+    // itself, on `queue`.
+    private let lock = NSLock()
     private var ioProc: AudioDeviceIOProcID?
     private var timer: DispatchSourceTimer?
     private var activity: NSObjectProtocol?
@@ -35,7 +42,7 @@ public final class DriverCapture: @unchecked Sendable {
     // On `queue`.
     private var assembler: CaptureAssembler
     private var timelineRestarts = 0
-    private var readFailing = false
+    private var failedReads = 0
     private var usingCurrentTime = false
 
     public init(device: AudioDevice, blockMs: Int = 20) throws {
@@ -57,7 +64,7 @@ public final class DriverCapture: @unchecked Sendable {
     public var timelineRestartCount: Int { queue.sync { timelineRestarts } }
 
     public func start() throws {
-        guard ioProc == nil else { return }
+        guard lock.withLock({ ioProc == nil }) else { return }
         // Fails here, not silently later, when the driver won't hand this process its audio.
         _ = try read(from: -1)
 
@@ -69,31 +76,37 @@ public final class DriverCapture: @unchecked Sendable {
             }
         })
         guard let newProc else { throw AudioDeviceError.coreAudio("AudioDeviceCreateIOProcID", -1) }
-        ioProc = newProc
+        lock.withLock { ioProc = newProc }
         try check("AudioDeviceStart", AudioDeviceStart(device.id, newProc))
 
         // A menu bar app is otherwise a candidate for App Nap, which would slow the reads.
-        activity = ProcessInfo.processInfo.beginActivity(
+        let activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "Streaming audio")
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in self?.poll() }
+        lock.withLock {
+            self.activity = activity
+            self.timer = timer
+        }
         timer.resume()
-        self.timer = timer
     }
 
     public func stop() {
+        let (timer, ioProc, activity) = lock.withLock {
+            defer {
+                self.timer = nil
+                self.ioProc = nil
+                self.activity = nil
+            }
+            return (self.timer, self.ioProc, self.activity)
+        }
         timer?.cancel()
-        timer = nil
         if let ioProc {
             AudioDeviceStop(device.id, ioProc)
             AudioDeviceDestroyIOProcID(device.id, ioProc)
-            self.ioProc = nil
         }
-        if let activity {
-            ProcessInfo.processInfo.endActivity(activity)
-            self.activity = nil
-        }
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
         continuation.finish()
     }
 
@@ -126,11 +139,15 @@ public final class DriverCapture: @unchecked Sendable {
             do {
                 reply = try read(from: assembler.nextSampleTime)
             } catch {
-                if !readFailing { Log.error("Reading the Sendspin audio failed: \(error)") }
-                readFailing = true
+                if failedReads == 0 { Log.error("Reading the Sendspin audio failed: \(error)") }
+                failedReads += 1
+                if failedReads == Self.maxFailedReads {
+                    Log.error("Reading the Sendspin audio keeps failing; capture ends")
+                    stop()
+                }
                 return
             }
-            readFailing = false
+            failedReads = 0
             let output = assembler.take(reply, time: captureTime(of:), now: ServerClock.nowMicros)
             if output.timeline == .restarted {
                 timelineRestarts += 1
