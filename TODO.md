@@ -59,6 +59,12 @@ speakers just as easily. If AirPlay doesn't make the user do something, this app
    `Tests/device-tests.sh`.
 10. **Opus** (optional; smaller, lossy, patent-encumbered) and **`set_output_delay`** (optional;
     a per-speaker delay for external amplifiers).
+11. **Follow what Apple Music plays.** Switch the sample rate and bit depth to the track's, as
+    AirPlay never would. The switching is ready: a rate set from outside (as LosslessSwitcher
+    does) already goes through `FormatSwitch`, with one stream restart and no gap for a bit
+    depth. What's missing is knowing the track's format: there's no public API, and reading
+    Apple Music's log messages, as those tools do, depends on a private format. The bit depth
+    is the app's choice: the device runs 32-bit float.
 
 ## Loose ends
 
