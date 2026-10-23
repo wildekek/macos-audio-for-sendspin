@@ -94,6 +94,7 @@ apps ─► "Sendspin" output device (Driver/, HAL plug-in)
 | `Packages/SendspinServerKit/` | Sendspin server, and client with the source role, in Swift (`SendspinServerKit`); CoreAudio capture and device control (`SendspinAudio`); and the `sendspin-bridge` CLI (`--source` makes it a source for Music Assistant). |
 | `App/` | SwiftUI menu bar app (XcodeGen project). It carries the driver and installs it itself. |
 | `Release/` | Builds the disk image; signs and notarizes it for releases. |
+| `Tests/` | Tests that need the installed driver (`device-tests.sh`), and a test player built on aiosendspin (`interop/`). |
 | `docs/menu-states.md` | What the menu shows in each situation, what every state means, and the rules behind them. Keep it in step with the menu. |
 
 ## Build and run
@@ -128,6 +129,23 @@ and the Keychain keeps trusting your builds once you click *Always Allow*:
 CODE_SIGN_IDENTITY = Developer ID Application: Your Name (TEAMID)
 DEVELOPMENT_TEAM = TEAMID
 ```
+
+### Tests
+
+```sh
+swift test --package-path Packages/SendspinServerKit   # unit tests, also run by CI on every push
+Driver/tests/run_ring_test.sh                          # the driver's ring buffer (after a CMake build)
+Tests/device-tests.sh                                  # needs the installed driver; quit the app first
+```
+
+The device tests check that the driver hands back its audio sample-exact, at the output
+timestamps apps see, that a sample-rate switch restarts the device's timeline once, that other
+programs are refused the audio, and that a format switch gives aiosendspin's player exactly one
+new stream. They switch the device's rate and put it back.
+
+`Tests/interop/test_player.py play` is a player to listen with: it plays on the Mac's speakers
+at any rate, and announces itself on this Mac only, so the app lists it at once and drops it
+when it exits (tick it to play). It needs [uv](https://docs.astral.sh/uv/).
 
 ## Release
 

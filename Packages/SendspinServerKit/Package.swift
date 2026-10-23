@@ -15,5 +15,6 @@ let package = Package(
         .target(name: "SendspinAudio", dependencies: ["SendspinServerKit"]),
         .executableTarget(name: "sendspin-bridge", dependencies: ["SendspinServerKit", "SendspinAudio"]),
         .testTarget(name: "SendspinServerKitTests", dependencies: ["SendspinServerKit"]),
+        .testTarget(name: "SendspinAudioTests", dependencies: ["SendspinAudio"]),
     ]
 )

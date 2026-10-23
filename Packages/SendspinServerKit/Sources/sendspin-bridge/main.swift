@@ -5,7 +5,8 @@ import SendspinServerKit
 let usage = """
     usage: sendspin-bridge [options] <player>...
            sendspin-bridge --list
-           sendspin-bridge --measure-latency | --check-loopback
+           sendspin-bridge --measure-latency | --check-loopback | --check-rate-switch
+           sendspin-bridge --cycle-formats RATE/BITS,... [--every S] <player>...
            sendspin-bridge --measure-sync [--mic NAME]
            sendspin-bridge --source [--tone] [--device NAME]
 
@@ -16,6 +17,11 @@ let usage = """
       --list            list Sendspin players on the network and exit
       --measure-latency measure capture vs. output timestamps on the Sendspin device and exit
       --check-loopback  check that the Sendspin driver hands back its audio sample-exact
+      --check-rate-switch check that each sample-rate switch restarts the device's timeline
+                        once and keeps the latency apps see
+      --cycle-formats LIST stream the Sendspin device to the players and switch it through
+                        these formats in turn (e.g. 48000/16,96000/24), as the app does
+      --every S         seconds per format for --cycle-formats (default: 3)
       --source          be a Sendspin source instead (source@v1 client): advertise as
                         _sendspin._tcp, print the pairing token for Music Assistant, and
                         stream the audio to the server that pairs and asks for it
@@ -35,6 +41,9 @@ struct Options {
     var list = false
     var measureLatency = false
     var checkLoopback = false
+    var checkRateSwitch = false
+    var cycleFormats: [(sampleRate: Int, bitDepth: Int)]?
+    var everySeconds = 3.0
     var measureSync = false
     var source = false
     var microphone: String?
@@ -58,6 +67,18 @@ func parseOptions() -> Options {
         case "--list": options.list = true
         case "--measure-latency": options.measureLatency = true
         case "--check-loopback": options.checkLoopback = true
+        case "--check-rate-switch": options.checkRateSwitch = true
+        case "--cycle-formats":
+            let formats = value(for: arg).split(separator: ",").map { item -> (sampleRate: Int, bitDepth: Int) in
+                let parts = item.split(separator: "/").compactMap { Int($0) }
+                guard parts.count == 2, [16, 24].contains(parts[1]) else { fail("--cycle-formats wants RATE/BITS,…") }
+                return (parts[0], parts[1])
+            }
+            guard !formats.isEmpty else { fail("--cycle-formats wants RATE/BITS,…") }
+            options.cycleFormats = formats
+        case "--every":
+            guard let seconds = Double(value(for: arg)), seconds > 0 else { fail("--every needs a positive number") }
+            options.everySeconds = seconds
         case "--measure-sync": options.measureSync = true
         case "--source": options.source = true
         case "--mic": options.microphone = value(for: arg)
@@ -75,7 +96,7 @@ func parseOptions() -> Options {
             options.players.append(arg)
         }
     }
-    if !options.list && !options.measureLatency && !options.checkLoopback && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
+    if !options.list && !options.measureLatency && !options.checkLoopback && !options.checkRateSwitch && !options.measureSync && !options.source && options.players.isEmpty { fail("give at least one player (use --list)") }
     return options
 }
 
@@ -141,14 +162,22 @@ func run() async {
             if let median = result.medianUs {
                 print(String(format: "median offset: %.2f ms", Double(median) / 1000))
             }
+            // Capture timestamps should be the output timestamps apps see.
+            let passed = result.medianUs.map { abs($0) < 1_000 } ?? false
+            print(passed ? "PASS" : "FAIL")
+            exit(passed ? 0 : 1)
         } catch {
             fail("\(error)")
         }
-        return
     }
 
     if options.checkLoopback {
         await checkLoopback()
+        return
+    }
+
+    if options.checkRateSwitch {
+        await checkRateSwitch()
         return
     }
 
@@ -163,6 +192,10 @@ func run() async {
     }
 
     let urls = await resolvePlayers(options.players)
+    if let formats = options.cycleFormats {
+        await cycleFormats(formats, urls: urls, options: options)
+        return
+    }
     let (source, stopCapture) = audioSource(options)
 
     let identity = loadIdentity(name: options.name)
@@ -222,6 +255,93 @@ func audioSource(_ options: Options) -> (AsyncStream<CapturedBlock>, @Sendable (
         return (capture.blocks, capture.stop)
     } catch {
         fail("\(error)")
+    }
+}
+
+func checkRateSwitch() async {
+    guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+    print("Switching \(device.name ?? "Sendspin") through its sample rates (keep the app quit)…")
+    do {
+        let result = try await RateSwitchCheck.run(device: device)
+        for change in result.switches {
+            print(String(format: "%6d Hz: %d timeline restart(s), latency %.1f ms, captured at %@ — %@",
+                         change.sampleRate, change.timelineRestarts, Double(change.reportedLatencyUs) / 1000,
+                         change.capturedRate.map { "\($0) Hz" } ?? "nothing",
+                         change.passed(latencyUs: result.latencyUs) ? "ok" : "FAIL"))
+        }
+        print(result.passed ? "PASS" : "FAIL")
+        exit(result.passed ? 0 : 1)
+    } catch {
+        fail("\(error)")
+    }
+}
+
+/// Stream the Sendspin device to the players while switching it through `formats`, each
+/// applied as the app applies a choice in Settings (`FormatSwitch`), so a test player can
+/// check what a switch does to the stream. The first format is in place before players join.
+func cycleFormats(_ formats: [(sampleRate: Int, bitDepth: Int)], urls: [URL], options: Options) async {
+    guard let device = AudioDevice.sendspin else { fail("the Sendspin device isn't installed") }
+    let originalRate = device.nominalSampleRate
+    let capture: DriverCapture
+    do {
+        capture = try DriverCapture(device: device)
+        try capture.start()
+    } catch {
+        fail("\(error)")
+    }
+    let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
+    let pump = Task {
+        for await block in capture.blocks {
+            await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
+        }
+    }
+
+    var formatSwitch = FormatSwitch()
+    await apply(formats[0], device: device, group: group, formatSwitch: &formatSwitch)
+    let identity = loadIdentity(name: options.name)
+    for url in urls {
+        await group.add(PlayerSession(url: url, identity: identity, approve: { _ in true }))
+    }
+    try? await Task.sleep(for: .seconds(options.everySeconds))
+    for format in formats.dropFirst() {
+        Log.info("Switching to \(format.sampleRate) Hz \(format.bitDepth)-bit")
+        await apply(format, device: device, group: group, formatSwitch: &formatSwitch)
+        try? await Task.sleep(for: .seconds(options.everySeconds))
+    }
+
+    pump.cancel()
+    capture.stop()
+    await group.shutdown()
+    try? device.setNominalSampleRate(originalRate)
+    try? await Task.sleep(for: .milliseconds(200))
+}
+
+/// Apply one format, waiting for a new rate to land before what waited for it.
+func apply(_ format: (sampleRate: Int, bitDepth: Int), device: AudioDevice, group: PlaybackGroup,
+           formatSwitch: inout FormatSwitch) async {
+    var actions = formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
+                                      deviceRate: Int(device.nominalSampleRate))
+    while !actions.isEmpty {
+        var next: [FormatSwitch.Action] = []
+        for action in actions {
+            switch action {
+            case .setDeviceRate(let rate):
+                do {
+                    try device.setNominalSampleRate(Double(rate))
+                    for _ in 0..<30 where Int(device.nominalSampleRate) != rate {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    next += Int(device.nominalSampleRate) == rate
+                        ? formatSwitch.deviceRateChanged() : formatSwitch.deviceRateFailed()
+                } catch {
+                    Log.error("Couldn't switch the Sendspin device to \(rate) Hz: \(error)")
+                    next += formatSwitch.deviceRateFailed()
+                }
+            case .setBitDepth(let bitDepth):
+                await group.setPreferredBitDepth(bitDepth)
+            }
+        }
+        actions = next
     }
 }
 

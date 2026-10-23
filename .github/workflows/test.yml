@@ -1,0 +1,22 @@
+# Unit tests on every push and pull request. Tests that need the installed driver are
+# Tests/device-tests.sh, run on a Mac before a release.
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Swift package tests
+        run: swift test --package-path Packages/SendspinServerKit
+
+      - name: Driver ring buffer test
+        run: |
+          cmake -S Driver -B Driver/build
+          cmake --build Driver/build
+          Driver/tests/run_ring_test.sh
