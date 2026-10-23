@@ -566,9 +566,12 @@ final class BridgeController {
         status.canSetVolume = status.volume != nil
         status.canMute = true
         status.muted = localPlayer.isMuted
+        // The Mac's own output can need more than the speaker buffer gives: the group waits for it.
+        status.requiredBufferMs = localPlayer.requiredLeadMs
         guard status != statuses[Self.localKey] else { return }
         statuses[Self.localKey] = status
         syncDeviceToPlayers()
+        applyLead()
     }
 
     // MARK: Music Assistant

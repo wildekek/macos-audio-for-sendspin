@@ -50,12 +50,17 @@ public final class LocalPlayer: GroupOutput, @unchecked Sendable {
         }
     }
 
-    /// How long after its render timestamp a frame is heard: the stream's latency alone. The
-    /// render timestamp already includes the device's latency and safety offset, by acoustic
-    /// measurement: on a MacBook Pro's speakers (60 + 48 + 690 frames at 48 kHz), the full sum
-    /// played 2.0 ms ahead of an AUX-2, and the stream latency alone matches what's heard.
+    /// How long after its render timestamp a frame is heard. For the built-in outputs, the
+    /// stream's latency alone: the render timestamp already includes the device's latency and
+    /// safety offset, by acoustic measurement (on a MacBook Pro's speakers, 60 + 48 + 690
+    /// frames at 48 kHz, the full sum played 2.0 ms ahead of an AUX-2, and the stream latency
+    /// alone matched what's heard). For any other output, such as AirPods (7,680 frames of
+    /// device latency and none in the stream), the full latency apps are told for lip sync:
+    /// AirPods Pro play in sync by ear, not measured yet.
     static func outputLatencyUs(_ device: AudioDevice) -> Double {
-        Double(device.streamLatencyUs(scope: kAudioObjectPropertyScopeOutput))
+        let scope = kAudioObjectPropertyScopeOutput
+        return Double(device.transportType == kAudioDeviceTransportTypeBuiltIn
+            ? device.streamLatencyUs(scope: scope) : device.reportedLatencyUs(scope: scope))
     }
 
     deinit {
@@ -70,6 +75,13 @@ public final class LocalPlayer: GroupOutput, @unchecked Sendable {
         get { device.mainVolume.map { Int(($0 * 100).rounded()) } }
         set { device.mainVolume = newValue.map { Float32($0) / 100 } }
     }
+
+    /// How long after its render timestamp a frame is heard, in µs (`outputLatencyUs(_:)`).
+    public var outputLatencyUs: Double { lock.withLock { latencyUs } }
+
+    /// How far ahead of its play time audio has to reach this player: its output latency, plus
+    /// the time from capture to rendering. The group's lead must be at least this.
+    public var requiredLeadMs: Int { Int(outputLatencyUs / 1_000) + 100 }
 
     public var isMuted: Bool {
         get { lock.withLock { muted } }
