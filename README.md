@@ -12,12 +12,12 @@ bit-perfect playback is finally possible on your Mac.
 macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to
 choose speakers and control their volume:
 
-<img src="docs/menu.png" width="464" alt="The speaker icon in the menu bar with its menu open: Sendspin with an empty dot, as the Mac plays directly; the MacBook Pro Speakers playing, with a blue icon and a volume slider; a Home Assistant Connect AUX-2 with a + on its icon, to add it; then, below a divider, Music Assistant.">
+<img src="docs/menu.png" width="464" alt="The speaker icon in the menu bar with its menu open: Sendspin with a blue dot, in use. The MacBook Pro Speakers play, with a volume slider and a blue check; Bedroom is in the group but unavailable, with a grey check and a warning; Living Room has an empty check, to add it. Below a divider, Music Assistant, unavailable, with a warning.">
 
 As in Apple's AirPlay picker, the round check beside a speaker adds it to what plays or takes it
 out, and clicking a name plays there only.
 
-<img src="docs/row-states.png" width="464" alt="Every state of a speaker in the menu. Plays: a blue icon and a volume slider. Can join: a grey icon with a +. Hovered while it plays: a blue icon with a −. Joining: a blue ring, Connecting…. Unavailable: a blue ring, still in the group. In use elsewhere: a grey icon with a +, which takes it back. The Mac alone: played directly, no −. AirPlay: plays directly, can't join a group, no badge. Music Assistant: plays where it chooses, below the divider, no badge.">
+<img src="docs/row-states.png" width="464" alt="Every state of a speaker in the menu. Plays: a filled blue check and a volume slider. Can join: an empty check; the name plays there only. Joining: a spinner in place of the check, which cancels it. Unavailable: a grey check and a warning by the status. In use elsewhere: an empty check, which takes it back. The Mac alone: played directly, its check stays. AirPlay: not groupable, no check, a blue icon while it plays. While AirPlay or Music Assistant plays: no checks; a name plays there. Music Assistant: not groupable, below the divider, a blue icon while it plays.">
 
 > Sendspin is a protocol of the Open Home Foundation;
 > this project is not affiliated with or endorsed by it.
