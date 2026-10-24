@@ -97,6 +97,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+        // SwiftUI makes this view at launch and keeps it while the window is closed, so the
+        // login item is read again each time: onboarding, or System Settings, may have changed it.
+        .onAppear(perform: readLoginItem)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            readLoginItem()
+        }
         .alert("Uninstall macOS Audio for Sendspin?", isPresented: $confirmingUninstall) {
             Button("Uninstall", role: .destructive) { uninstall() }
             Button("Cancel", role: .cancel) {}
@@ -138,6 +144,10 @@ struct SettingsView: View {
         } catch {
             Log.warning("Couldn't change the login item: \(error)")
         }
+        readLoginItem()
+    }
+
+    private func readLoginItem() {
         openAtLogin = LoginItem.isEnabled
         loginItemNeedsApproval = LoginItem.needsApproval
     }
