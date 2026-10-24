@@ -265,4 +265,19 @@ public enum SpeakerMenu {
         }
         return Plan(group: group, route: .speakers)
     }
+
+    // MARK: The menu bar icon
+
+    /// Sendspin plays: the Mac's sound reaches a Sendspin speaker, or the server's stream. The
+    /// Mac's own speakers alone don't count, as they'd play it directly just the same. The
+    /// menu's dot says something else: that the Mac's output is Sendspin, playing or not.
+    public static func sendspinPlays(hasSound: Bool, route: Route, speakerConnected: Bool,
+                                     serverStreaming: Bool) -> Bool {
+        guard hasSound else { return false }
+        switch route {
+        case .speakers: return speakerConnected
+        case .server: return serverStreaming
+        case .direct: return false
+        }
+    }
 }

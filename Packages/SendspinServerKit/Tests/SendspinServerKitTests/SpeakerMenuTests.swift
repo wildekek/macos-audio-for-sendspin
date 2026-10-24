@@ -294,4 +294,36 @@ struct SpeakerMenuTests {
             #expect(plan(.add("aux"), server) == SpeakerMenu.Plan(group: ["aux"], route: .speakers))
         }
     }
+
+    @Suite("The menu bar icon")
+    struct MenuBarIcon {
+        fileprivate func plays(_ route: SpeakerMenu.Route, sound: Bool = true, speaker: Bool = false,
+                               server: Bool = false) -> Bool {
+            SpeakerMenu.sendspinPlays(hasSound: sound, route: route, speakerConnected: speaker, serverStreaming: server)
+        }
+
+        @Test("Sendspin plays while a connected speaker gets the Mac's sound") func sendspinPlaysWhileAConnectedSpeakerGetsTheMacsSound() {
+            #expect(plays(.speakers, speaker: true))
+        }
+
+        /// With every speaker in the group unavailable, only the Mac's own speakers play: nothing
+        /// goes out over Sendspin. The output stays Sendspin, so the speakers rejoin by themselves.
+        @Test("The Mac's own speakers alone aren't Sendspin playing") func theMacsOwnSpeakersAloneArentSendspinPlaying() {
+            #expect(!plays(.speakers, speaker: false))
+        }
+
+        @Test("Silence isn't playing") func silenceIsntPlaying() {
+            #expect(!plays(.speakers, sound: false, speaker: true))
+            #expect(!plays(.server, sound: false, server: true))
+        }
+
+        @Test("A server plays once its stream is open") func aServerPlaysOnceItsStreamIsOpen() {
+            #expect(plays(.server, server: true))
+            #expect(!plays(.server, speaker: true))
+        }
+
+        @Test("Played directly, Sendspin doesn't play") func playedDirectlySendspinDoesntPlay() {
+            #expect(!plays(.direct, speaker: true, server: true))
+        }
+    }
 }

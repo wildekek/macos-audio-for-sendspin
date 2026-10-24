@@ -131,8 +131,6 @@ final class BridgeController {
         }
     }
 
-    var hasConnectedPlayers: Bool { statuses.values.contains { $0.connection == .connected } }
-
     /// A ticked Sendspin speaker is connected: the Mac's own speakers don't count, as there's
     /// nothing to play along with without one.
     private var hasConnectedSpeakers: Bool {
@@ -160,10 +158,11 @@ final class BridgeController {
     /// directly or a server plays, the Sendspin speakers show as not in it.
     private var showsSpeakerTicks: Bool { playsOnSpeakers || waitsForSpeaker }
 
-    /// The Mac's sound is playing: on a connected speaker, or through the server's open
-    /// stream. Without sound it's Idle; without either it's not set up yet.
+    /// Sendspin plays the Mac's sound, on a connected speaker or through the server's open
+    /// stream: the filled menu bar icon (`SpeakerMenu.sendspinPlays`).
     var isPlaying: Bool {
-        hasSound && (destination == .speakers ? hasConnectedPlayers : sourceStatus.streaming)
+        SpeakerMenu.sendspinPlays(hasSound: hasSound, route: destination == .server ? .server : .speakers,
+                                  speakerConnected: hasConnectedSpeakers, serverStreaming: sourceStatus.streaming)
     }
 
     /// A server found this Mac, or is paired with it: the menu offers the choice.
