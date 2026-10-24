@@ -5,8 +5,7 @@ import SwiftUI
 import Testing
 
 /// Every state of a row, as the menu draws it: the state from the rules (`SpeakerMenu`), the row
-/// from the view the app uses (`OutputRow`). The sheet of them all is the README's
-/// `docs/row-states.png`: `SENDSPIN_WRITE_DOCS=1 swift test --filter RowSnapshotTests` writes it.
+/// from the view the app uses (`OutputRow`), and a sheet of them all with what each means.
 @Suite("Row snapshots", .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["CI"] == nil,
                 "Rendering differs between macOS versions: recorded and compared on a Mac"),
@@ -89,19 +88,14 @@ struct RowSnapshotTests {
     }
 
     @Test("The sheet of every row state looks as recorded")
-    func sheet() throws {
+    func sheet() {
         // The captions, the menu's row width and the sheet's margins.
         let rep = Snapshot.render(RowStatesSheet(states: Self.states, row: Self.row), width: 150 + 16 + 332 + 32 + 48)
         Snapshot.assertMatches(rep, named: "row-states")
-        if ProcessInfo.processInfo.environment["SENDSPIN_WRITE_DOCS"] != nil {
-            let docs = URL(filePath: #filePath).deletingLastPathComponent()
-                .appending(path: "../../../../docs/row-states.png").standardized
-            try rep.representation(using: .png, properties: [:])!.write(to: docs)
-        }
     }
 }
 
-/// Every state with what it means, for the README.
+/// Every state with what it means, on one sheet.
 struct RowStatesSheet: View {
     let states: [RowSnapshotTests.State]
     let row: (RowSnapshotTests.State) -> OutputRow

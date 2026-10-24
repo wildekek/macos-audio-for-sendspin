@@ -11,9 +11,7 @@ rule here, or a test there, together with the code.
 
 How a row looks is `OutputRow` in `SendspinMenuUI`, for speakers and servers alike, and
 `RowSnapshotTests` holds an image of every state, light and dark, rendered from the rules and
-that view. They're recorded and compared on a Mac, not in CI: `SNAPSHOT_RECORD=1 swift test`
-records them again, and `SENDSPIN_WRITE_DOCS=1 swift test --filter RowSnapshotTests` writes the
-README's `docs/row-states.png` from them.
+that view, plus a sheet of them all. They're recorded and compared on a Mac, not in CI: `SNAPSHOT_RECORD=1 swift test` records them again.
 
 ## Rules
 
