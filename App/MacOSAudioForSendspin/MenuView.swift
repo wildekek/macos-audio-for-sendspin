@@ -10,6 +10,7 @@ struct MenuView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var driverError: String?
     @State private var shortcuts: Any?
+    @State private var window = MenuWindow()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,6 +34,7 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 360)
+        .background(MenuWindow.Reader(found: window))
         .onAppear(perform: watchShortcuts)
         .onDisappear {
             if let shortcuts { NSEvent.removeMonitor(shortcuts) }
@@ -41,9 +43,12 @@ struct MenuView: View {
     }
 
     private func showSettings() {
-        // A menu bar app isn't active, so the window would open behind other apps.
+        // A menu bar app isn't active, so the window would open behind other apps. macOS lets it
+        // become active only while the click in the menu counts: before the menu closes.
         NSApp.activate()
         openSettings()
+        // The menu stays open otherwise, in front of Settings: a menu bar extra's window floats.
+        window.window?.close()
     }
 
     /// ⌘Q and ⌘, while the menu is open. A button's keyboard shortcut doesn't fire in a menu bar
@@ -57,7 +62,12 @@ struct MenuView: View {
                 MainActor.assumeIsolated { NSApp.terminate(nil) }
                 return nil
             case ",":
-                MainActor.assumeIsolated { showSettings() }
+                MainActor.assumeIsolated {
+                    // A key press doesn't count as a reason to come to the front, as a click
+                    // does: macOS turns down `activate()` here, so this asks the old way.
+                    NSApp.activate(ignoringOtherApps: true)
+                    showSettings()
+                }
                 return nil
             default:
                 return event
@@ -363,5 +373,35 @@ private struct Notice<Actions: View>: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// The window the menu is shown in, to close it. SwiftUI has no way to dismiss a menu bar extra.
+/// A plain reference: finding the window isn't something the view redraws for.
+@MainActor
+final class MenuWindow {
+    weak var window: NSWindow?
+
+    struct Reader: NSViewRepresentable {
+        let found: MenuWindow
+
+        func makeNSView(context: Context) -> NSView { View(found: found) }
+        func updateNSView(_ nsView: NSView, context: Context) {}
+
+        final class View: NSView {
+            let found: MenuWindow
+
+            init(found: MenuWindow) {
+                self.found = found
+                super.init(frame: .zero)
+            }
+
+            required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if let window { found.window = window }
+            }
+        }
     }
 }
