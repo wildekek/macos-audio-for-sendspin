@@ -9,7 +9,11 @@ import Testing
 /// `docs/row-states.png`: `SENDSPIN_WRITE_DOCS=1 swift test --filter RowSnapshotTests` writes it.
 @Suite("Row snapshots", .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["CI"] == nil,
-                "Rendering differs between macOS versions: recorded and compared on a Mac"))
+                "Rendering differs between macOS versions: recorded and compared on a Mac"),
+       // Text is drawn at the scale of the screen the window is on; on a 1x screen it's scaled up, soft.
+       .enabled("Recorded on a Retina screen: the main screen must be 2x") {
+           await MainActor.run { NSScreen.main?.backingScaleFactor == 2 }
+       })
 @MainActor
 struct RowSnapshotTests {
     struct State: CustomTestStringConvertible, Sendable {

@@ -8,8 +8,9 @@ import Testing
 /// The first run records the image (and fails, so a new image is looked at before it's kept).
 /// `SNAPSHOT_RECORD=1 swift test` records them all again. When an image differs, the new one is
 /// written next to it as `<name>.actual.png`, to compare. Rendering differs a little between
-/// macOS versions and with the system's accent colour (the images use the default, blue), so
-/// these tests run on a Mac, not in CI.
+/// macOS versions, with the system's accent colour (the images use the default, blue) and with
+/// the screen's scale (text is drawn at it: the images are from a Retina screen), so these tests
+/// run on a Mac with a Retina main screen, not in CI.
 @MainActor
 enum Snapshot {
     /// Pixels may differ by this much per channel (0…255) without counting: antialiasing.
