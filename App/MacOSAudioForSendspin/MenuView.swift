@@ -9,6 +9,7 @@ struct MenuView: View {
     @Bindable var bridge: BridgeController
     @Environment(\.openSettings) private var openSettings
     @State private var driverError: String?
+    @State private var shortcuts: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -21,16 +22,10 @@ struct MenuView: View {
             Divider()
             HStack {
                 Button("Quit") { NSApp.terminate(nil) }
-                    .keyboardShortcut("q")
                 Spacer()
-                Button {
-                    // A menu bar app isn't active, so the window would open behind other apps.
-                    NSApp.activate()
-                    openSettings()
-                } label: {
+                Button(action: showSettings) {
                     Image(systemName: "gearshape")
                 }
-                .keyboardShortcut(",")
                 .help("Settings")
                 .accessibilityLabel("Settings")
             }
@@ -38,6 +33,36 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 360)
+        .onAppear(perform: watchShortcuts)
+        .onDisappear {
+            if let shortcuts { NSEvent.removeMonitor(shortcuts) }
+            shortcuts = nil
+        }
+    }
+
+    private func showSettings() {
+        // A menu bar app isn't active, so the window would open behind other apps.
+        NSApp.activate()
+        openSettings()
+    }
+
+    /// ⌘Q and ⌘, while the menu is open. A button's keyboard shortcut doesn't fire in a menu bar
+    /// extra's window, so the menu watches the keys itself.
+    private func watchShortcuts() {
+        guard shortcuts == nil else { return }
+        shortcuts = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else { return event }
+            switch event.charactersIgnoringModifiers {
+            case "q":
+                MainActor.assumeIsolated { NSApp.terminate(nil) }
+                return nil
+            case ",":
+                MainActor.assumeIsolated { showSettings() }
+                return nil
+            default:
+                return event
+            }
+        }
     }
 
     /// Whether Sendspin is in use, as the checks show a speaker (`SpeakerMenu.dot`): blue while it
