@@ -66,6 +66,15 @@ struct MenuView: View {
                     if dot == .notInUse { Circle().strokeBorder(Color.secondary.opacity(0.7), lineWidth: 1.5) }
                 }
                 .frame(width: 10, height: 10)
+                // While it plays, a tight, soft halo: 1 pt wider than the dot, blurred.
+                .background {
+                    if dot == .plays {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.45))
+                            .frame(width: 12, height: 12)
+                            .blur(radius: 1.5)
+                    }
+                }
                 .padding(.trailing, 6)
                 .help(label)
                 .accessibilityElement()
