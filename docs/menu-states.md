@@ -24,7 +24,7 @@ These hold across the menu. A new state should follow them, or change them here 
    speaker out of the group, or a server that was never paired, leaves the list.
 2. **One word for gone: Unavailable.** For a speaker and for a server. Not "Offline".
 3. **Playing shows on the menu bar icon, not in the rows.** The icon fills while the Mac's
-   sound is going out: to a connected speaker, or through the server's open stream
+   sound is going out: to a connected Sendspin speaker, or through the server's open stream
    (`isPlaying`: sound in the last 3 s). Otherwise it's the outline. Both are templates, in the
    menu bar's own colour (a coloured icon looked out of place on Liquid Glass). The rows don't say Playing or Idle: the Mac's own output couldn't (the app
    can't hear it), and a destination that works needs no word.
@@ -37,7 +37,9 @@ These hold across the menu. A new state should follow them, or change them here 
 6. **Show only what exists.** A destination appears once it's found (or chosen). Until
    anything is found, the menu says what it's looking for.
 7. **Choosing is all there is.** No switch: where the Mac plays follows from what's chosen, and
-   the dot at the top only shows whether that goes through Sendspin.
+   the dot at the top shows whether that goes through Sendspin, in the checks' colours: blue
+   while it plays, grey while it's in use but nothing goes out, an empty ring while it isn't
+   in use.
 8. **One indicator per row.** Where an output is groupable, the check on the right is the
    group, as in Apple's AirPlay picker, and the icon only says what kind of device it is. Where
    it isn't, there's no check, and the icon turns blue while it plays, as in the Sound menu.
@@ -53,7 +55,7 @@ From top to bottom.
 
 | Row | Shown when |
 |---|---|
-| Sendspin, and the dot | Always. The dot is filled (accent) while the Mac plays through Sendspin, an empty ring while it plays directly; its help and VoiceOver say "In use: the Mac plays through Sendspin" or "Not in use: the Mac plays directly". |
+| Sendspin, and the dot | Always. The dot is blue while Sendspin plays (when the menu bar icon is filled), grey while the Mac's output is Sendspin but nothing goes out (silence, or every speaker in the group unavailable), an empty ring while the Mac plays directly. Its help and VoiceOver say which: "Playing: the Mac's sound goes through Sendspin", "In use: the Mac plays through Sendspin, but nothing goes out now" or "Not in use: the Mac plays directly". |
 | Notice | The driver is missing or outdated, or Local Network access is denied. One at a time, in that order. Without the driver there are no rows below. |
 | The Mac's own output | Always (its built-in speakers when nothing else is there). First, as in AirPlay's list. |
 | The Sendspin speakers | Each speaker found or in the group. |
@@ -69,7 +71,7 @@ the speaker buffer's delay.
 | In the group | Mac's output | Dot | Delay |
 |---|---|---|---|
 | Only the Mac's own output (speakers, AirPods, AirPlay) | That output | Empty | None |
-| Any Sendspin speaker, with or without the Mac's own output | Sendspin | Filled | The speaker buffer, 300 ms or more (longer when the Mac's own output needs it) |
+| Any Sendspin speaker, with or without the Mac's own output | Sendspin | Blue, or grey while nothing goes out | The speaker buffer, 300 ms or more (longer when the Mac's own output needs it) |
 
 Changing between the two switches the Mac's output, which costs a moment of silence, as any
 output switch in macOS does. What each choice leads to (adding, removing, clicking a name,
@@ -79,7 +81,7 @@ choosing a server) is in `SpeakerMenuTests`.
 
 | Shows | Means |
 |---|---|
-| Filled (`MenuBarIconPlaying`) | The Mac's sound is going out: through Sendspin with a speaker in the group connected, or a server chosen with its stream open; and the Mac made sound in the last 3 s. VoiceOver: "Sendspin, playing". |
+| Filled (`MenuBarIconPlaying`) | The Mac's sound is going out: to a connected Sendspin speaker (the Mac's own speakers alone don't count), or a server chosen with its stream open; and the Mac made sound in the last 3 s. The dot is blue then. VoiceOver: "Sendspin, playing". |
 | Outline (`MenuBarIcon`) | Anything else, including while the Mac plays directly. |
 
 ## A speaker

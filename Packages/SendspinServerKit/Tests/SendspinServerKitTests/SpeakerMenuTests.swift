@@ -326,4 +326,21 @@ struct SpeakerMenuTests {
             #expect(!plays(.direct, speaker: true, server: true))
         }
     }
+
+    @Suite("The dot")
+    struct Dot {
+        @Test("The dot is blue while Sendspin plays") func theDotIsBlueWhileSendspinPlays() {
+            #expect(SpeakerMenu.dot(sendspinIsOutput: true, sendspinPlays: true) == .plays)
+        }
+
+        /// The middle state the menu bar icon can't show: Sendspin is the Mac's output, so the
+        /// speakers rejoin by themselves, but nothing goes out now. Grey, as a grey check.
+        @Test("The dot is grey while Sendspin is the output but nothing goes out") func theDotIsGreyWhileSendspinIsTheOutputButNothingGoesOut() {
+            #expect(SpeakerMenu.dot(sendspinIsOutput: true, sendspinPlays: false) == .inUse)
+        }
+
+        @Test("The dot is an empty ring while the Mac plays without Sendspin") func theDotIsAnEmptyRingWhileTheMacPlaysWithoutSendspin() {
+            #expect(SpeakerMenu.dot(sendspinIsOutput: false, sendspinPlays: false) == .notInUse)
+        }
+    }
 }

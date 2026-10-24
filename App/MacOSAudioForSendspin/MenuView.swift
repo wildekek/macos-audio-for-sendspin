@@ -40,18 +40,30 @@ struct MenuView: View {
         .frame(width: 360)
     }
 
-    /// Whether Sendspin is in use: a dot, filled while the Mac plays through Sendspin, an empty
-    /// ring while it plays directly. Choosing where to play sets it; there's nothing to switch.
+    /// Whether Sendspin is in use, as the checks show a speaker (`SpeakerMenu.dot`): blue while it
+    /// plays, grey while it's the Mac's output but nothing goes out, an empty ring while the Mac
+    /// plays without it. Choosing where to play sets it; there's nothing to switch.
     private var header: some View {
-        let label = bridge.isMacOutput ? "In use: the Mac plays through Sendspin" : "Not in use: the Mac plays directly"
+        let dot = bridge.dot
+        let label = switch dot {
+        case .plays: "Playing: the Mac's sound goes through Sendspin"
+        case .inUse: "In use: the Mac plays through Sendspin, but nothing goes out now"
+        case .notInUse: "Not in use: the Mac plays directly"
+        }
+        let fill: Color = switch dot {
+        case .plays: .accentColor
+        // The grey of a grey check: in, but not doing anything.
+        case .inUse: .secondary.opacity(0.5)
+        case .notInUse: .clear
+        }
         return HStack {
             Text("Sendspin")
                 .fontWeight(.semibold)
             Spacer()
             Circle()
-                .fill(bridge.isMacOutput ? Color.accentColor : Color.clear)
+                .fill(fill)
                 .overlay {
-                    if !bridge.isMacOutput { Circle().strokeBorder(Color.secondary.opacity(0.7), lineWidth: 1.5) }
+                    if dot == .notInUse { Circle().strokeBorder(Color.secondary.opacity(0.7), lineWidth: 1.5) }
                 }
                 .frame(width: 10, height: 10)
                 .padding(.trailing, 6)

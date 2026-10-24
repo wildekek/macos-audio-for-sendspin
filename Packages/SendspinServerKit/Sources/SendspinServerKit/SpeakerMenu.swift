@@ -266,11 +266,11 @@ public enum SpeakerMenu {
         return Plan(group: group, route: .speakers)
     }
 
-    // MARK: The menu bar icon
+    // MARK: The menu bar icon and the dot
 
     /// Sendspin plays: the Mac's sound reaches a Sendspin speaker, or the server's stream. The
-    /// Mac's own speakers alone don't count, as they'd play it directly just the same. The
-    /// menu's dot says something else: that the Mac's output is Sendspin, playing or not.
+    /// Mac's own speakers alone don't count, as they'd play it directly just the same. The menu
+    /// bar icon fills while it does, and the dot turns blue.
     public static func sendspinPlays(hasSound: Bool, route: Route, speakerConnected: Bool,
                                      serverStreaming: Bool) -> Bool {
         guard hasSound else { return false }
@@ -279,5 +279,22 @@ public enum SpeakerMenu {
         case .server: return serverStreaming
         case .direct: return false
         }
+    }
+
+    /// The dot by "Sendspin" at the top of the menu: as the checks, blue while it plays, grey
+    /// while it's in use but nothing goes out, an empty ring while it isn't in use.
+    public enum Dot: Equatable, Sendable {
+        /// Sendspin plays the Mac's sound (`sendspinPlays`).
+        case plays
+        /// The Mac's output is Sendspin, but nothing goes out: silence, or every speaker in the
+        /// group is unavailable.
+        case inUse
+        /// The Mac plays directly, or through another output.
+        case notInUse
+    }
+
+    public static func dot(sendspinIsOutput: Bool, sendspinPlays: Bool) -> Dot {
+        guard sendspinIsOutput else { return .notInUse }
+        return sendspinPlays ? .plays : .inUse
     }
 }

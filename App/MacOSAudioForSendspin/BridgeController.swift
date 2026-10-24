@@ -165,6 +165,9 @@ final class BridgeController {
                                   speakerConnected: hasConnectedSpeakers, serverStreaming: sourceStatus.streaming)
     }
 
+    /// The dot at the top of the menu (`SpeakerMenu.dot`).
+    var dot: SpeakerMenu.Dot { SpeakerMenu.dot(sendspinIsOutput: isMacOutput, sendspinPlays: isPlaying) }
+
     /// A server found this Mac, or is paired with it: the menu offers the choice.
     var offersServer: Bool { sourceStatus.connected || sourceStatus.hasPairing }
 
