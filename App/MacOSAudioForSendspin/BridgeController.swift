@@ -72,6 +72,8 @@ final class BridgeController {
     private(set) var hasSound = false
     /// The Sendspin device is there (the driver is loaded).
     private(set) var driverInstalled = false
+    /// The device was looked for at least once: until then, `driverInstalled` isn't known yet.
+    private(set) var hasLookedForDevice = false
     /// Whether the installed driver is the one this app carries.
     private(set) var driverState = DriverInstaller.state
     private(set) var isInstallingDriver = false
@@ -258,10 +260,17 @@ final class BridgeController {
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
     private var sessions: [String: PlayerSession] = [:]
-    /// The Mac's own output, while there is one: in the speaker list as `localKey`.
-    private var localDevice: AudioDevice?
+    /// CoreAudio calls go to coreaudiod, which can be slow to answer (for minutes after many
+    /// restarts without a reboot): they run here, off the main thread, so the menu never waits.
+    private let coreAudio = CoreAudioQueue()
+    /// The Sendspin device as last read: nil while the driver isn't loaded.
+    private var sendspinDevice: AudioDevice?
+    /// The Mac's own output as last read, while there is one: in the speaker list as `localKey`.
+    private var localDevice: LocalOutput?
     /// Plays on it while it's ticked, in sync with the Sendspin speakers.
     private var localPlayer: LocalPlayer?
+    /// The output a `LocalPlayer` is being made for: making one reads the device.
+    private var startingLocalPlayer: AudioDevice?
     private var localObservations: [PropertyObservation] = []
     private var capture: DriverCapture?
     private var isStartingCapture = false
@@ -319,7 +328,7 @@ final class BridgeController {
 
     private func start() async {
         Log.info("Starting (\(identity.name), lead \(lead.rawValue) ms)")
-        observeSystem()
+        await observeSystem()
         refreshDevice()
         // On the first launch the welcome window asks for each permission at its step.
         if isWelcomeDone {
@@ -530,6 +539,23 @@ final class BridgeController {
     /// Sendspin player: `LocalPlayer` plays the group's audio on it directly, on the same clock.
     nonisolated static let localKey = "local:built-in"
 
+    /// What the menu needs to know of the Mac's own output, read once off the main thread.
+    struct LocalOutput: Sendable {
+        var device: AudioDevice
+        var uid: String?
+        var name: String?
+        var transportType: UInt32?
+        var isHeadphones: Bool
+
+        nonisolated init(_ device: AudioDevice) {
+            self.device = device
+            uid = device.uid
+            name = device.name
+            transportType = device.transportType
+            isHeadphones = device.isHeadphones
+        }
+    }
+
     /// The Mac's own output: the one it uses or used last besides Sendspin, while it's there,
     /// or else its built-in headphones when plugged in, or its speakers.
     nonisolated private static func localOutput(previousUID: String?) -> AudioDevice? {
@@ -541,17 +567,34 @@ final class BridgeController {
     /// Whether the built-in headphones were there at the last look; nil before the first.
     private var headphonesPluggedIn: Bool?
 
-    /// Plugging in headphones makes them the Mac's own output in place of its built-in
-    /// speakers, as macOS does when it plays on those: also while it plays through Sendspin.
-    private func followPluggedInHeadphones() {
+    /// What `refreshDefaultOutput` reads: the Mac's output, and its own output.
+    struct OutputsReading: Sendable {
+        var output: OutputState
+        /// Headphones just plugged in, which become the Mac's own output.
+        var followedHeadphones: LocalOutput?
+        var headphonesPluggedIn: Bool
+        var local: LocalOutput?
+        var localVolume: Float32?
+    }
+
+    /// The Mac's output, then its own output by the output it used last besides Sendspin.
+    /// Plugging in headphones makes them its own output in place of its built-in speakers, as
+    /// macOS does when it plays on those: also while it plays through Sendspin.
+    nonisolated private static func readOutputs(previousUID: String?, headphonesWerePluggedIn: Bool?) -> OutputsReading {
+        let output = readOutput()
+        // As `apply` remembers it.
+        var previousUID = (output.isSendspin ? nil : output.currentUID) ?? previousUID
         let headphones = AudioDevice.builtInOutputs().first(where: \.isHeadphones)
-        defer { headphonesPluggedIn = headphones != nil }
-        guard headphonesPluggedIn == false, let headphones, let uid = headphones.uid,
-              let previous = defaults.string(forKey: "previousOutputUID").flatMap(AudioDevice.find(uid:)),
-              previous.transportType == kAudioDeviceTransportTypeBuiltIn, !previous.isHeadphones
-        else { return }
-        Log.info("Headphones plugged in: the Mac's own output is \(headphones.name ?? uid)")
-        defaults.set(uid, forKey: "previousOutputUID")
+        var followed: LocalOutput?
+        if headphonesWerePluggedIn == false, let headphones, headphones.uid != nil,
+           let previous = previousUID.flatMap(AudioDevice.find(uid:)),
+           previous.transportType == kAudioDeviceTransportTypeBuiltIn, !previous.isHeadphones {
+            followed = LocalOutput(headphones)
+            previousUID = headphones.uid
+        }
+        let local = localOutput(previousUID: previousUID)
+        return OutputsReading(output: output, followedHeadphones: followed, headphonesPluggedIn: headphones != nil,
+                              local: local.map(LocalOutput.init), localVolume: local?.mainVolume)
     }
 
     /// It can play along with the Sendspin speakers. An AirPlay output can't: macOS only has
@@ -583,25 +626,47 @@ final class BridgeController {
         }
     }
 
-    private func refreshLocalDevice() {
-        followPluggedInHeadphones()
-        let device = Self.localOutput(previousUID: defaults.string(forKey: "previousOutputUID"))
-        guard device != localDevice else { return }
-        localDevice = device
-        // Its volume can change elsewhere too, e.g. in Audio MIDI Setup.
-        localObservations = device.map { device in
-            [device.observe(kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-                            scope: kAudioObjectPropertyScopeOutput) { [weak self] in
-                Task { @MainActor in self?.updateLocalStatus() }
-            }]
-        } ?? []
+    private func setLocalDevice(_ local: LocalOutput?, volume: Float32?) {
+        let changed = local?.device != localDevice?.device
+        localDevice = local
+        localVolume = volume.map { Int(($0 * 100).rounded()) }
+        guard changed else {
+            updateLocalStatus()
+            return
+        }
+        release(localObservations)
+        localObservations = []
+        if let device = local?.device {
+            // Its volume can change elsewhere too, e.g. in Audio MIDI Setup.
+            let volumeChanged: @Sendable () -> Void = { [weak self] in
+                Task { @MainActor in self?.localVolumeChanged() }
+            }
+            Task {
+                let observations = await coreAudio.run {
+                    [device.observe(kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                                    scope: kAudioObjectPropertyScopeOutput, volumeChanged)]
+                }
+                guard localDevice?.device == device else { return release(observations) }
+                localObservations = observations
+            }
+        }
         reconcileLocal()
         updateCapture()
     }
 
+    private func localVolumeChanged() {
+        guard let device = localDevice?.device else { return }
+        Task {
+            let volume = await coreAudio.run { device.mainVolume }
+            guard localDevice?.device == device else { return }
+            localVolume = volume.map { Int(($0 * 100).rounded()) }
+            updateLocalStatus()
+        }
+    }
+
     /// A player on the Mac's output while it's ticked; a new one when the output changed.
     private func reconcileLocal() {
-        let wanted = selected.contains(Self.localKey) && localCanPlayAlong ? localDevice : nil
+        let wanted = selected.contains(Self.localKey) && localCanPlayAlong ? localDevice?.device : nil
         guard localPlayer?.device != wanted else { return }
         if let old = localPlayer {
             localPlayer = nil
@@ -610,13 +675,26 @@ final class BridgeController {
                 old.shutdown()
             }
         }
-        if let wanted {
-            let player = LocalPlayer(device: wanted)
+        updateLocalStatus()
+        guard let wanted, startingLocalPlayer != wanted else { return }
+        // Making one reads the device's rate and latency.
+        startingLocalPlayer = wanted
+        Task {
+            let player = await coreAudio.run { LocalPlayer(device: wanted) }
+            if startingLocalPlayer == wanted { startingLocalPlayer = nil }
+            // The output or the selection may have changed meanwhile.
+            guard localPlayer == nil, selected.contains(Self.localKey), localCanPlayAlong,
+                  localDevice?.device == wanted else {
+                Task.detached { player.shutdown() }
+                reconcileLocal()
+                return
+            }
             player.isMuted = deviceMuted
             localPlayer = player
             Task { await group.add(output: player) }
+            updateLocalStatus()
+            updateCapture()
         }
-        updateLocalStatus()
     }
 
     /// The device's own volume, 0…100: the slider in its row.
@@ -625,7 +703,6 @@ final class BridgeController {
     /// Its status in the list: always connected, with the device's own volume. Only while
     /// it's ticked does it count in the group (its volume, whether a speaker is connected).
     private func updateLocalStatus() {
-        localVolume = localDevice?.mainVolume.map { Int(($0 * 100).rounded()) }
         guard let localPlayer else {
             statuses[Self.localKey] = nil
             return
@@ -721,18 +798,18 @@ final class BridgeController {
     /// The Mac's output becomes its own speakers.
     private func playDirect() {
         pendingSendspinOutput = false
-        guard let localDevice, !isDirect, !isSwitchingOutput else { return }
+        guard let device = localDevice?.device, !isDirect, !isSwitchingOutput else { return }
         isSwitchingOutput = true
         Task {
             defer { isSwitchingOutput = false }
-            apply(await Task.detached {
+            apply(await coreAudio.run {
                 do {
-                    try AudioDevice.setDefaultOutput(localDevice)
+                    try AudioDevice.setDefaultOutput(device)
                 } catch {
                     Log.error("Couldn't change the Mac's output: \(error)")
                 }
                 return Self.readOutput()
-            }.value)
+            })
         }
     }
 
@@ -922,7 +999,7 @@ final class BridgeController {
     }
 
     private func updateCapture() {
-        if isCaptureWanted, capture == nil, !isStartingCapture, let device = AudioDevice.sendspin {
+        if isCaptureWanted, capture == nil, !isStartingCapture, let device = sendspinDevice {
             isStartingCapture = true
             let soundChanged: @Sendable (Bool) async -> Void = { [weak self] sound in
                 await self?.setHasSound(sound)
@@ -982,17 +1059,22 @@ final class BridgeController {
         capture = nil
         hasSound = false
         try? await Task.sleep(for: .seconds(1))
-        updateCapture()
+        // Read the device again: it may be back under another object ID. That starts capture.
+        refreshDevice()
     }
 
     /// The device switched sample rate (from us, or e.g. Audio MIDI Setup). Capture follows
     /// by itself (each block carries its rate), and the bit depth that waited for the rate
     /// goes with it: players get one new stream/start in their (possibly new) format.
     private func deviceSampleRateChanged() {
-        guard let rate = AudioDevice.sendspin.map({ Int($0.nominalSampleRate) }), rate != deviceSampleRate else { return }
-        Log.info("Sendspin device now runs at \(rate) Hz")
-        deviceSampleRate = rate
-        formatSwitch.deviceRateChanged()
+        guard let device = sendspinDevice else { return }
+        Task {
+            let rate = await coreAudio.run { Int(device.nominalSampleRate) }
+            guard device == sendspinDevice, rate != deviceSampleRate else { return }
+            Log.info("Sendspin device now runs at \(rate) Hz")
+            deviceSampleRate = rate
+            formatSwitch.deviceRateChanged()
+        }
     }
 
     private func setHasSound(_ sound: Bool) {
@@ -1032,61 +1114,104 @@ final class BridgeController {
 
     // MARK: Device: volume, mute, default output, latency
 
-    private func observeSystem() {
-        systemObservations = [
-            AudioDevice.observeSystem(kAudioHardwarePropertyDevices) { [weak self] in
-                Task { @MainActor in self?.refreshDevice() }
-            },
-            AudioDevice.observeSystem(kAudioHardwarePropertyDefaultOutputDevice) { [weak self] in
-                Task { @MainActor in self?.refreshDefaultOutput() }
-            },
-        ]
+    private func observeSystem() async {
+        let devicesChanged: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.refreshDevice() }
+        }
+        let defaultOutputChanged: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.refreshDefaultOutput() }
+        }
+        systemObservations = await coreAudio.run {
+            [AudioDevice.observeSystem(kAudioHardwarePropertyDevices, devicesChanged),
+             AudioDevice.observeSystem(kAudioHardwarePropertyDefaultOutputDevice, defaultOutputChanged)]
+        }
+    }
+
+    /// A listener is removed when its observation goes, which is a call to coreaudiod too.
+    private func release(_ observations: [PropertyObservation]) {
+        guard !observations.isEmpty else { return }
+        coreAudio.async { withExtendedLifetime(observations) {} }
+    }
+
+    /// What `refreshDevice` reads of the Sendspin device.
+    struct DeviceReading: Sendable {
+        var device: AudioDevice
+        var volume: Float32?
+        var muted: Bool?
+        var sampleRate: Int
+        var sampleRates: Set<Int>
+        var observations: [PropertyObservation]
     }
 
     /// (Re)attach to the Sendspin device, e.g. at launch or after the driver was installed.
     private func refreshDevice() {
-        let started = ContinuousClock.now
-        defer {
-            // Still on the main thread (TODO): say when it's slow enough to be felt.
-            let elapsed = ContinuousClock.now - started
-            if elapsed > .milliseconds(100) { Log.warning("Reading the Sendspin device took \(elapsed)") }
+        let volumeChanged: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.deviceVolumeChanged() }
         }
-        let device = AudioDevice.sendspin
-        driverInstalled = device != nil
+        let muteChanged: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.deviceMuteChanged() }
+        }
+        let sampleRateChanged: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.deviceSampleRateChanged() }
+        }
+        Task {
+            let reading = await coreAudio.run { () -> DeviceReading? in
+                guard let device = AudioDevice.sendspin else { return nil }
+                return DeviceReading(
+                    device: device, volume: device.volume, muted: device.isMuted,
+                    sampleRate: Int(device.nominalSampleRate),
+                    sampleRates: Set(device.availableSampleRates.map { Int($0) }),
+                    observations: [
+                        device.observe(kAudioDevicePropertyVolumeScalar, scope: kAudioObjectPropertyScopeOutput,
+                                       volumeChanged),
+                        device.observe(kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput, muteChanged),
+                        device.observe(kAudioDevicePropertyNominalSampleRate, sampleRateChanged),
+                    ])
+            }
+            apply(reading)
+        }
+    }
+
+    private func apply(_ reading: DeviceReading?) {
+        sendspinDevice = reading?.device
+        driverInstalled = reading != nil
+        hasLookedForDevice = true
         driverState = DriverInstaller.state
-        if device != nil { driverNeedsRestart = false }
-        deviceObservations = []
+        if reading != nil { driverNeedsRestart = false }
+        release(deviceObservations)
+        deviceObservations = reading?.observations ?? []
         refreshDefaultOutput()
-        guard let device else {
+        guard let reading else {
             updateCapture()
             return
         }
-        deviceVolume = device.volume ?? 1
-        deviceMuted = device.isMuted ?? false
-        deviceSampleRate = Int(device.nominalSampleRate)
-        deviceSampleRates = Set(device.availableSampleRates.map { Int($0) })
-        deviceObservations = [
-            device.observe(kAudioDevicePropertyVolumeScalar, scope: kAudioObjectPropertyScopeOutput) { [weak self] in
-                Task { @MainActor in self?.deviceVolumeChanged() }
-            },
-            device.observe(kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput) { [weak self] in
-                Task { @MainActor in self?.deviceMuteChanged() }
-            },
-            device.observe(kAudioDevicePropertyNominalSampleRate) { [weak self] in
-                Task { @MainActor in self?.deviceSampleRateChanged() }
-            },
-        ]
+        deviceVolume = reading.volume ?? 1
+        deviceMuted = reading.muted ?? false
+        deviceSampleRate = reading.sampleRate
+        deviceSampleRates = reading.sampleRates
         applyPresentationLatency()
         applyFormat()
         updateCapture()
     }
 
     private func refreshDefaultOutput() {
-        apply(Self.readOutput())
-        refreshLocalDevice()
-        // An AirPlay output chosen in Control Center can't be grouped with.
-        if isDirect && !localCanPlayAlong { dissolveGroup() }
-        updateCapture()
+        let previousUID = defaults.string(forKey: "previousOutputUID")
+        let headphonesWerePluggedIn = headphonesPluggedIn
+        Task {
+            let reading = await coreAudio.run {
+                Self.readOutputs(previousUID: previousUID, headphonesWerePluggedIn: headphonesWerePluggedIn)
+            }
+            apply(reading.output)
+            if let headphones = reading.followedHeadphones, let uid = headphones.uid {
+                Log.info("Headphones plugged in: the Mac's own output is \(headphones.name ?? uid)")
+                defaults.set(uid, forKey: "previousOutputUID")
+            }
+            headphonesPluggedIn = reading.headphonesPluggedIn
+            setLocalDevice(reading.local, volume: reading.localVolume)
+            // An AirPlay output chosen in Control Center can't be grouped with.
+            if isDirect && !localCanPlayAlong { dissolveGroup() }
+            updateCapture()
+        }
     }
 
     /// What the Mac's output is, and where leaving Sendspin would go.
@@ -1112,7 +1237,14 @@ final class BridgeController {
     /// Volume keys / Control Center / our group slider changed the device volume. With Music
     /// Assistant as the destination, its own volume applies and the idle speakers stay put.
     private func deviceVolumeChanged() {
-        guard let volume = AudioDevice.sendspin?.volume else { return }
+        guard let device = sendspinDevice else { return }
+        Task {
+            guard let volume = await coreAudio.run({ device.volume }), device == sendspinDevice else { return }
+            followDeviceVolume(volume)
+        }
+    }
+
+    private func followDeviceVolume(_ volume: Float32) {
         deviceVolume = volume
         guard destination == .speakers else { return }
         if let expected = expectedDeviceVolume, abs(expected - volume) < 0.005 {
@@ -1128,7 +1260,15 @@ final class BridgeController {
     }
 
     private func deviceMuteChanged() {
-        guard let muted = AudioDevice.sendspin?.isMuted, muted != deviceMuted else { return }
+        guard let device = sendspinDevice else { return }
+        Task {
+            guard let muted = await coreAudio.run({ device.isMuted }), device == sendspinDevice else { return }
+            followDeviceMute(muted)
+        }
+    }
+
+    private func followDeviceMute(_ muted: Bool) {
+        guard muted != deviceMuted else { return }
         deviceMuted = muted
         guard destination == .speakers else { return }
         let targets = sessions.filter { statuses[$0.key]?.muted != muted }.map(\.value)
@@ -1142,12 +1282,13 @@ final class BridgeController {
     /// A player's own volume changed (its knob, another server, or our command):
     /// show the new group level on the device, so the system volume HUD stays truthful.
     private func syncDeviceToPlayers() {
-        guard let device = AudioDevice.sendspin else { return }
+        guard let device = sendspinDevice else { return }
         if let level = GroupVolume.level(connectedVolumes()) {
             let scalar = Float(level) / 100
-            if abs((device.volume ?? -1) - scalar) >= 0.005 {
+            if abs(deviceVolume - scalar) >= 0.005 {
                 expectedDeviceVolume = scalar
-                device.volume = scalar
+                deviceVolume = scalar
+                coreAudio.async { device.volume = scalar }
             }
         }
         let mutes = statuses.values.filter { $0.connection == .connected }.compactMap(\.muted)
@@ -1155,7 +1296,7 @@ final class BridgeController {
             let allMuted = mutes.allSatisfy { $0 }
             if allMuted != deviceMuted {
                 deviceMuted = allMuted
-                device.isMuted = allMuted
+                coreAudio.async { device.isMuted = allMuted }
             }
         }
     }
@@ -1168,7 +1309,9 @@ final class BridgeController {
 
     func setPlayerVolume(_ instanceName: String, _ volume: Int) {
         if instanceName == Self.localKey {
-            localDevice?.mainVolume = Float32(volume) / 100
+            guard let device = localDevice?.device else { return }
+            localVolume = volume
+            coreAudio.async { device.mainVolume = Float32(volume) / 100 }
             updateLocalStatus()
         } else {
             Task { await sessions[instanceName]?.setVolume(volume) }
@@ -1185,10 +1328,12 @@ final class BridgeController {
     /// Put the active format into effect: the device's sample rate and the bit depth the
     /// group streams, in the order `FormatSwitch` gives.
     private func applyFormat() {
-        guard let format = activeFormat, let device = AudioDevice.sendspin else { return }
-        let actions = formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
-                                          deviceRate: Int(device.nominalSampleRate))
-        Task { await perform(actions) }
+        guard let format = activeFormat, let device = sendspinDevice else { return }
+        Task {
+            let deviceRate = await coreAudio.run { Int(device.nominalSampleRate) }
+            await perform(formatSwitch.select(sampleRate: format.sampleRate, bitDepth: format.bitDepth,
+                                              deviceRate: deviceRate))
+        }
     }
 
     /// In order: the group hears of a bit depth before the rate it waits for changes.
@@ -1196,8 +1341,9 @@ final class BridgeController {
         for action in actions {
             switch action {
             case .setDeviceRate(let rate):
+                guard let device = sendspinDevice else { continue }
                 do {
-                    try AudioDevice.sendspin?.setNominalSampleRate(Double(rate))
+                    try await coreAudio.run { try device.setNominalSampleRate(Double(rate)) }
                 } catch {
                     Log.error("Couldn't switch the Sendspin device to \(rate) Hz: \(error)")
                     await perform(formatSwitch.deviceRateFailed())
@@ -1241,10 +1387,14 @@ final class BridgeController {
     /// Capture timestamps equal the output timestamps apps see (measured with
     /// `sendspin-bridge --measure-latency`), so the lead is the entire latency.
     private func applyPresentationLatency() {
-        do {
-            try AudioDevice.sendspin?.setPresentationLatency(microseconds: appliedLeadMs * 1000)
-        } catch {
-            Log.warning("Couldn't set presentation latency: \(error)")
+        guard let device = sendspinDevice else { return }
+        let microseconds = appliedLeadMs * 1000
+        coreAudio.async {
+            do {
+                try device.setPresentationLatency(microseconds: microseconds)
+            } catch {
+                Log.warning("Couldn't set presentation latency: \(error)")
+            }
         }
     }
 
@@ -1256,7 +1406,7 @@ final class BridgeController {
         isSwitchingOutput = true
         defer { isSwitchingOutput = false }
         let previousUID = defaults.string(forKey: "previousOutputUID")
-        apply(await Task.detached { Self.switchOutput(enabled, previousUID: previousUID) }.value)
+        apply(await coreAudio.run { Self.switchOutput(enabled, previousUID: previousUID) })
     }
 
     /// Switch, then read back the new state. The output Sendspin replaces is remembered by
@@ -1294,7 +1444,7 @@ final class BridgeController {
         // coreaudiod takes a moment to come back with the device.
         var appeared = false
         for _ in 0..<20 where !appeared {
-            appeared = await Task.detached { AudioDevice.sendspin != nil }.value
+            appeared = await coreAudio.run { AudioDevice.sendspin != nil }
             if !appeared { try? await Task.sleep(for: .milliseconds(500)) }
         }
         driverNeedsRestart = !appeared
@@ -1317,6 +1467,29 @@ final class BridgeController {
         }
         if !removed && wasMacOutput { await setMacOutput(true) }
         return removed
+    }
+}
+
+/// CoreAudio calls, one at a time and in the order they're handed over, off the main thread:
+/// the main actor hands them over and waits without blocking.
+final class CoreAudioQueue: Sendable {
+    private let queue = DispatchQueue(label: "eu.vooijs.MacOSAudioForSendspin.coreaudio", qos: .userInitiated)
+
+    /// Without waiting for it.
+    func async(_ body: @escaping @Sendable () -> Void) {
+        queue.async(execute: body)
+    }
+
+    func run<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: body()) }
+        }
+    }
+
+    func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result(catching: body)) }
+        }
     }
 }
 

@@ -118,7 +118,8 @@ struct MenuView: View {
     }
 
     @ViewBuilder private var warnings: some View {
-        if bridge.driverNeedsRestart || (!bridge.driverInstalled && bridge.driverState != .notInstalled) {
+        if bridge.driverNeedsRestart
+            || (bridge.hasLookedForDevice && !bridge.driverInstalled && bridge.driverState != .notInstalled) {
             Notice(text: "The audio driver is installed, but macOS hasn't loaded it. Restart your Mac to finish.",
                    systemImage: "arrow.clockwise.circle.fill")
         } else if bridge.driverState != .current {
