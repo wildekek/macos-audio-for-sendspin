@@ -19,6 +19,8 @@ actor SourceSession {
         var activities: [String] = []
         var sourceActive = false
         var streaming = false
+        /// The server's `start` is held, waiting for audio to open the stream with.
+        var startAuthorized = false
         /// The pairing code to show while a server pairs with this Mac (six digits).
         var pairingCode: String?
     }
@@ -85,7 +87,6 @@ actor SourceSession {
     private var signalPresent = false
     private var lastSoundUs: Int64?
     private var lastSentState: ClientStateMessage?
-    private var startAuthorized = false
     private var pipeline: PlayerAudioPipeline?
     private var droppedChunks = 0
     private var warnedNoCodec = false
@@ -650,8 +651,10 @@ actor SourceSession {
         switch command {
         case "start":
             // Ignored while unavailable, pending or open: it never restarts a stream.
-            guard state.sourceActive, lastSentState?.available == true, !startAuthorized, !state.streaming else { return }
-            startAuthorized = true
+            guard state.sourceActive, lastSentState?.available == true, !state.startAuthorized, !state.streaming
+            else { return }
+            state.startAuthorized = true
+            Task { await client.sessionChanged(self) }
             Log.info("Source: \(state.serverName ?? "server") starts the Mac's audio")
         case "stop":
             endStream(reason: "stopped by the server")
@@ -661,7 +664,10 @@ actor SourceSession {
     }
 
     private func endStream(reason: String) {
-        startAuthorized = false
+        if state.startAuthorized {
+            state.startAuthorized = false
+            if !state.streaming { Task { await client.sessionChanged(self) } }
+        }
         guard state.streaming else { return }
         if rehandshaking { streamEndHeld = true } else { sendMessage("client-stream/end", EmptyPayload()) }
         state.streaming = false
@@ -682,7 +688,7 @@ actor SourceSession {
             sendState()
         }
 
-        guard startAuthorized || state.streaming, converged, !rehandshaking else { return }
+        guard state.startAuthorized || state.streaming, converged, !rehandshaking else { return }
         // Only a codec the server listed (roles/source/v1.md): none listed, nothing to send.
         guard let codec: AudioCodec = serverCodecs.contains("flac") ? .flac : serverCodecs.contains("pcm") ? .pcm : nil
         else {
@@ -700,7 +706,7 @@ actor SourceSession {
             sendMessage("client-stream/start", ClientStreamStartMessage(source: .init(
                 codec: format.codec, channels: format.channels, sampleRate: format.sampleRate,
                 bitDepth: format.bitDepth, codecHeader: pipeline.codecHeader?.base64EncodedString())))
-            startAuthorized = false
+            state.startAuthorized = false
             if !state.streaming {
                 state.streaming = true
                 Task { await client.sessionChanged(self) }
@@ -721,6 +727,14 @@ actor SourceSession {
             let serverTime = filter.serverTime(fromClient: chunk.timestampUs)
             send(SourceAudioChunk.messageType, SourceAudioChunk.body(timestampUs: serverTime, payload: chunk.payload))
         }
+    }
+
+    /// No more audio, so no signal: the server isn't left with `present` and nothing behind it.
+    func captureStopped() {
+        lastSoundUs = nil
+        guard signalPresent else { return }
+        signalPresent = false
+        sendState()
     }
 
     // MARK: Outbound

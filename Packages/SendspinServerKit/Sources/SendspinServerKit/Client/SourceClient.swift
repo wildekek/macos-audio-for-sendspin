@@ -12,6 +12,9 @@ public struct SourceStatus: Sendable, Equatable {
     public var pairedServerNames: [String] = []
     /// The server is receiving the Mac's audio.
     public var streaming = false
+    /// The server asked for the Mac's audio (`start`), and the stream opens with the next
+    /// captured block: capture must run (roles/source/v1.md, Source command semantics).
+    public var startRequested = false
     /// A code to show while the server pairs with this Mac: six digits, entered there.
     public var pairingCode: String?
     /// The instance name this Mac advertises as a client; the speaker browser skips it.
@@ -99,6 +102,11 @@ public actor SourceClient {
         tasks.forEach { $0.cancel() }
         tasks = []
         for session in sessions.values { await session.close(goodbye: "shutdown") }
+    }
+
+    /// Capture stopped: no audio comes, so no signal is present either.
+    public func captureStopped() async {
+        for session in sessions.values { await session.captureStopped() }
     }
 
     /// Whether the user offers the Mac's audio (the Music Assistant row is ticked).
@@ -283,6 +291,7 @@ public actor SourceClient {
         status.serverName = admitted == nil ? nil : (admittedState.serverName ?? "Sendspin server")
         status.paired = admittedState.paired
         status.streaming = admittedState.streaming
+        status.startRequested = admittedState.startAuthorized
         status.pairingCode = admittedState.pairingCode
         status.hasPairing = !credentials.records.isEmpty
         status.pairedServerNames = credentials.records.compactMap(\.serverName)

@@ -1587,6 +1587,7 @@ final class BridgeController {
     private var isCaptureWanted: Bool {
         return destination == .speakers
             ? !sessions.isEmpty || (localPlayer != nil && isMacOutput) || sourceStatus.streaming
+                || sourceStatus.startRequested
             : serverReady
     }
 
@@ -1640,6 +1641,7 @@ final class BridgeController {
         pumpTask?.cancel()
         if let capture { Task.detached { capture.stop() } }  // stopping waits on coreaudiod too
         capture = nil
+        Task { [source] in await source.captureStopped() }
     }
 
     /// The capture's blocks ended. Unless it was stopped here, it ended by itself: its reads
