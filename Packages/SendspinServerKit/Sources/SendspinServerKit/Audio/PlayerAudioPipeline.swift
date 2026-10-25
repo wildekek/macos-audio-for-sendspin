@@ -4,7 +4,8 @@ import Foundation
 /// Converts the group's float audio into one player's stream format: channel mix,
 /// sample-rate conversion, and integer PCM at the player's bit depth (16-bit with TPDF
 /// dither), little-endian as Sendspin's PCM codec expects (24-bit packed in 3 bytes),
-/// then for the `flac` codec, FLAC frames of 20 ms.
+/// then for the `flac` codec, FLAC frames of 20 ms. PCM goes out as it comes, held back only
+/// to keep each chunk between 15 and 150 ms, as a source's blocks can be any length.
 ///
 /// Output chunks are timestamped from a running frame count, so they stay
 /// sample-contiguous even though resampling changes chunk lengths. The timeline
@@ -26,6 +27,13 @@ struct PlayerAudioPipeline {
     private var framesOut: Int64 = 0
     /// FLAC frames timestamped so far since the anchor.
     private var flacFramesOut: Int64 = 0
+    /// PCM waiting for a long enough chunk: one MUST NOT exceed 150 ms and SHOULD NOT be
+    /// shorter than 15 ms (player/v1.md, Server Audio Send Constraints).
+    private var pendingPCM = Data()
+    /// PCM frames sent so far since the anchor.
+    private var pcmFramesOut: Int64 = 0
+    static let minChunkMs = 15
+    static let maxChunkMs = 150
     private var dither = Dither()
 
     /// For stream/start: the FLAC stream header, or nil for PCM.
@@ -59,8 +67,8 @@ struct PlayerAudioPipeline {
         pcm.sampleRate == sourceRate && pcm.channels == sourceChannels
     }
 
-    /// Convert one input chunk into the chunks to send: one for PCM, or the FLAC frames it
-    /// completed. Empty while the resampler or the FLAC encoder is still filling up.
+    /// Convert one input chunk into the chunks to send: PCM of 15 to 150 ms, or the FLAC frames
+    /// it completed. Empty while the resampler, the encoder or a short PCM chunk is filling up.
     mutating func process(_ pcm: PCMBuffer, timestampUs: Int64) -> [Chunk] {
         let rate = Int64(format.sampleRate)
         if let anchorUs {
@@ -75,10 +83,9 @@ struct PlayerAudioPipeline {
         let frames = samples.count / format.channels
         guard frames > 0, let anchorUs else { return [] }
 
-        let outputTimestamp = anchorUs + framesOut * 1_000_000 / rate
         framesOut += Int64(frames)
         let payload = quantize(samples)
-        guard let flac else { return [Chunk(timestampUs: outputTimestamp, payload: payload, frames: frames)] }
+        guard let flac else { return pcmChunks(adding: payload, anchorUs: anchorUs) }
         // The k-th FLAC frame out is the k-th block in, so count frames for their timestamps.
         return flac.encode(payload).map { frame in
             defer { flacFramesOut += Int64(flac.blockFrames) }
@@ -87,10 +94,28 @@ struct PlayerAudioPipeline {
         }
     }
 
+    /// The PCM chunks `payload` completes, each timestamped by the frames before it.
+    private mutating func pcmChunks(adding payload: Data, anchorUs: Int64) -> [Chunk] {
+        pendingPCM.append(payload)
+        let rate = format.sampleRate
+        let bytesPerFrame = format.bitDepth / 8 * format.channels
+        var chunks: [Chunk] = []
+        while pendingPCM.count / bytesPerFrame >= rate * Self.minChunkMs / 1000 {
+            let frames = min(pendingPCM.count / bytesPerFrame, rate * Self.maxChunkMs / 1000)
+            chunks.append(Chunk(timestampUs: anchorUs + pcmFramesOut * 1_000_000 / Int64(rate),
+                                payload: Data(pendingPCM.prefix(frames * bytesPerFrame)), frames: frames))
+            pendingPCM.removeFirst(frames * bytesPerFrame)
+            pcmFramesOut += Int64(frames)
+        }
+        return chunks
+    }
+
     private mutating func restart(at timestampUs: Int64) {
         anchorUs = timestampUs
         framesOut = 0
         flacFramesOut = 0
+        pcmFramesOut = 0
+        pendingPCM.removeAll()
         resampler?.reset()
         // A new encoder: the old one still holds a block from before the gap.
         if flac != nil { flac = Self.makeFLAC(format) }

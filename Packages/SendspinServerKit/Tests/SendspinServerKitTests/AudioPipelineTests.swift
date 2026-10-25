@@ -69,6 +69,11 @@ struct PlayerAudioPipelineTests {
         PCMBuffer(samples: samples, sampleRate: rate, channels: channels)
     }
 
+    /// Padded with silence to the shortest chunk that goes out at once (15 ms at 48 kHz mono).
+    private func padded(_ samples: [Float]) -> [Float] {
+        samples + [Float](repeating: 0, count: max(0, 720 - samples.count))
+    }
+
     private func format(rate: Int = 48_000, depth: Int, channels: Int = 2) -> AudioFormatSpec {
         AudioFormatSpec(codec: .pcm, channels: channels, sampleRate: rate, bitDepth: depth)
     }
@@ -76,30 +81,30 @@ struct PlayerAudioPipelineTests {
     @Test func packs24BitLittleEndianIn3Bytes() throws {
         var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 24, channels: 1),
                                                         sourceRate: 48_000, sourceChannels: 1))
-        let outResult = pipeline.process(pcm([0.5, -1.0], channels: 1), timestampUs: 1_000)
+        let outResult = pipeline.process(pcm(padded([0.5, -1.0]), channels: 1), timestampUs: 1_000)
         let out = try #require(outResult.first)
         // 0.5 → 0x400000, −1.0 → 0x800000 (full-scale negative)
-        #expect(Array(out.payload) == [0x00, 0x00, 0x40, 0x00, 0x00, 0x80])
+        #expect(Array(out.payload.prefix(6)) == [0x00, 0x00, 0x40, 0x00, 0x00, 0x80])
         #expect(out.timestampUs == 1_000)
     }
 
     @Test func clips16BitAtFullScale() throws {
         var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16, channels: 1),
                                                         sourceRate: 48_000, sourceChannels: 1))
-        let outResult = pipeline.process(pcm([2.0, -2.0], channels: 1), timestampUs: 0)
+        let outResult = pipeline.process(pcm(padded([2.0, -2.0]), channels: 1), timestampUs: 0)
         let out = try #require(outResult.first)
         let values = out.payload.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
-        #expect(values == [Int16.max, Int16.min])
+        #expect(values.prefix(2) == [Int16.max, Int16.min])
     }
 
     /// 2³¹ − 1 isn't a Float: full scale at 32-bit must clip, not trap.
     @Test func clips32BitAtFullScale() throws {
         var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 32, channels: 1),
                                                         sourceRate: 48_000, sourceChannels: 1))
-        let outResult = pipeline.process(pcm([1.0, 2.0, -2.0], channels: 1), timestampUs: 0)
+        let outResult = pipeline.process(pcm(padded([1.0, 2.0, -2.0]), channels: 1), timestampUs: 0)
         let out = try #require(outResult.first)
         let values = out.payload.withUnsafeBytes { Array($0.bindMemory(to: Int32.self)) }
-        #expect(values == [Int32.max, Int32.max, Int32.min])
+        #expect(values.prefix(3) == [Int32.max, Int32.max, Int32.min])
     }
 
     /// 16-bit values and silence pass untouched; only finer samples get dither.
@@ -141,6 +146,25 @@ struct PlayerAudioPipelineTests {
         }
         // 1 s of input → ~1 s at 48 kHz (the resampler may hold back a few frames).
         #expect(abs(totalFrames - 48_000) < 64)
+    }
+
+    /// A source's blocks can be any length: PCM goes out in chunks of 15 to 150 ms, contiguous.
+    @Test func pcmChunksStayBetween15And150Milliseconds() throws {
+        var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16), sourceRate: 48_000, sourceChannels: 2))
+        var chunks: [PlayerAudioPipeline.Chunk] = []
+        var inputUs: Int64 = 0
+        // 10 ms blocks, then one of 150 ms and a frame, then 5 ms blocks.
+        for frames in [Int](repeating: 480, count: 6) + [7_201] + [Int](repeating: 240, count: 12) {
+            chunks += pipeline.process(pcm([Float](repeating: 0.1, count: frames * 2)), timestampUs: inputUs)
+            inputUs += Int64(frames) * 1_000_000 / 48_000
+        }
+        #expect(chunks.allSatisfy { (720...7_200).contains($0.frames) })
+        for (previous, next) in zip(chunks, chunks.dropFirst()) {
+            #expect(next.timestampUs == previous.timestampUs + Int64(previous.frames) * 1_000_000 / 48_000)
+        }
+        // What's not out yet is less than one shortest chunk.
+        let total = 6 * 480 + 7_201 + 12 * 240
+        #expect(total - chunks.reduce(0) { $0 + $1.frames } < 720)
     }
 
     @Test func resyncsAfterAGap() throws {
