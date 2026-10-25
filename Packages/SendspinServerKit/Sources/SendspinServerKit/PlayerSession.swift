@@ -51,6 +51,9 @@ public struct PlayerStatus: Sendable, Equatable {
     /// What the player needs queued: its min_buffer_ms plus output_delay_ms. The server
     /// must schedule audio at least this far ahead (player/v1.md, Server Audio Send Constraints).
     public var requiredBufferMs = 0
+    /// Its first client/state with the `player` object arrived on this connection: its volume
+    /// and what it needs queued are known.
+    public var reportedPlayerState = false
     /// PCM and FLAC formats the player accepts (from its hello), its preference first.
     public var supportedFormats: [AudioFormatSpec] = []
     /// Format currently streamed to the player, while streaming.
@@ -535,6 +538,7 @@ public actor PlayerSession {
         // (player/v1.md, Volume and mute).
         status.volume = nil
         status.muted = nil
+        status.reportedPlayerState = false
         status.canSetVolume = false
         status.canMute = false
         // A player that left stays out across reconnects: the server MUST NOT auto-rejoin it
@@ -888,6 +892,7 @@ public actor PlayerSession {
             status.canSetVolume = commands.contains("volume")
             status.canMute = commands.contains("mute")
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
+            status.reportedPlayerState = true
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
             if speaking { ready = true }
             controllerChanged()

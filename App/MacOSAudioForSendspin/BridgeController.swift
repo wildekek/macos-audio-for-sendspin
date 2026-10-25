@@ -142,6 +142,13 @@ final class BridgeController {
         statuses.contains { $0.key != Self.localKey && selected.contains($0.key) && $0.value.connection == .connected }
     }
 
+    /// A ticked speaker told what it needs queued, so the lead is known: the Mac's output can
+    /// become Sendspin without the lead going up right after.
+    private var hasReadySpeakers: Bool {
+        statuses.contains { $0.key != Self.localKey && selected.contains($0.key) && $0.value.connection == .connected
+            && $0.value.reportedPlayerState }
+    }
+
     /// The Mac plays on its own speakers directly, without Sendspin and its delay: chosen here
     /// (ticked alone) or anywhere else, such as Control Center.
     var isDirect: Bool {
@@ -931,9 +938,9 @@ final class BridgeController {
         }
         setDestination(.speakers)
         guard !isMacOutput else { return }
-        if hasConnectedSpeakers {
+        if hasReadySpeakers {
             pendingSendspinOutput = false
-            Task { await setMacOutput(true) }
+            Task { await switchToSendspin() }
         } else {
             pendingSendspinOutput = true
         }
@@ -1519,12 +1526,12 @@ final class BridgeController {
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
         statuses[name] = status
-        if pendingSendspinOutput, destination == .speakers, hasConnectedSpeakers {
-            pendingSendspinOutput = false
-            if !isMacOutput { Task { await setMacOutput(true) } }
-        }
         syncDeviceToPlayers()
         applyLead()
+        if pendingSendspinOutput, destination == .speakers, hasReadySpeakers {
+            pendingSendspinOutput = false
+            if !isMacOutput { Task { await switchToSendspin() } }
+        }
         if formatsChanged { applyFormat() }
         if status.connection == .taken { speakerTaken(name) }
         if !startPairingIfTicked(name, status) { untickIfUnpaired(name) }
@@ -1999,6 +2006,20 @@ final class BridgeController {
                 Log.warning("Couldn't set presentation latency: \(error)")
             }
         }
+    }
+
+    /// Make Sendspin the Mac's output once the device reports the lead as its latency. Setting it
+    /// is a configuration change, which restarts the device: done before any app plays into
+    /// it, nobody hears that.
+    private func switchToSendspin() async {
+        if let device = sendspinDevice {
+            let deadline = ContinuousClock.now + .seconds(1)
+            while ContinuousClock.now < deadline,
+                  await coreAudio.run({ device.presentationLatencyMicroseconds }) != appliedLeadMs * 1000 {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        await setMacOutput(true)
     }
 
     /// Make Sendspin the Mac's output, or switch back to the previous one. coreaudiod answers
