@@ -34,6 +34,9 @@ public final class ServiceListener: @unchecked Sendable {
 
     private let name: String
     private let kind: Kind
+    /// The instance name is a DNS label: at most 63 bytes. It's also the TXT `name`, which
+    /// SHOULD match the hello's, at most 64 bytes (messaging.md, client/hello).
+    public static let maxNameBytes = 63
     private let registeredContinuation: AsyncStream<String>.Continuation
     private let queue = DispatchQueue(label: "sendspin.listener")
     private let continuation: AsyncStream<IncomingConnection>.Continuation
@@ -43,7 +46,7 @@ public final class ServiceListener: @unchecked Sendable {
     private var stopped = false
 
     public init(name: String, kind: Kind) {
-        self.name = name
+        self.name = name.truncated(toUTF8Bytes: Self.maxNameBytes)
         self.kind = kind
         (connections, continuation) = AsyncStream.makeStream()
         (registeredNames, registeredContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -116,5 +119,20 @@ public final class ServiceListener: @unchecked Sendable {
         }
         listener.start(queue: queue)
         self.listener = listener
+    }
+}
+
+extension String {
+    /// The longest prefix of whole characters that fits in `limit` bytes of UTF-8.
+    func truncated(toUTF8Bytes limit: Int) -> String {
+        guard utf8.count > limit else { return self }
+        var result = ""
+        var bytes = 0
+        for character in self {
+            bytes += character.utf8.count
+            guard bytes <= limit else { break }
+            result.append(character)
+        }
+        return result
     }
 }

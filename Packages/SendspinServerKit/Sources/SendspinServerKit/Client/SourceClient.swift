@@ -56,7 +56,8 @@ public actor SourceClient {
     /// `save` is called with the credentials whenever a pairing changes; persist them whole.
     public init(name: String, softwareVersion: String, credentials: SourceCredentials,
                 save: @escaping @Sendable (SourceCredentials) -> Void) {
-        self.name = name
+        // The same name in client/hello as in mDNS, where it's shortest.
+        self.name = name.truncated(toUTF8Bytes: ServiceListener.maxNameBytes)
         self.softwareVersion = softwareVersion
         self.credentials = credentials
         self.save = save

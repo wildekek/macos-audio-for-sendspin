@@ -43,6 +43,16 @@ struct MessageTests {
         }
     }
 
+    /// Names fit mDNS and client/hello: whole characters, never a split one.
+    @Test func truncatesNamesToWholeCharactersInUTF8() {
+        #expect("Kitchen".truncated(toUTF8Bytes: 63) == "Kitchen")
+        let long = String(repeating: "é", count: 40)  // 80 bytes
+        let cut = long.truncated(toUTF8Bytes: 63)
+        #expect(cut == String(repeating: "é", count: 31))
+        #expect(cut.utf8.count == 62)
+        #expect("ab👍🏽".truncated(toUTF8Bytes: 5) == "ab")
+    }
+
     @Test func decodesAux2Hello() throws {
         #expect(try MessageCoding.type(of: Self.aux2Hello) == "client/hello")
         let hello = try MessageCoding.payload(ClientHello.self, from: Self.aux2Hello)
