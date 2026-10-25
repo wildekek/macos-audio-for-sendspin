@@ -259,6 +259,8 @@ final class BridgeController {
     private let speakerRoute = SpeakerRoute()
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
+    /// Players the user just ticked, not yet connected: they're claimed for playback.
+    private var chosenPlayers: Set<String> = []
     /// This Mac's own source advertisement, which the browser doesn't connect to.
     private let ownName = IgnoredNames()
     private var sessions: [String: PlayerSession] = [:]
@@ -448,6 +450,7 @@ final class BridgeController {
     // MARK: Player selection
 
     func setSelected(_ instanceName: String, _ isSelected: Bool) {
+        if isSelected { chosenPlayers.insert(instanceName) } else { chosenPlayers.remove(instanceName) }
         if isSelected {
             selected.insert(instanceName)
             // Choosing a player that shows "Identity changed" accepts its new identity: the
@@ -511,13 +514,16 @@ final class BridgeController {
         for player in discovered where selected.contains(player.instanceName) && sessions[player.instanceName] == nil {
             addSession(for: player)
         }
+        // A choice counts for the connection it makes now, not for one much later.
+        chosenPlayers.removeAll()
         reconcileLocal()
         updateCapture()
     }
 
     private func addSession(for player: DiscoveredPlayer) {
         let name = player.instanceName
-        let session = PlayerSession(url: player.url, identity: identity) { [weak self] clientID in
+        let session = PlayerSession(url: player.url, identity: identity,
+                                    chosen: chosenPlayers.remove(name) != nil) { [weak self] clientID in
             await self?.approve(name, clientID: clientID) ?? false
         }
         sessions[name] = session
@@ -989,6 +995,15 @@ final class BridgeController {
         syncDeviceToPlayers()
         applyLead()
         if formatsChanged { applyFormat() }
+        if status.connection == .taken { speakerTaken(name) }
+    }
+
+    /// Another server took the speaker: it leaves the group as if unticked, so the menu shows
+    /// what plays. Ticking it takes it back. The app doesn't track it further: whether the
+    /// other server still plays there isn't something a speaker tells us.
+    private func speakerTaken(_ name: String) {
+        Log.info("\(name): unticked, another server has it")
+        if menuState.group.contains(name) { perform(.remove(name)) } else { setSelected(name, false) }
     }
 
     // MARK: Capture

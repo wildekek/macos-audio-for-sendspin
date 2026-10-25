@@ -6,7 +6,8 @@ public struct PlayerStatus: Sendable, Equatable {
     public enum Connection: Sendable, Equatable {
         case connecting
         case connected
-        /// Another server took the player over (goodbye `another_server`).
+        /// Another server took the player over (goodbye `another_server`), or held it when we
+        /// came with nothing to play (`concurrent_attempt`).
         case taken
         /// The player only admits paired servers, and pairing isn't implemented.
         case pairingRequired
@@ -66,8 +67,13 @@ public actor PlayerSession {
     private var socket: WebSocketConnection?
     private var channel: SecureChannel?
     private var hello: ClientHello?
-    /// server/activate declared playback.
+    /// server/activate made the player ours: its role active, in our group.
     private var activated = false
+    /// The activities last declared: playback only while there's something to play.
+    private var declaredActivities: [String] = []
+    /// The user just chose the player: declare playback before the sound gets here, as for a
+    /// play command, so a server holding it doesn't turn us away first.
+    private var claiming: Bool
     /// Any server/activate went out, so the player may send its other messages.
     private var sentActivation = false
     private var available = false
@@ -92,11 +98,13 @@ public actor PlayerSession {
     private var soloGroupID: String?
     private var lastGroupUpdate: GroupUpdate?
 
-    /// A player we dial and keep connected.
-    public init(url: URL, identity: ServerIdentity, approve: @escaping Approval) {
+    /// A player we dial and keep connected. One the user just `chosen` is claimed for playback
+    /// when it connects.
+    public init(url: URL, identity: ServerIdentity, chosen: Bool = false, approve: @escaping Approval) {
         self.url = url
         self.identity = identity
         self.approve = approve
+        claiming = chosen
         incoming = nil
         isIncoming = false
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
@@ -109,6 +117,7 @@ public actor PlayerSession {
         self.approve = approve
         incoming = connection.socket
         isIncoming = true
+        claiming = false
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
     }
 
@@ -142,6 +151,7 @@ public actor PlayerSession {
             return
         }
         var backoff: Duration = .seconds(1)
+        var busyBackoff: Duration = .seconds(5)
         while !Task.isCancelled {
             // An unavailable player stays so while we try again: no "Connecting…" each time.
             if status.connection != .unavailable { status.connection = .connecting }
@@ -169,7 +179,12 @@ public actor PlayerSession {
 
             switch outcome {
             case .reconnect:
-                break
+                busyBackoff = .seconds(5)
+            case .retryLater:
+                // A server MAY retry later (messaging.md, client/goodbye): not every second.
+                try? await Task.sleep(for: busyBackoff)
+                busyBackoff = min(busyBackoff * 2, .seconds(60))
+                continue
             case .stop(let connection):
                 status.connection = connection
                 return
@@ -189,6 +204,8 @@ public actor PlayerSession {
 
     private enum SessionEnd {
         case reconnect
+        /// Turned away while another server pairs with it (`concurrent_attempt`).
+        case retryLater
         case stop(PlayerStatus.Connection)
     }
 
@@ -300,6 +317,7 @@ public actor PlayerSession {
         channel = nil
         hello = nil
         activated = false
+        declaredActivities = []
         sentActivation = false
         available = false
         ready = false
@@ -340,9 +358,16 @@ public actor PlayerSession {
     private func goodbye(_ reason: String) -> SessionEnd {
         let name = status.name ?? url.absoluteString
         switch reason {
-        case "restart", "concurrent_attempt":
+        case "restart":
             Log.info("\(name): goodbye (\(reason)), reconnecting")
             return .reconnect
+        case "concurrent_attempt" where declaredActivities.contains("playback"):
+            // Playback ranks highest, so only a pairing attempt keeps us out: it ends soon.
+            Log.info("\(name): pairing with another server, trying again later")
+            return .retryLater
+        case "concurrent_attempt":
+            Log.info("\(name): in use by another server")
+            return .stop(.taken)
         case "another_server":
             Log.info("\(name): taken over by another server")
             return .stop(.taken)
@@ -390,11 +415,29 @@ public actor PlayerSession {
     }
 
     private func activatePlayback() {
-        sendMessage("server/activate", ServerActivate(activities: ["playback"], activeRoles: ["player@v1"]))
-        sentActivation = true
         activated = true
+        declareActivities(force: true)
+        if claiming {
+            // Sound normally follows within a moment; without it, the claim lapses.
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                endClaim()
+            }
+        }
+        sentActivation = true
         sendGroupUpdate()
         status.connection = .connected
+    }
+
+    /// Declare playback only while there's something to play, as the spec asks: a server that
+    /// keeps an unused activity wins players it doesn't need (messaging.md, server/activate).
+    /// The player role stays active, so the stream starts at once when sound comes.
+    private func declareActivities(force: Bool = false) {
+        guard activated else { return }
+        let activities = (playing || claiming) && !left ? ["playback"] : []
+        guard force || activities != declaredActivities else { return }
+        declaredActivities = activities
+        sendMessage("server/activate", ServerActivate(activities: activities, activeRoles: ["player@v1"]))
     }
 
     /// The user allowed a held player (ticked it): activate playback on the same connection.
@@ -416,6 +459,7 @@ public actor PlayerSession {
         Log.info("\(status.name ?? "?"): back in the group")
         left = false
         soloGroupID = nil
+        declareActivities()
         sendGroupUpdate()
         status.connection = .connected
     }
@@ -432,6 +476,7 @@ public actor PlayerSession {
         sendGroupUpdate()
         if streaming { sendMessage("stream/end", StreamEnd(roles: ["player"])) }
         stopStreaming()
+        declareActivities()
         status.connection = .left
     }
 
@@ -504,11 +549,27 @@ public actor PlayerSession {
     func setPlaying(_ playing: Bool) {
         guard playing != self.playing else { return }
         self.playing = playing
+        if playing { declareActivities() }
         sendGroupUpdate()
         if !playing, streaming {
             sendMessage("stream/end", StreamEnd(roles: ["player"]))
         }
-        if !playing { stopStreaming() }
+        if playing {
+            claiming = false
+        } else {
+            stopStreaming()
+            // Not at once: a lead change stops and restarts the group in one go.
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                if !self.playing { self.declareActivities() }
+            }
+        }
+    }
+
+    private func endClaim() {
+        guard claiming else { return }
+        claiming = false
+        declareActivities()
     }
 
     private func stopStreaming() {
