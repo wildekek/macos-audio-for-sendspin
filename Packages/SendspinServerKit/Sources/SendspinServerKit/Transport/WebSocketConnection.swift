@@ -36,7 +36,15 @@ final class WebSocketConnection: @unchecked Sendable {
 
     /// Dial a player.
     convenience init(url: URL) {
-        self.init(connection: NWConnection(to: .url(url), using: Self.parameters()), label: url.host() ?? "?")
+        self.init(connection: NWConnection(to: .url(url), using: Self.parameters(host: Self.hostHeader(url))),
+                  label: url.host() ?? "?")
+    }
+
+    /// The `Host` header for dialing `url`: Network.framework leaves out a port that isn't 80,
+    /// which RFC 6455 (4.1) requires, and a player that checks it would refuse the upgrade.
+    static func hostHeader(_ url: URL) -> String? {
+        guard let host = url.host(percentEncoded: false), let port = url.port, port != 80 else { return nil }
+        return host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
     }
 
     /// Wrap a connection a client opened to our listener (already a WebSocket); `open()` starts it.
@@ -50,13 +58,15 @@ final class WebSocketConnection: @unchecked Sendable {
     /// endpoint refuses an upgrade request with an `Origin` header, which a browser adds
     /// (connection.md, Server Initiated Connections): a web page can't reach it. A server's
     /// endpoint has no such rule, and players send one: sendspin-cpp always, browsers too.
-    static func parameters(listening: Bool = false, refusingOrigin: Bool = false) -> NWParameters {
+    static func parameters(listening: Bool = false, refusingOrigin: Bool = false, host: String? = nil) -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         let parameters = NWParameters(tls: nil, tcp: tcp)
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
         websocket.maximumMessageSize = 4 * 1024 * 1024
+        // Replaces the one Network.framework writes, rather than adding a second.
+        if let host { websocket.setAdditionalHeaders([("Host", host)]) }
         if listening && refusingOrigin {
             websocket.setClientRequestHandler(DispatchQueue(label: "sendspin.ws.upgrade")) { _, headers in
                 let hasOrigin = headers.contains { $0.name.caseInsensitiveCompare("Origin") == .orderedSame }

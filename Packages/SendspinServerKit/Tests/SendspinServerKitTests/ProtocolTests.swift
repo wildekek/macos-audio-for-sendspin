@@ -257,3 +257,12 @@ struct PairMethodsTests {
                                          "dynamic_pairing_code.telepathy", "future_method"])
     }
 }
+
+struct WebSocketConnectionTests {
+    /// RFC 6455, 4.1: the Host header carries a port that isn't the default.
+    @Test func hostHeaderCarriesThePort() throws {
+        #expect(WebSocketConnection.hostHeader(try #require(URL(string: "ws://192.168.1.183:8928/sendspin"))) == "192.168.1.183:8928")
+        #expect(WebSocketConnection.hostHeader(try #require(URL(string: "ws://[fe80::1]:8928/sendspin"))) == "[fe80::1]:8928")
+        #expect(WebSocketConnection.hostHeader(try #require(URL(string: "ws://example.local/sendspin"))) == nil)
+    }
+}
