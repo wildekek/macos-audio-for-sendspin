@@ -77,7 +77,8 @@ public actor PlayerSession {
     /// Any server/activate went out, so the player may send its other messages.
     private var sentActivation = false
     private var available = false
-    /// The first client/state arrived: only then may streams start and commands go out.
+    /// The client/state with the `player` object arrived since the role was activated: only then
+    /// may its stream start and commands go out (messaging.md, stream/start).
     private var ready = false
     /// Converts group audio to the player's format; rebuilt when the source or the
     /// preferred bit depth changes.
@@ -422,6 +423,8 @@ public actor PlayerSession {
 
     private func activatePlayback() {
         activated = true
+        // A held player may have sent client/state already, but not for the role it gets now.
+        ready = false
         declareActivities(force: true)
         if claiming {
             // Sound normally follows within a moment; without it, the claim lapses.
@@ -497,13 +500,13 @@ public actor PlayerSession {
             status.canMute = commands.contains("mute")
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
+            if activated { ready = true }
         }
         // Only a change counts: a player says `available: false` until its clock is in sync
         // (messaging.md, Clock Synchronization), so its first state often does.
-        if wasAvailable && !available && ready {
+        if wasAvailable && !available {
             leaveGroup("in use elsewhere")
         }
-        ready = true
     }
 
     // MARK: Outbound
