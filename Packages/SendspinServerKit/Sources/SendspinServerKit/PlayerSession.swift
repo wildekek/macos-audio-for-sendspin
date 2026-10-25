@@ -144,6 +144,12 @@ public actor PlayerSession {
     /// The controller state last sent.
     private var controllerState: ControllerState?
 
+    // The artwork role (roles/artwork/v1.md): its stream, without images.
+    /// The client/state artwork object since the role was activated.
+    private var artworkRequest: ArtworkConfig?
+    /// The channels of the active artwork stream.
+    private var artworkStream: ArtworkConfig?
+
     private var group: (id: String, name: String)?
     private var playing = false
     /// The player left the group (see `PlayerStatus.Connection.left`).
@@ -421,6 +427,7 @@ public actor PlayerSession {
         activeRoles = []
         visualizerRequest = nil
         controllerState = nil
+        artworkRequest = nil
         sentActivation = false
         available = false
         ready = false
@@ -570,14 +577,16 @@ public actor PlayerSession {
         return nil
     }
 
-    static let implementedRoles = ["player@v1", "controller@v1", "visualizer@v1"]
+    static let implementedRoles = ["player@v1", "controller@v1", "metadata@v1", "artwork@v1", "visualizer@v1", "color@v1"]
 
     /// The roles we activate: every one the client lists that we implement, each with the
     /// support object it requires (messaging.md, client/hello). All are v1, so there's no
     /// version to choose (overview.md, Priority and Activation).
     private static func roles(for hello: ClientHello) -> [String] {
         var roles = ["player@v1"]
-        if hello.supportedRoles.contains("controller@v1") { roles.append("controller@v1") }
+        for role in ["controller@v1", "metadata@v1", "artwork@v1", "color@v1"] where hello.supportedRoles.contains(role) {
+            roles.append(role)
+        }
         if hello.supportedRoles.contains("visualizer@v1"), hello.visualizerSupport != nil { roles.append("visualizer@v1") }
         return roles
     }
@@ -589,6 +598,7 @@ public actor PlayerSession {
         ready = false
         visualizerRequest = nil
         controllerState = nil
+        artworkRequest = nil
         declareActivities(force: true)
         if claiming {
             // Sound normally follows within a moment; without it, the claim lapses.
@@ -600,7 +610,12 @@ public actor PlayerSession {
         sentActivation = true
         sendGroupUpdate()
         status.connection = left ? .left : .connected
-        // Its controller gets the group's state at once (messaging.md, server/state).
+        // Each role with a server/state object gets its state at once (messaging.md, server/state):
+        // metadata and color here, the controller from the group.
+        let now = ServerClock.nowMicros()
+        let metadata = activeRoles.contains("metadata@v1") ? TimestampOnlyState(timestamp: now) : nil
+        let color = activeRoles.contains("color@v1") ? TimestampOnlyState(timestamp: now) : nil
+        if metadata != nil || color != nil { sendMessage("server/state", ServerState(metadata: metadata, color: color)) }
         controllerChanged()
     }
 
@@ -665,10 +680,19 @@ public actor PlayerSession {
             }
             visualizerRequest = request
             // A change to an active stream restarts it in place; without one it waits for the next.
-            if let current = visualizer, request.negotiated() != current.config {
+            // Never to a client that says it's unavailable (messaging.md, stream/start).
+            if let current = visualizer, state.available, request.negotiated() != current.config {
                 startVisualizer(request.negotiated(), sampleRate: current.sampleRate, channels: current.channels,
                                 after: current.lastUs)
             }
+        }
+        if let request = state.artwork, activated, activeRoles.contains("artwork@v1") {
+            guard !request.isMalformed else {
+                Log.warning("\(status.name ?? "?"): asks for more than four artwork channels, or one without its format")
+                return .stop(.failed("protocol error"))
+            }
+            artworkRequest = request
+            if let current = artworkStream, state.available, request.streamed != current { startArtwork(request.streamed) }
         }
         let wasAvailable = available
         available = state.available
@@ -804,7 +828,8 @@ public actor PlayerSession {
 
     /// stream/end for every stream that's active.
     private func endStreams() {
-        let roles = (streaming ? ["player"] : []) + (visualizer != nil ? ["visualizer"] : [])
+        let roles = (streaming ? ["player"] : []) + (artworkStream != nil ? ["artwork"] : [])
+            + (visualizer != nil ? ["visualizer"] : [])
         if !roles.isEmpty { sendMessage("stream/end", StreamEnd(roles: roles)) }
         stopStreaming()
     }
@@ -817,6 +842,7 @@ public actor PlayerSession {
         buffer = PlayerBufferAccount()
         visualizer = nil
         visualizerBuffer = VisualizerBufferAccount()
+        artworkStream = nil
     }
 
     /// Send one block of group audio, and its visualization; `timestampUs` is its play time
@@ -825,6 +851,7 @@ public actor PlayerSession {
         guard activated, !left, available, rehandshake == nil else { return }
         deliverAudio(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth, leadUs: leadUs)
         visualize(pcm, timestampUs: timestampUs)
+        if artworkStream == nil, let request = artworkRequest { startArtwork(request.streamed) }
     }
 
     /// The player gets the format closest to the source (see `FormatChoice`).
@@ -946,6 +973,21 @@ public actor PlayerSession {
         visualizer = VisualizerAnalyzer(config: config, sampleRate: sampleRate, channels: channels, after: lastUs)
         Log.info("\(status.name ?? "?"): visualizing \(config.types.isEmpty ? "nothing" : config.types.joined(separator: ", ")) "
             + "at \(config.rateMax) fps")
+    }
+
+    /// stream/start for artwork, new or with new channels. There are no images to send; a
+    /// channel turned off is cleared first, as the spec asks, though it never showed one.
+    private func startArtwork(_ config: ArtworkConfig) {
+        for (index, channel) in (artworkStream?.channels ?? []).enumerated() where channel.source != "none"
+            && (index >= config.channels.count || config.channels[index].source == "none") {
+            // An empty image: an announce of total_size 0 with a present timestamp.
+            var clear = Data([0x02])
+            withUnsafeBytes(of: ServerClock.nowMicros().bigEndian) { clear.append(contentsOf: $0) }
+            clear.append(contentsOf: [0, 0, 0, 0])
+            send(UInt8(8 + index), clear)
+        }
+        sendMessage("stream/start", StreamStart(serverTransmitted: ServerClock.nowMicros(), artwork: config))
+        artworkStream = config
     }
 
     // MARK: Player control

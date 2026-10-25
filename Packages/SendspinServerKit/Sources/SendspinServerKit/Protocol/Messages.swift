@@ -241,6 +241,34 @@ public struct ClientState: Decodable, Sendable {
     public var available: Bool
     public var player: PlayerState?
     public var visualizer: VisualizerConfig?
+    public var artwork: ArtworkConfig?
+}
+
+/// The `artwork` object of client/state, and of stream/start (roles/artwork/v1.md).
+public struct ArtworkConfig: Codable, Sendable, Equatable {
+    public struct Channel: Codable, Sendable, Equatable {
+        /// 'album', 'artist' or 'none'.
+        public var source: String
+        /// 'jpeg' or 'png'; with the size, required unless the source is 'none'.
+        public var format: String?
+        public var width: Int?
+        public var height: Int?
+    }
+
+    public var channels: [Channel]
+
+    static let maxChannels = 4
+
+    /// More than four channels, or a channel without its format and size: a protocol error.
+    var isMalformed: Bool {
+        channels.count > Self.maxChannels
+            || channels.contains { $0.source != "none" && ($0.format == nil || $0.width == nil || $0.height == nil) }
+    }
+
+    /// For stream/start: the same channels, without those after the last streamed one.
+    var streamed: ArtworkConfig {
+        ArtworkConfig(channels: Array(channels.prefix((channels.lastIndex { $0.source != "none" } ?? -1) + 1)))
+    }
 }
 
 /// The `controller` object of client/command (roles/controller/v1.md).
@@ -331,9 +359,10 @@ public struct StreamStart: Encodable, Sendable {
     public var serverTransmitted: Int64
     public var player: StreamStartPlayer?
     public var visualizer: VisualizerConfig?
+    public var artwork: ArtworkConfig?
 
     enum CodingKeys: String, CodingKey {
-        case player, visualizer
+        case player, visualizer, artwork
         case serverTransmitted = "server_transmitted"
     }
 }
@@ -354,8 +383,16 @@ public struct ControllerState: Encodable, Equatable, Sendable {
     }
 }
 
+/// The `metadata` and `color` objects of server/state, with a timestamp and nothing else: the
+/// Mac's sound comes without track details or artwork to take colors from.
+public struct TimestampOnlyState: Encodable, Sendable {
+    public var timestamp: Int64
+}
+
 public struct ServerState: Encodable, Sendable {
     public var controller: ControllerState?
+    public var metadata: TimestampOnlyState?
+    public var color: TimestampOnlyState?
 }
 
 public struct StreamEnd: Encodable, Sendable {

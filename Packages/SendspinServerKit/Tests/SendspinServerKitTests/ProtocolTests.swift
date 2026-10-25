@@ -125,6 +125,25 @@ struct MessageTests {
         let object = try JSONSerialization.jsonObject(with: json) as? NSDictionary
         #expect(object == ["type": "server/command", "payload": ["player": ["command": "volume", "volume": 30]]])
     }
+
+    @Test func encodesControllerStateWithItsRepeatKey() throws {
+        let json = try MessageCoding.encode(type: "server/state", payload: ServerState(
+            controller: ControllerState(supportedCommands: ["switch"], volume: 100, muted: false)))
+        let object = try JSONSerialization.jsonObject(with: json) as? NSDictionary
+        #expect(object == ["type": "server/state", "payload": ["controller": [
+            "supported_commands": ["switch"], "volume": 100, "muted": false, "repeat": "off", "shuffle": false]]])
+    }
+
+    /// stream/start echoes the channels, without trailing ones that aren't streamed.
+    @Test func artworkStreamsTheRequestedChannels() throws {
+        let album = ArtworkConfig.Channel(source: "album", format: "jpeg", width: 300, height: 300)
+        let none = ArtworkConfig.Channel(source: "none")
+        #expect(ArtworkConfig(channels: [none, album, none]).streamed == ArtworkConfig(channels: [none, album]))
+        #expect(ArtworkConfig(channels: [none]).streamed.channels.isEmpty)
+        #expect(ArtworkConfig(channels: Array(repeating: none, count: 5)).isMalformed)
+        #expect(ArtworkConfig(channels: [ArtworkConfig.Channel(source: "artist")]).isMalformed)
+        #expect(!ArtworkConfig(channels: [album, none]).isMalformed)
+    }
 }
 
 struct SecureChannelTests {
