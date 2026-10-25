@@ -341,7 +341,9 @@ private struct PlayerRow: View {
                       })
             if let phase = tokenPhase {
                 // One view from looking to paired, so the camera stays on throughout.
-                TokenCaption(speaker: player.name, locations: tokenLocations, phase: phase) { token in
+                TokenCaption(speaker: player.name, locations: tokenLocations, phase: phase,
+                             scanning: bridge.scanning == player.instanceName,
+                             onScan: { bridge.startScanning(player.instanceName) }) { token in
                     bridge.pairWithToken(player.instanceName, token: token)
                 }
             } else if let pairing = bridge.speakerPairing, pairing.name == player.instanceName {
@@ -357,7 +359,7 @@ private struct PlayerRow: View {
     private var tokenPhase: TokenCaption.Phase? {
         if let entry = bridge.tokenEntry, entry.name == player.instanceName { return .looking(again: entry.again) }
         guard let pairing = bridge.speakerPairing, pairing.name == player.instanceName,
-              case .token = pairing.method, TokenCaption.scans(tokenLocations) else { return nil }
+              case .token = pairing.method else { return nil }
         return pairing.progress == .paired ? .paired : .pairing
     }
 
@@ -493,11 +495,10 @@ private struct PairingCaption: View {
     }
 }
 
-/// A speaker that offers no code: its pairing token. Printed, as a QR code, the camera reads
-/// it, with what's happening over the picture; otherwise, or as well, it's pasted. Either way
-/// pairing starts as soon as there's a token, as the code slots start once full. Pasted
-/// tokens are read leniently (whitespace, case, the `SP:` prefix), as the spec asks; anything
-/// else reads as a token that didn't match.
+/// A speaker that offers no code: its pairing token. Printed, as a QR code, it's scanned in a
+/// window of its own (`QRScanView`); it can also be pasted. Pairing starts as soon as there's a
+/// token, as the code slots start once full. Pasted tokens are read leniently (whitespace,
+/// case, the `SP:` prefix), as the spec asks; anything else reads as a token that didn't match.
 private struct TokenCaption: View {
     enum Phase: Equatable {
         /// `again`: the last token didn't match, as with a wrong code.
@@ -510,146 +511,94 @@ private struct TokenCaption: View {
     /// Where the speaker says its token is (pairing.md, pair-method descriptor `locations`).
     let locations: [PairMethods.Location]
     let phase: Phase
+    /// Its QR code is being scanned in the scan window.
+    let scanning: Bool
+    /// Opens the scan window, or brings it forward.
+    let onScan: () -> Void
     let onPair: (PairingToken.PairingPSK) -> Void
     @State private var text = ""
     @State private var unreadable = false
-    /// The QR code in view, and when it was last seen: one that's held up again after it was
-    /// out of view counts as a new scan, so a token can be tried again on purpose.
-    @State private var inView: (code: String, at: Date)?
-    /// A scan was read just now: "Token read" shows a moment however fast the answer comes.
-    @State private var reading = false
+    /// Pasting chosen over scanning.
+    @State private var pasting = false
     @FocusState private var focused: Bool
 
-    /// Printed on the device or its leaflet, and there's a camera the user allows.
-    static func scans(_ locations: [PairMethods.Location]) -> Bool {
-        (locations.contains(.device) || locations.contains(.leaflet)) && QRScanner.isAvailable
+    /// Printed on it or its leaflet, and there's a camera to scan it with.
+    private var scannable: Bool {
+        (locations.contains(.device) || locations.contains(.leaflet)) && QRScanner.hasCamera
     }
-
-    private var scans: Bool { Self.scans(locations) }
     private var wrong: Bool { phase == .looking(again: true) || unreadable }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if scans {
-                camera
-            } else {
-                Text((wrong ? "That token didn't match. " : "") + prompt)
+            if scanning {
+                Button("Scanning in a window…", action: onScan)
+                    .buttonStyle(.link)
+            } else if scannable && !pasting, case .looking = phase {
+                Text((wrong ? "That token didn't match. " : "") + hint)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if case .looking = phase {
-                TextField(scans ? "or paste the token: SP:0…" : "SP:0…", text: $text)
-                    .font(.system(.caption, design: .monospaced))
-                    .focused($focused)
-                    .onSubmit(pair)
-                    .onChange(of: text) { typed, now in
-                        if let token = PairingToken.decodePairingPSK(now) {
-                            submit(token)
-                        } else if now.count - typed.count > 8 {
-                            // Pasted, and not a token.
-                            unreadable = true
-                            text = ""
-                        }
+                HStack(spacing: 12) {
+                    Button(action: onScan) {
+                        Label("Scan the QR Code", systemImage: "camera")
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button("Or paste a token") {
+                        pasting = true
+                        focused = true
+                    }
+                    .buttonStyle(.link)
+                }
+            } else {
+                switch phase {
+                case .pairing:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Pairing with \(speaker)…")
+                    }
+                case .paired:
+                    Label("Paired", systemImage: "checkmark")
+                case .looking:
+                    Text((wrong ? "That token didn't match. " : "") + prompt)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextField("SP:0…", text: $text)
+                        .font(.system(.caption, design: .monospaced))
+                        .focused($focused)
+                        .onSubmit(pair)
+                        .onChange(of: text) { typed, now in
+                            if let token = PairingToken.decodePairingPSK(now) {
+                                submit(token)
+                            } else if now.count - typed.count > 8 {
+                                // Pasted, and not a token.
+                                unreadable = true
+                                text = ""
+                            }
+                        }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
         .padding(.leading, destinationIndent)
         .padding(.bottom, 6)
-        .onAppear { if !scans { focused = true } }
+        .onAppear { if !scannable { focused = true } }
     }
 
-    /// The picture, the framing corners, and over it what's happening.
-    private var camera: some View {
-        ZStack(alignment: .bottom) {
-            QRScanner { code in scanned(code) }
-            FramingCorners(color: cornerColor)
-                .frame(width: 112, height: 112)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack(spacing: 7) {
-                switch shown {
-                case .pairing:
-                    ProgressView().controlSize(.mini).tint(.white)
-                case .paired:
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                case .looking:
-                    if wrong { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange) }
-                }
-                Text(overlayText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .font(.caption)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 9))
-            .padding(10)
-        }
-        .frame(height: 190)
-        .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Camera: \(overlayText)")
+    /// Where the QR code is, before scanning.
+    private var hint: String {
+        let onDevice = locations.contains(.device), onLeaflet = locations.contains(.leaflet)
+        let place = onDevice && onLeaflet ? "on \(speaker) or its leaflet"
+            : onDevice ? "on \(speaker)" : "on the leaflet that came with \(speaker)"
+        return "The pairing token is the QR code \(place)."
     }
 
-    /// What the overlay shows: a read stays "Token read" a moment, even if it failed at once.
-    private var shown: Phase { reading && phase != .paired ? .pairing : phase }
-
-    private var cornerColor: Color {
-        switch shown {
-        case .pairing: .accentColor
-        case .paired: .green
-        case .looking: wrong ? .orange : .white
-        }
-    }
-
-    private var overlayText: String {
-        switch shown {
-        case .pairing: return "Token read. Pairing with \(speaker)…"
-        case .paired: return "Paired with \(speaker)"
-        case .looking:
-            if wrong { return "That token didn't match. Hold up \(speaker)'s own QR code." }
-            let onDevice = locations.contains(.device), onLeaflet = locations.contains(.leaflet)
-            let place = onDevice && onLeaflet ? "on \(speaker) or its leaflet"
-                : onDevice ? "on \(speaker)" : "on the leaflet that came with \(speaker)"
-            return "Hold the QR code \(place) up to the camera"
-        }
-    }
-
-    /// Without a camera: where the token is, if the speaker says.
+    /// Pasting: where the token is, if the speaker says.
     private var prompt: String {
         let onDevice = locations.contains(.device), onLeaflet = locations.contains(.leaflet)
-        if onDevice && onLeaflet { return "Scan the QR code on \(speaker) or its leaflet, then paste the token here:" }
-        if onDevice { return "Scan the QR code on \(speaker), then paste the token here:" }
-        if onLeaflet { return "Scan the QR code on the leaflet that came with \(speaker), then paste the token here:" }
+        if onDevice && onLeaflet { return "Paste the token from the QR code on \(speaker) or its leaflet:" }
+        if onDevice { return "Paste the token from the QR code on \(speaker):" }
+        if onLeaflet { return "Paste the token from the QR code on the leaflet that came with \(speaker):" }
         if locations.contains(.operator) { return "Paste the pairing token you set up for \(speaker):" }
         return "Paste the pairing token of \(speaker):"
-    }
-
-    /// A QR code the camera reads, a few times a second while it's in view. Only a new one
-    /// counts: a different code, or the same one held up again.
-    private func scanned(_ code: String) {
-        let now = Date()
-        let isNew = inView.map { $0.code != code || now.timeIntervalSince($0.at) > 1.5 } ?? true
-        inView = (code, now)
-        guard isNew, case .looking = phase else { return }
-        let token = PairingToken.decodePairingPSK(code)
-        Log.info("QR code read: " + (token.map { "a pairing token for \($0.clientID)" } ?? "not a pairing token"))
-        showReading()
-        if let token {
-            submit(token)
-        } else {
-            unreadable = true
-        }
-    }
-
-    private func showReading() {
-        reading = true
-        Task {
-            try? await Task.sleep(for: .seconds(1))
-            reading = false
-        }
     }
 
     private func submit(_ token: PairingToken.PairingPSK) {
@@ -665,26 +614,6 @@ private struct TokenCaption: View {
             return
         }
         submit(token)
-    }
-}
-
-/// Four corners that frame where the QR code goes.
-private struct FramingCorners: View {
-    let color: Color
-
-    var body: some View {
-        Canvas { context, size in
-            let arm: CGFloat = 20
-            var path = Path()
-            for (x, y, dx, dy) in [(0.0, 0.0, 1.0, 1.0), (size.width, 0, -1, 1), (0, size.height, 1, -1),
-                                   (size.width, size.height, -1, -1)] {
-                path.move(to: CGPoint(x: x + dx * arm, y: y))
-                path.addLine(to: CGPoint(x: x, y: y))
-                path.addLine(to: CGPoint(x: x, y: y + dy * arm))
-            }
-            context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-        }
-        .accessibilityHidden(true)
     }
 }
 

@@ -7,6 +7,10 @@ import Vision
 struct QRScanner: NSViewRepresentable {
     /// Each QR code it reads, as text.
     let onCode: @MainActor @Sendable (String) -> Void
+    /// macOS answered the camera question, the first time.
+    var onAnswer: @MainActor @Sendable () -> Void = {}
+
+    static var hasCamera: Bool { AVCaptureDevice.default(for: .video) != nil }
 
     /// There's a camera, and the user hasn't refused it to this app.
     static var isAvailable: Bool {
@@ -17,7 +21,18 @@ struct QRScanner: NSViewRepresentable {
         }
     }
 
-    func makeNSView(context: Context) -> View { View(reader: QRReader(onCode: onCode)) }
+    /// There's a camera, but the user refused it: macOS doesn't ask again, only System
+    /// Settings changes it.
+    static var isRefused: Bool {
+        AVCaptureDevice.default(for: .video) != nil && AVCaptureDevice.authorizationStatus(for: .video) == .denied
+    }
+
+
+
+    /// Privacy & Security, Camera, in System Settings.
+    static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+
+    func makeNSView(context: Context) -> View { View(reader: QRReader(onCode: onCode, onAnswer: onAnswer)) }
     /// The handler of the view as it is now, not as it was when the camera started.
     func updateNSView(_ nsView: View, context: Context) { nsView.reader.onCode = onCode }
 
@@ -47,12 +62,14 @@ final class QRReader: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @u
     private let queue = DispatchQueue(label: "eu.vooijs.MacOSAudioForSendspin.qr")
     /// Set on the main thread, read there.
     @MainActor var onCode: @MainActor @Sendable (String) -> Void
+    private let onAnswer: @MainActor @Sendable () -> Void
     // On `queue`.
     private var configured = false
     private var lastRead = Date.distantPast
 
-    init(onCode: @escaping @MainActor @Sendable (String) -> Void) {
+    init(onCode: @escaping @MainActor @Sendable (String) -> Void, onAnswer: @escaping @MainActor @Sendable () -> Void) {
         self.onCode = onCode
+        self.onAnswer = onAnswer
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         previewLayer.videoGravity = .resizeAspectFill
         super.init()
@@ -60,7 +77,12 @@ final class QRReader: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @u
 
     func start() {
         // The first time, macOS asks the user (NSCameraUsageDescription).
+        let unasked = AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined
         AVCaptureDevice.requestAccess(for: .video) { [self] granted in
+            if unasked {
+                let onAnswer = onAnswer
+                DispatchQueue.main.async { MainActor.assumeIsolated { onAnswer() } }
+            }
             guard granted else { return }
             queue.async { [self] in
                 if !configured { configure() }

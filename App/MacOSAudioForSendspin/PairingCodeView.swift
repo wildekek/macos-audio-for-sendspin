@@ -109,7 +109,7 @@ struct PairingCodeView: View {
 }
 
 /// The menu's look: Liquid Glass on macOS 26, the system material before it.
-private struct GlassBackground: ViewModifier {
+struct GlassBackground: ViewModifier {
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {

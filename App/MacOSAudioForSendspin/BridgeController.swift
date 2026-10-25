@@ -455,6 +455,7 @@ final class BridgeController {
         if isSelected { chosenPlayers.insert(instanceName) } else { chosenPlayers.remove(instanceName) }
         if isSelected { pairWhenNeeded.insert(instanceName) } else { pairWhenNeeded.remove(instanceName) }
         if !isSelected, tokenEntry?.name == instanceName { tokenEntry = nil }
+        if !isSelected, scanning == instanceName { scanning = nil }
         if isSelected {
             selected.insert(instanceName)
             // Choosing a player that shows "Identity changed" accepts its new identity: the
@@ -1011,9 +1012,27 @@ final class BridgeController {
 
     /// The speaker whose row asks for its pairing token, and whether the last one didn't match.
     private(set) var tokenEntry: (name: String, again: Bool)?
+    /// The speaker whose QR code is being scanned, in a window of its own: the menu would
+    /// close as soon as macOS asks about the camera, or at any click elsewhere.
+    private(set) var scanning: String? {
+        didSet { if scanning != oldValue { onScanning?(scanning) } }
+    }
+    /// The app opens and closes the scan window.
+    var onScanning: ((String?) -> Void)?
+
+    /// Scan, or bring the window forward if it's open already.
+    func startScanning(_ name: String) {
+        if scanning == name { onScanning?(name) } else { scanning = name }
+    }
+
+    func stopScanning() {
+        scanning = nil
+    }
 
     func askForToken(_ name: String, again: Bool = false) {
         endSpeakerPairing()
+        // A new attempt starts with the Scan button; one that didn't match keeps scanning.
+        if !again { scanning = nil }
         tokenEntry = (name, again)
     }
 
@@ -1047,6 +1066,11 @@ final class BridgeController {
     func submitPairingCode(_ code: String) {
         codeContinuation?.resume(returning: code)
         codeContinuation = nil
+    }
+
+    /// A speaker's name, as the menu shows it.
+    func displayName(_ name: String) -> String {
+        speakers.first { $0.instanceName == name }?.name ?? playerNames[name] ?? name
     }
 
     /// Paired speakers for Settings: their names, as last seen.
@@ -1093,7 +1117,10 @@ final class BridgeController {
             speakerPairing?.progress = .paired
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
-                if speakerPairing?.name == name, speakerPairing?.progress == .paired { speakerPairing = nil }
+                if speakerPairing?.name == name, speakerPairing?.progress == .paired {
+                    speakerPairing = nil
+                    if scanning == name { scanning = nil }
+                }
             }
         } else if case .failed = progress, case .token = speakerPairing?.method {
             // A wrong token reads as a wrong code does: asked again, under the row. The speaker

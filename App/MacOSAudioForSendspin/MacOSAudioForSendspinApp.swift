@@ -29,10 +29,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var welcomeWindow: NSWindow?
     private var pairingWindow: NSPanel?
     private var pairingWindowClose: Task<Void, Never>?
+    private var scanWindow: NSPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !bridge.isWelcomeDone || AppLocation.needsMove { showWelcome() }
         bridge.onPairingCode = { [weak self] code in self?.pairingCodeChanged(code) }
+        bridge.onScanning = { [weak self] name in self?.scanningChanged(name) }
+    }
+
+    // MARK: Scanning a speaker's QR code
+
+    /// Scanning starts from the menu: the camera gets a window of its own, which stays when the
+    /// menu closes (as macOS's camera question closes it). Scanning ends, by Cancel or 1.5 s
+    /// after "Paired": it closes.
+    private func scanningChanged(_ name: String?) {
+        guard let name else {
+            scanWindow?.close()
+            return
+        }
+        if let scanWindow {
+            scanWindow.orderFrontRegardless()
+            return
+        }
+        // Glass, like the code window: no window controls; Cancel closes it.
+        let panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: false)
+        let hosting = NSHostingController(rootView: QRScanView(bridge: bridge, name: name) { [weak self] in
+            self?.bridge.stopScanning()
+        })
+        // Sized once: its states keep the same size (see PairingCodeView).
+        hosting.sizingOptions = []
+        panel.contentViewController = hosting
+        panel.setContentSize(hosting.view.fittingSize)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.title = "Scan \(bridge.displayName(name))'s QR code"  // for VoiceOver and the window list
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.delegate = self
+        if let screen = NSScreen.main {
+            let frame = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2,
+                                         y: frame.midY - panel.frame.height / 2 + frame.height / 8))
+        }
+        scanWindow = panel
+        panel.orderFrontRegardless()
     }
 
     // MARK: Pairing code
@@ -112,6 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Done or closed early: either way, start what the window didn't get to. Closing the
     /// pairing code's window only dismisses it: the pairing goes on, its code in the menu.
     func windowWillClose(_ notification: Notification) {
+        if (notification.object as? NSWindow) === scanWindow {
+            scanWindow = nil
+            bridge.stopScanning()
+            return
+        }
         if (notification.object as? NSWindow) === pairingWindow {
             pairingWindow = nil
             pairingWindowClose?.cancel()
