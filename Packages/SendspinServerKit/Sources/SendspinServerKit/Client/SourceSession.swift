@@ -553,7 +553,8 @@ actor SourceSession {
         }
         guard let best else { return }
         let wasConverged = converged
-        filter.update(measurement: best.measurement, maxError: max(1, best.maxError), timeAdded: best.at)
+        // As measured: the filter discards a max_error of 0 or less (messaging.md, Time filter update).
+        filter.update(measurement: best.measurement, maxError: best.maxError, timeAdded: best.at)
         if converged && !wasConverged {
             Log.info("Source: clock in sync with \(state.serverName ?? "server") (±\(Int(filter.error)) µs)")
             sendState(force: true)
