@@ -321,6 +321,12 @@ public actor PlayerSession {
         sentActivation = false
         available = false
         ready = false
+        // Its volume and mute may have changed meanwhile: they come with its first client/state
+        // (player/v1.md, Volume and mute).
+        status.volume = nil
+        status.muted = nil
+        status.canSetVolume = false
+        status.canMute = false
         // A player that left stays out across reconnects: the server MUST NOT auto-rejoin it
         // (messaging.md, External Source Handling).
         lastGroupUpdate = nil
