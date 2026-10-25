@@ -446,7 +446,8 @@ public actor PlayerSession {
         connectionPSK = status.paired ? (longTerm ?? SendspinPSK.sentinel) : SendspinPSK.sentinel
         Log.debug("\(url): Noise handshake done (\(suite.rawValue))")
 
-        sendMessage("server/hello", ServerHello(name: identity.name))
+        // The name our mDNS TXT record carries, which SHOULD match (connection.md): a DNS label's 63 bytes.
+        sendMessage("server/hello", ServerHello(name: identity.name.truncated(toUTF8Bytes: ServiceListener.maxNameBytes)))
         timeout?.cancel()
         timeout = Self.closeAfterTimeout(socket)
 
