@@ -1172,19 +1172,30 @@ public actor PlayerSession {
             + "at \(config.rateMax) fps")
     }
 
-    /// stream/start for artwork, new or with new channels. There are no images to send; a
-    /// channel turned off is cleared first, as the spec asks, though it never showed one.
+    /// stream/start for artwork, new or with new channels. There are no images, so a channel's
+    /// current image is an empty one: a channel turned off is cleared before the stream/start,
+    /// as the spec asks, and a new or changed channel right after it, as its current image
+    /// (Late join), so nothing shows there that an earlier stream left.
     private func startArtwork(_ config: ArtworkConfig) {
-        for (index, channel) in (artworkStream?.channels ?? []).enumerated() where channel.source != "none"
+        let old = artworkStream?.channels ?? []
+        for (index, channel) in old.enumerated() where channel.source != "none"
             && (index >= config.channels.count || config.channels[index].source == "none") {
-            // An empty image: an announce of total_size 0 with a present timestamp.
-            var clear = Data([0x02])
-            withUnsafeBytes(of: ServerClock.nowMicros().bigEndian) { clear.append(contentsOf: $0) }
-            clear.append(contentsOf: [0, 0, 0, 0])
-            send(UInt8(8 + index), clear)
+            sendEmptyImage(channel: index)
         }
         sendMessage("stream/start", StreamStart(serverTransmitted: ServerClock.nowMicros(), artwork: config))
         artworkStream = config
+        for (index, channel) in config.channels.enumerated() where channel.source != "none"
+            && (index >= old.count || old[index] != channel) {
+            sendEmptyImage(channel: index)
+        }
+    }
+
+    /// An announce of total_size 0 with a present timestamp: the channel shows nothing.
+    private func sendEmptyImage(channel: Int) {
+        var image = Data([0x02])
+        withUnsafeBytes(of: ServerClock.nowMicros().bigEndian) { image.append(contentsOf: $0) }
+        image.append(contentsOf: [0, 0, 0, 0])
+        send(UInt8(8 + channel), image)
     }
 
     // MARK: Input (roles/source/v1.md)
