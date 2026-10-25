@@ -911,7 +911,12 @@ public actor PlayerSession {
             status.inputSignal = source.signal
         }
         // Unavailable is an implicit stop: the client drops our start (Default streaming behavior).
-        if !available { startPending = false }
+        // It does so before saying it, and its messages come in send order, so no answer to an
+        // earlier start can follow any more.
+        if !available {
+            startPending = false
+            startsUnanswered = 0
+        }
         sendInputCommand()
         return nil
     }
