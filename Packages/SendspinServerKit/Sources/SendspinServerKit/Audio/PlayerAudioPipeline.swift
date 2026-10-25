@@ -118,7 +118,8 @@ struct PlayerAudioPipeline {
     private mutating func quantize(_ samples: [Float]) -> Data {
         let bytesPerSample = format.bitDepth / 8
         let fullScale = Float(Int64(1) << (format.bitDepth - 1))
-        let maxValue = fullScale - 1
+        // In Double: 2³¹ − 1 as a Float rounds up to 2³¹, which doesn't fit an Int32.
+        let minValue = -Double(fullScale), maxValue = Double(fullScale) - 1
         var output = Data(count: samples.count * bytesPerSample)
         output.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
             for (i, sample) in samples.enumerated() {
@@ -128,7 +129,7 @@ struct PlayerAudioPipeline {
                 // silence pass bit-perfect: dither would only add noise to them.
                 let noise = format.bitDepth == 16 && exact != exact.rounded() ? dither.next() : 0
                 let scaled = (exact + noise).rounded()
-                let value = Int32(max(-fullScale, min(maxValue, scaled)))
+                let value = Int32(max(minValue, min(maxValue, Double(scaled))))
                 let offset = i * bytesPerSample
                 for byte in 0..<bytesPerSample {
                     bytes[offset + byte] = UInt8(truncatingIfNeeded: value >> (8 * byte))

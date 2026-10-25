@@ -92,6 +92,16 @@ struct PlayerAudioPipelineTests {
         #expect(values == [Int16.max, Int16.min])
     }
 
+    /// 2³¹ − 1 isn't a Float: full scale at 32-bit must clip, not trap.
+    @Test func clips32BitAtFullScale() throws {
+        var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 32, channels: 1),
+                                                        sourceRate: 48_000, sourceChannels: 1))
+        let outResult = pipeline.process(pcm([1.0, 2.0, -2.0], channels: 1), timestampUs: 0)
+        let out = try #require(outResult.first)
+        let values = out.payload.withUnsafeBytes { Array($0.bindMemory(to: Int32.self)) }
+        #expect(values == [Int32.max, Int32.max, Int32.min])
+    }
+
     /// 16-bit values and silence pass untouched; only finer samples get dither.
     @Test func dithersOnlySamplesFinerThan16Bit() throws {
         var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16, channels: 1),
