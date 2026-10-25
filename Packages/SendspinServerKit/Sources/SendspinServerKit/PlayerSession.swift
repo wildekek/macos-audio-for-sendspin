@@ -430,9 +430,7 @@ public actor PlayerSession {
         } else {
             throw SessionError.handshake("Noise message 2 doesn't verify")
         }
-        guard (try? JSONSerialization.jsonObject(with: payload)) is [String: Any] else {
-            throw SessionError.handshake("Noise message 2 payload isn't a JSON object")
-        }
+        guard payload == Self.message2Payload else { throw SessionError.handshake("Noise message 2 payload isn't {}") }
         channel = SecureChannel(transport: transport)
         status.clientID = clientInit.clientID
         self.suite = suite
@@ -499,6 +497,10 @@ public actor PlayerSession {
     }
 
     /// Each handshake step must arrive within 30 s (connection.md, Failure Handling).
+    /// Message 2's payload: the empty object, as the literal two bytes `{}`; anything else is a
+    /// malformed payload, a silent failure (messaging.md, noise/handshake).
+    static let message2Payload = Data("{}".utf8)
+
     private static func closeAfterTimeout(_ socket: WebSocketConnection) -> Task<Void, Never>? {
         Task {
             try? await Task.sleep(for: .seconds(30))
@@ -1705,7 +1707,8 @@ extension PlayerSession {
             throw SessionError.handshake("noise/handshake out of sequence")
         }
         // A miss fails: no Sentinel fallback in a re-handshake.
-        let (_, transport) = try state.handshake.readMessage2(message2)
+        let (payload, transport) = try state.handshake.readMessage2(message2)
+        guard payload == Self.message2Payload else { throw SessionError.handshake("Noise message 2 payload isn't {}") }
         channel = SecureChannel(transport: transport)
         rehandshake = nil
         connectionPSK = state.psk
