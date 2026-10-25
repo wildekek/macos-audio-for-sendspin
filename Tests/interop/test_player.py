@@ -17,7 +17,8 @@ and sendspin-bridge against it. It takes PCM at every rate the Sendspin device o
 
         Runs `sendspin-bridge --cycle-formats` against itself and checks that each format
         switch gives exactly one stream/start, in that format, with no timestamp jumps within
-        a stream. Quit the app first: it would switch the device's rate too.
+        a stream, and that each new format starts no earlier than the previous one ended, at
+        the same rate exactly there. Quit the app first: it would switch the device's rate too.
 """
 
 import argparse
@@ -283,7 +284,7 @@ async def rate_switch(args) -> int:
                               advertise_mdns=False)
     await listener.start()
     bridge = await asyncio.create_subprocess_exec(
-        args.bridge, "--cycle-formats", args.formats, "--every", str(args.every), "--lead-ms", "300",
+        args.bridge, "--cycle-formats", args.formats, "--every", str(args.every), "--lead-ms", "400",
         f"ws://127.0.0.1:{port}/sendspin",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     bridge_log, _ = await bridge.communicate()
@@ -308,6 +309,15 @@ async def rate_switch(args) -> int:
         failures.append("the streams aren't one per format switch, in order")
     if any(s["jumps"] for s in received):
         failures.append("timestamps jump within a stream")
+    # A new format starts where the previous one ended, never before it (player/v1.md,
+    # stream/start); a rate switch may leave a gap, as the device's timeline restarts, but a
+    # bit depth switch keeps the rate and must not.
+    for previous, stream in zip(received, received[1:]):
+        gap_ms = (stream["first_ts"] - previous["end_ts"]) / 1000
+        if gap_ms < -0.05:
+            failures.append(f"{stream['format']} starts {-gap_ms:.1f} ms before the previous format ended")
+        elif stream["format"][0] == previous["format"][0] and gap_ms > 0.05:
+            failures.append(f"a {gap_ms:.1f} ms gap switching to {stream['format']} at the same rate")
     for failure in failures:
         print("FAIL:", failure)
     if failures:
