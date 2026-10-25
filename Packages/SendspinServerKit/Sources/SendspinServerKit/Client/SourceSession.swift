@@ -277,7 +277,6 @@ actor SourceSession {
     /// Validate and apply server/activate (messaging.md, server/activate).
     private func handleActivate(_ activate: ServerActivateReceived) async throws -> Bool {
         let activities = Set(activate.activities)
-        let roles = activate.activeRoles ?? (activated ? activeRoles : [])
         let unpaired = matched != .longTerm
 
         func allowed(_ activities: Set<String>, unpairedAccess: Bool) -> Bool {
@@ -287,6 +286,11 @@ actor SourceSession {
                 return activities.isSubset(of: ["pairing"]) || (unpairedAccess && activities.isSubset(of: ["playback", "pairing"]))
             }
         }
+        // Roles carry over when omitted, but not onto a connection that can no longer play, as
+        // after a re-handshake to the pairing PSK: then they count as empty, and the activation
+        // isn't refused for them (messaging.md, server/activate).
+        let capable = allowed(activities.union(["playback"]), unpairedAccess: false)
+        let roles = activate.activeRoles ?? (activated && capable ? activeRoles : [])
         func admissible(unpairedAccess: Bool) -> Bool {
             guard allowed(activities, unpairedAccess: unpairedAccess) else { return false }
             let capable = allowed(activities.union(["playback"]), unpairedAccess: unpairedAccess)
