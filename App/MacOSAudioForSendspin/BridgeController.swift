@@ -1005,10 +1005,18 @@ final class BridgeController {
 
     /// Another server took the speaker: it leaves the group as if unticked, so the menu shows
     /// what plays. Ticking it takes it back. The app doesn't track it further: whether the
-    /// other server still plays there isn't something a speaker tells us.
+    /// other server still plays there isn't something a speaker tells us. Unlike the user's
+    /// untick it keeps the approval, which SHOULD persist (pairing.md, Unpaired Access):
+    /// ticking it again doesn't approve whatever identity shows up next.
     private func speakerTaken(_ name: String) {
         Log.info("\(name): unticked, another server has it")
+        let approval = approvedPlayers[name]
         if menuState.group.contains(name) { perform(.remove(name)) } else { setSelected(name, false) }
+        if let approval {
+            var approved = approvedPlayers
+            approved[name] = approval
+            defaults.set(approved, forKey: "approvedPlayers")
+        }
     }
 
     // MARK: Capture
