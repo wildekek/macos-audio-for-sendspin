@@ -58,6 +58,7 @@ struct SettingsView: View {
             }
 
             pairedServer
+            pairingHeldBack
 
             Section {
                 Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
@@ -133,6 +134,20 @@ struct SettingsView: View {
                 } label: {
                     Text(bridge.sourceServerName)
                     Text(status.connected ? "Paired" : "Paired, not connected right now")
+                }
+            }
+        }
+    }
+
+    /// After too many wrong codes, pairing by code waits for the user (pairing.md, Rounds).
+    @ViewBuilder private var pairingHeldBack: some View {
+        if bridge.sourceStatus.pairingHeldBack {
+            Section {
+                LabeledContent {
+                    Button("Allow Pairing") { bridge.allowPairingAgain() }
+                } label: {
+                    Text("Pairing held back")
+                    Text("After 20 wrong codes, no server can pair with this Mac until you allow it.")
                 }
             }
         }

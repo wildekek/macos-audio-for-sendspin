@@ -388,12 +388,12 @@ actor SourceSession {
 
     /// Dynamic Pairing Code flow: commit to nonce_B; the code follows from the server's
     /// nonce_A in its first server/pair-init. Past the round limit, attempts wait until the
-    /// app starts anew (pairing.md, Rounds).
+    /// user allows pairing again in Settings (pairing.md, Rounds).
     private func startPairingCode() async {
         if await client.codeRoundLimitReached {
             sendMessage("client/pair-pending", ClientPairPendingMessage(
                 pairingIndex: pairingIndex,
-                message: "Too many wrong codes. Quit and reopen macOS Audio for Sendspin on the Mac to try again."))
+                message: "Too many wrong codes. To try again, choose Allow Pairing in macOS Audio for Sendspin's Settings on the Mac."))
             return
         }
         let attempt = CodeAttempt(pairingIndex: pairingIndex)

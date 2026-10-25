@@ -24,6 +24,9 @@ public struct SourceCredentials: Codable, Sendable, Equatable {
     public var records: [PairingRecord] = []
     /// The server that most recently held a playback connection (connection.md, Multiple servers).
     public var lastPlaybackServerID: String?
+    /// Code rounds that failed since the last success (pairing.md, Rounds), kept so that a
+    /// relaunch doesn't lift the limit. Absent in credentials saved before it was kept.
+    public var failedCodeRounds: Int?
 
     /// New credentials, every secret from a CSPRNG.
     public static func generate() -> SourceCredentials {

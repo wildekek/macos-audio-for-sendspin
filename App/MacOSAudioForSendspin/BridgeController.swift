@@ -913,6 +913,11 @@ final class BridgeController {
         Task { await source.forgetPairings() }
     }
 
+    func allowPairingAgain() {
+        let source = source
+        Task { await source.allowPairingAgain() }
+    }
+
     // MARK: Players that connect to us
 
     /// Players that look for a server themselves (client-initiated connections) find this

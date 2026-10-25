@@ -104,9 +104,39 @@ struct SourceCredentialsTests {
         #expect(credentials.record(pskID: SendspinPSK.id(for: Data(repeating: 1, count: 32))) == nil)
     }
 
+    /// The round limit outlives a relaunch: only allowing pairing again lifts it.
+    @Test func theRoundLimitIsKeptUntilPairingIsAllowedAgain() async throws {
+        let saved = Saved()
+        let client = SourceClient(name: "Mac", softwareVersion: "test", credentials: .generate(), save: saved.set)
+        for _ in 0..<19 { #expect(await !client.codeRoundFailed()) }
+        #expect(await client.codeRoundFailed())
+        let stored = try #require(saved.value)
+        // An older save, without the counter, still decodes.
+        var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stored)) as! [String: Any]
+        old["failedCodeRounds"] = nil
+        #expect(try JSONDecoder().decode(SourceCredentials.self,
+                                         from: JSONSerialization.data(withJSONObject: old)).failedCodeRounds == nil)
+
+        let relaunched = SourceClient(name: "Mac", softwareVersion: "test", credentials: stored, save: saved.set)
+        #expect(await relaunched.codeRoundLimitReached)
+        #expect(await relaunched.currentStatus.pairingHeldBack)
+        await relaunched.allowPairingAgain()
+        #expect(await !relaunched.codeRoundLimitReached)
+        #expect(await !relaunched.currentStatus.pairingHeldBack)
+        #expect(saved.value?.failedCodeRounds == nil)
+    }
+
     @Test func tokenCarriesTheIdentity() {
         let credentials = SourceCredentials.generate()
         #expect(credentials.pairingToken.hasPrefix("SP:0"))
         #expect(credentials.clientID.count == 43)
     }
+}
+
+/// What `save` was last called with.
+private final class Saved: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: SourceCredentials?
+    var value: SourceCredentials? { lock.withLock { stored } }
+    func set(_ credentials: SourceCredentials) { lock.withLock { stored = credentials } }
 }

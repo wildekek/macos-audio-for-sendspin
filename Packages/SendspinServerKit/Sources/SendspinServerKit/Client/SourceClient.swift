@@ -16,6 +16,8 @@ public struct SourceStatus: Sendable, Equatable {
     public var pairingCode: String?
     /// The instance name this Mac advertises as a client; the speaker browser skips it.
     public var advertisedName: String?
+    /// Too many codes failed: no server can pair by code until the user allows it again.
+    public var pairingHeldBack = false
 
     public var connected: Bool { serverName != nil }
 
@@ -28,6 +30,7 @@ public struct SourceStatus: Sendable, Equatable {
 /// by the spec's priority rules (connection.md, Multiple servers).
 public actor SourceClient {
     public nonisolated let statusUpdates: AsyncStream<SourceStatus>
+    var currentStatus: SourceStatus { status }
     /// What the operator pastes into the server to pair. The pairing PSK never changes, so
     /// neither does this.
     public nonisolated let pairingToken: String
@@ -50,7 +53,6 @@ public actor SourceClient {
     private var sending = true
     /// Dynamic pairing code rounds since the last verified server_kc, across servers. At the
     /// limit, attempts wait until the app starts anew (pairing.md, Rounds).
-    private var failedCodeRounds = 0
     private static let codeRoundLimit = 20
 
     /// `save` is called with the credentials whenever a pairing changes; persist them whole.
@@ -66,6 +68,7 @@ public actor SourceClient {
         var initial = SourceStatus()
         initial.hasPairing = !credentials.records.isEmpty
         initial.pairedServerNames = credentials.records.compactMap(\.serverName)
+        initial.pairingHeldBack = (credentials.failedCodeRounds ?? 0) >= Self.codeRoundLimit
         status = initial
         statusContinuation.yield(initial)
     }
@@ -132,16 +135,27 @@ public actor SourceClient {
         await admitted?.cancelPairing()
     }
 
-    var codeRoundLimitReached: Bool { failedCodeRounds >= Self.codeRoundLimit }
+    var codeRoundLimitReached: Bool { (credentials.failedCodeRounds ?? 0) >= Self.codeRoundLimit }
 
     /// Count a round whose code didn't match; true once that reaches the limit.
     func codeRoundFailed() -> Bool {
-        failedCodeRounds += 1
+        credentials.failedCodeRounds = (credentials.failedCodeRounds ?? 0) + 1
+        save(credentials)
+        refreshStatus()
         return codeRoundLimitReached
     }
 
     func codeRoundVerified() {
-        failedCodeRounds = 0
+        guard credentials.failedCodeRounds != nil else { return }
+        credentials.failedCodeRounds = nil
+        save(credentials)
+        refreshStatus()
+    }
+
+    /// The deliberate action that lifts the round limit (pairing.md, Rounds): the user allows
+    /// pairing again, in Settings.
+    public func allowPairingAgain() {
+        codeRoundVerified()
     }
 
     private func setAdvertisedName(_ name: String) {
@@ -263,6 +277,7 @@ public actor SourceClient {
         status.pairingCode = admittedState.pairingCode
         status.hasPairing = !credentials.records.isEmpty
         status.pairedServerNames = credentials.records.compactMap(\.serverName)
+        status.pairingHeldBack = codeRoundLimitReached
         self.status = status
     }
 }
