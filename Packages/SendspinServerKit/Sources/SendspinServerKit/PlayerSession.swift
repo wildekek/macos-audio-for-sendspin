@@ -593,8 +593,12 @@ public actor PlayerSession {
 
     /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
     /// The player gets the format closest to the source (see `FormatChoice`).
-    func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int) {
+    func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int, leadUs: Int64) {
         guard let socket, activated, !left, ready, available else { return }
+        // A lead too short for this player's buffer: wait for the group's lead to be raised,
+        // which restarts the stream, rather than start it short (player/v1.md, Server Audio
+        // Send Constraints).
+        guard streaming || leadUs >= Int64(status.requiredBufferMs + PlaybackGroup.sendMarginMs) * 1_000 else { return }
         if pipeline == nil || !pipeline!.accepts(pcm) || pipelineBitDepthPreference != preferredBitDepth {
             guard startPipeline(for: pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth) else { return }
         }

@@ -16,6 +16,12 @@ public protocol GroupOutput: AnyObject, Sendable {
 /// exactly: there is no drift to correct and no rebasing. Players that join late
 /// simply start with the next chunk.
 public actor PlaybackGroup {
+    /// How long after its capture time a chunk can reach a player: the capture block, the
+    /// FLAC encoder's block and the network. The lead must exceed what a player needs queued
+    /// by this much, as its queue starts at the lead minus this (player/v1.md, Server Audio
+    /// Send Constraints).
+    public static let sendMarginMs = 50
+
     public nonisolated let id = UUID().uuidString
     public let name: String
     /// How far ahead of capture time players are told to play (their buffer).
@@ -104,7 +110,7 @@ public actor PlaybackGroup {
             output.play(pcm, timestampUs: timestampUs)
         }
         for (session, _) in sessions.values {
-            await session.deliver(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth)
+            await session.deliver(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth, leadUs: leadUs)
         }
     }
 

@@ -227,10 +227,11 @@ func run() async {
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
                     + (status.volume.map { ", volume \($0)" } ?? "")
                     + (status.muted == true ? ", muted" : ""))
-                if status.requiredBufferMs > options.leadMs, !bufferWarned {
+                let needMs = status.requiredBufferMs + PlaybackGroup.sendMarginMs
+                if status.requiredBufferMs > 0, needMs > options.leadMs, !bufferWarned {
                     bufferWarned = true
-                    Log.warning("\(status.name ?? url.absoluteString) needs \(status.requiredBufferMs) ms of buffer; "
-                        + "use --lead-ms \(status.requiredBufferMs) or more")
+                    Log.warning("\(status.name ?? url.absoluteString) needs \(status.requiredBufferMs) ms of buffer, "
+                        + "plus \(PlaybackGroup.sendMarginMs) ms to send it; use --lead-ms \(needMs) or more")
                 }
             }
         }

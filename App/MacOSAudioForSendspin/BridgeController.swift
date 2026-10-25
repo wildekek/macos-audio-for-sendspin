@@ -1381,10 +1381,14 @@ final class BridgeController {
 
     /// The connected speaker that needs the most buffer, if it needs more than the setting.
     var leadRequirement: (name: String, ms: Int)? {
-        let need = statuses.values.filter { $0.connection == .connected }
-            .max { $0.requiredBufferMs < $1.requiredBufferMs }
-        guard let need, need.requiredBufferMs > lead.rawValue else { return nil }
-        return (need.name ?? "A speaker", need.requiredBufferMs)
+        // A speaker gets its audio up to `sendMarginMs` after capture; the Mac's own output
+        // plays it right here.
+        let needs = statuses.filter { $0.value.connection == .connected }.map { key, status in
+            (name: status.name ?? "A speaker",
+             ms: status.requiredBufferMs + (key == Self.localKey ? 0 : PlaybackGroup.sendMarginMs))
+        }
+        guard let need = needs.max(by: { $0.ms < $1.ms }), need.ms > lead.rawValue else { return nil }
+        return need
     }
 
     /// The setting, raised to what connected speakers need: the spec requires keeping at
