@@ -1426,7 +1426,7 @@ private struct PairingAttempt {
     var nonceA: Data?
     var round = 0
     /// This round's code, CPace run and session id, once the operator entered it.
-    var code: String?
+    var code: Data?
     var cpace: CPace?
     var sid: Data?
     /// CPace derived the key from the client's share.
@@ -1452,6 +1452,7 @@ extension PlayerSession {
         case .token: status.pairMethods?.pairingPSK != nil
         case .staticCode: status.pairMethods?.staticCode != nil
         case .dynamicCode: status.pairMethods?.dynamicCode != nil
+        case .dynamicQRCode: status.pairMethods?.dynamicQRCode != nil
         }
         guard offered else {
             status.pairing = .failed("The speaker doesn't offer this way of pairing.")
@@ -1480,6 +1481,7 @@ extension PlayerSession {
         case .token: ("pairing_psk", nil)
         case .staticCode: ("static_pairing_code", nil)
         case .dynamicCode, nil: ("dynamic_pairing_code", "digits")
+        case .dynamicQRCode: ("dynamic_pairing_code", "qr_code")
         }
     }
 
@@ -1539,7 +1541,7 @@ extension PlayerSession {
             self.attempt = attempt
             askForCode(.staticCode(again: staticCodeWasWrong))
             return
-        case .dynamicCode:
+        case .dynamicCode, .dynamicQRCode:
             guard let commit = message.commitB.flatMap(Base64URL.decode), commit.count == 32 else {
                 throw SessionError.pairing("client/pair-init without commit_B")
             }
@@ -1549,10 +1551,14 @@ extension PlayerSession {
             attempt.round = 1
             self.attempt = attempt
             sendMessage("server/pair-init", ServerPairInitReceived(nonceA: Base64URL.encode(nonceA)))
-            askForCode(.dynamicCode(again: false))
+            askForCode(dynamicPrompt(attempt.method, again: false))
             return
         }
         self.attempt = attempt
+    }
+
+    private func dynamicPrompt(_ method: PairingMethod, again: Bool) -> PairingPrompt {
+        method == .dynamicQRCode ? .dynamicQRCode(again: again) : .dynamicCode(again: again)
     }
 
     /// The operator enters the code; the session goes on meanwhile.
@@ -1573,16 +1579,28 @@ extension PlayerSession {
             failPairing(nil, abort: "user_cancelled")
             return
         }
-        // Separators never count (pairing.md, Pairing Code Presentation).
-        let digits = code.filter(\.isASCII).filter(\.isNumber)
-        guard digits.count == prompt.length else {
-            askForCode(prompt)
-            return
+        let prs: Data
+        if case .dynamicQRCode = prompt {
+            // A version-1 pairing token, its first 24 payload bytes the code (pairing.md,
+            // QR-code emission). Anything else is asked for again.
+            guard let bytes = PairingToken.decodeDynamicCode(code) else {
+                askForCode(prompt)
+                return
+            }
+            prs = bytes
+        } else {
+            // Separators never count (pairing.md, Pairing Code Presentation).
+            let digits = code.filter(\.isASCII).filter(\.isNumber)
+            guard digits.count == prompt.length else {
+                askForCode(prompt)
+                return
+            }
+            prs = Data(digits.utf8)
         }
         let sid = DynamicPairingCode.sessionID(handshakeHash: channel.handshakeHash, pairingIndex: index, round: round)
         do {
-            let cpace = try CPace(role: .initiator, prs: Data(digits.utf8), sid: sid, ad: Data("server".utf8))
-            attempt.code = digits
+            let cpace = try CPace(role: .initiator, prs: prs, sid: sid, ad: Data("server".utf8))
+            attempt.code = prs
             attempt.sid = sid
             attempt.cpace = cpace
             self.attempt = attempt
@@ -1608,7 +1626,7 @@ extension PlayerSession {
 
     /// The client's check of our tag failed: the code was wrong. Another round, same code.
     private func handlePairRetry() throws {
-        guard var attempt, case .dynamicCode = attempt.method, attempt.derived else {
+        guard var attempt, [.dynamicCode, .dynamicQRCode].contains(attempt.method), attempt.derived else {
             throw SessionError.pairing("client/pair-retry out of sequence")
         }
         guard attempt.round < 20 else {
@@ -1622,7 +1640,7 @@ extension PlayerSession {
         attempt.derived = false
         self.attempt = attempt
         sendMessage("server/pair-init", ServerPairInitReceived(nonceA: nil))
-        askForCode(.dynamicCode(again: true))
+        askForCode(dynamicPrompt(attempt.method, again: true))
     }
 
     private func handlePairConfirm(_ message: ClientPairConfirmMessage) throws {
@@ -1636,16 +1654,22 @@ extension PlayerSession {
         }
         // The dynamic code is bound to this handshake: the client's committed nonce must
         // open, and give the code the operator entered (pairing.md, Server verification).
-        if case .dynamicCode = attempt.method {
+        if [.dynamicCode, .dynamicQRCode].contains(attempt.method) {
             guard let sealed = message.wrappedNonceB.flatMap(Base64URL.decode),
                   let nonceB = try? DynamicPairingCode.unwrap(sealed, .nonce, sid: sid, isk: isk, suite: suite),
                   DynamicPairingCode.commitment(to: nonceB) == attempt.commitB,
                   let channel, let nonceA = attempt.nonceA,
-                  DynamicPairingCode.digits(handshakeHash: channel.handshakeHash, nonceA: nonceA, nonceB: nonceB) == attempt.code
+                  expectedCode(attempt.method, handshakeHash: channel.handshakeHash, nonceA: nonceA, nonceB: nonceB) == attempt.code
             else { throw SessionError.pairing("the pairing code isn't bound to this handshake") }
         }
         attempt.confirmed = true
         self.attempt = attempt
+    }
+
+    /// The code the client derived, as fed into CPace: six ASCII digits, or 24 raw bytes.
+    private func expectedCode(_ method: PairingMethod, handshakeHash h: Data, nonceA: Data, nonceB: Data) -> Data {
+        method == .dynamicQRCode ? DynamicPairingCode.qrCode(handshakeHash: h, nonceA: nonceA, nonceB: nonceB)
+            : Data(DynamicPairingCode.digits(handshakeHash: h, nonceA: nonceA, nonceB: nonceB).utf8)
     }
 
     private func handlePairFinalize(_ message: ClientPairFinalizeMessage) async throws {
@@ -1659,7 +1683,7 @@ extension PlayerSession {
                 throw SessionError.pairing("client/pair-finalize without long_term_psk")
             }
             psk = value
-        case .staticCode, .dynamicCode:
+        case .staticCode, .dynamicCode, .dynamicQRCode:
             guard attempt.confirmed, let sid = attempt.sid, let isk = attempt.cpace?.isk,
                   let sealed = message.wrappedPSK.flatMap(Base64URL.decode),
                   let value = try? DynamicPairingCode.unwrap(sealed, .psk, sid: sid, isk: isk, suite: suite) else {

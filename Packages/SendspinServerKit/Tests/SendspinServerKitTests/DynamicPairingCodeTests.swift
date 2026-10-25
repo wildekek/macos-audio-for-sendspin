@@ -21,6 +21,9 @@ struct DynamicPairingCodeTests {
                 == Self.hex("f6d431646ea17a4488f6008d0da4dbd79b7c0a898c3631453fb6ffc912d29c18"))
         #expect(DynamicPairingCode.digits(handshakeHash: h, nonceA: nonceA, nonceB: nonceB) == "806729")
         #expect(DynamicPairingCode.presented("012345") == "012-345")
+        // The qr_code format: the digest's first 24 bytes (aiosendspin's derive_qr_code).
+        #expect(DynamicPairingCode.qrCode(handshakeHash: h, nonceA: nonceA, nonceB: nonceB)
+                == Self.hex("9f26c48e69443b7fab8d1be2052017a0f69b4a1f0e49033d"))
     }
 
     @Test func sessionIDAndWrapping() throws {

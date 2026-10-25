@@ -2,7 +2,7 @@ import AppKit
 import SendspinServerKit
 import SwiftUI
 
-/// Scanning a speaker's pairing QR code, in a glass panel of its own: the menu would close as
+/// Scanning a speaker's pairing QR code, or the pairing code it shows as one, in a glass panel of its own: the menu would close as
 /// soon as macOS asks about the camera, or at any click elsewhere, while this stays. The camera
 /// shows mirrored with framing corners, and over the picture what's happening: the instruction,
 /// a token being read (blue, at least a moment), paired (green, after which the window closes),
@@ -30,9 +30,23 @@ struct QRScanView: View {
     @State private var answers = 0
 
     private var speaker: String { bridge.displayName(name) }
+    /// The dynamic code the speaker shows as a QR code, rather than its printed token.
+    private var isCode: Bool { bridge.speakerPairing?.name == name && bridge.speakerPairing?.method == .dynamicQRCode }
+    /// The session waits for the code: only then does a scan count.
+    private var wantsCode: Bool {
+        if case .enteringCode(.dynamicQRCode) = bridge.speakerPairing?.progress { true } else { false }
+    }
     private var locations: [PairMethods.Location] { bridge.pairMethods(for: name)?.pairingPSK ?? [] }
 
     private var phase: Phase {
+        if isCode, let progress = bridge.speakerPairing?.progress {
+            switch progress {
+            case .enteringCode(.dynamicQRCode(let again)): return .looking(again: again)
+            case .checking: return .pairing
+            case .paired: return .paired
+            default: return .looking(again: false)
+            }
+        }
         if let pairing = bridge.speakerPairing, pairing.name == name, case .token = pairing.method {
             return pairing.progress == .paired ? .paired : .pairing
         }
@@ -52,7 +66,7 @@ struct QRScanView: View {
                     .font(.system(size: 13))
                     .frame(width: 30, height: 30)
                     .background(Color.secondary.opacity(0.2), in: Circle())
-                Text("Scan \(speaker)'s QR code")
+                Text(isCode ? "Scan the code \(speaker) shows" : "Scan \(speaker)'s QR code")
                     .font(.headline)
             }
             if QRScanner.isRefused {
@@ -81,8 +95,10 @@ struct QRScanView: View {
                 NSWorkspace.shared.open(QRScanner.settingsURL)
             }
             .buttonStyle(.link)
-            Text("Or paste \(speaker)'s token in the menu.")
-                .foregroundStyle(.secondary)
+            if !isCode {
+                Text("Or paste \(speaker)'s token in the menu.")
+                    .foregroundStyle(.secondary)
+            }
         }
         .multilineTextAlignment(.center)
         .padding(24)
@@ -133,6 +149,15 @@ struct QRScanView: View {
     }
 
     private var overlayText: String {
+        if isCode {
+            switch shown {
+            case .pairing: return "Code read. Pairing with \(speaker)…"
+            case .paired: return "Paired with \(speaker)"
+            case .looking:
+                return wrong ? "That code didn't match. Scan the code \(speaker) shows now."
+                    : "Point the camera at the code on \(speaker)'s screen"
+            }
+        }
         switch shown {
         case .pairing: return "Token read. Pairing with \(speaker)…"
         case .paired: return "Paired with \(speaker)"
@@ -152,6 +177,20 @@ struct QRScanView: View {
         let isNew = inView.map { $0.code != code || now.timeIntervalSince($0.at) > 1.5 } ?? true
         inView = (code, now)
         guard isNew, case .looking = phase else { return }
+        if isCode {
+            // A version-1 pairing token: the session checks it against the code.
+            guard wantsCode else { return }
+            let read = PairingToken.decodeDynamicCode(code) != nil
+            Log.info("QR code read: " + (read ? "a pairing code" : "not a pairing code"))
+            reading = true
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                reading = false
+            }
+            unreadable = !read
+            if read { bridge.submitPairingCode(code) }
+            return
+        }
         let token = PairingToken.decodePairingPSK(code)
         Log.info("QR code read: " + (token.map { "a pairing token for \($0.clientID)" } ?? "not a pairing token"))
         reading = true

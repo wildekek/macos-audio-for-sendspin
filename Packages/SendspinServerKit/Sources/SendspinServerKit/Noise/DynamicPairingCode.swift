@@ -15,10 +15,19 @@ enum DynamicPairingCode {
     /// The six digits: `SHA-256("sendspin-pairing-code-derive-v1" || h || nonce_A || nonce_B)`
     /// as a big-endian number, mod 10^6, zero-padded.
     static func digits(handshakeHash h: Data, nonceA: Data, nonceB: Data) -> String {
-        let digest = SHA256.hash(data: Data("sendspin-pairing-code-derive-v1".utf8) + h + nonceA + nonceB)
+        let digest = digest(handshakeHash: h, nonceA: nonceA, nonceB: nonceB)
         let value = digest.reduce(UInt64(0)) { ($0 * 256 + UInt64($1)) % 1_000_000 }
         let digits = String(value)
         return String(repeating: "0", count: 6 - digits.count) + digits
+    }
+
+    /// The `qr_code` format's code: the digest's first 24 bytes, raw.
+    static func qrCode(handshakeHash h: Data, nonceA: Data, nonceB: Data) -> Data {
+        Data(digest(handshakeHash: h, nonceA: nonceA, nonceB: nonceB).prefix(24))
+    }
+
+    private static func digest(handshakeHash h: Data, nonceA: Data, nonceB: Data) -> SHA256.Digest {
+        SHA256.hash(data: Data("sendspin-pairing-code-derive-v1".utf8) + h + nonceA + nonceB)
     }
 
     /// Grouped for display: `123-456` (Pairing Code Presentation).

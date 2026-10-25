@@ -41,7 +41,8 @@ let usage = """
       --lead-ms N       playback lead / player buffer in ms (default: 1000)
       --name NAME       server name shown to players (default: Sendspin Bridge)
       --unpair          once connected, forget the pairing with the players (both sides)
-      --pair METHOD     pair with the players first: static, dynamic, or a pairing token
+      --pair METHOD     pair with the players first: static, dynamic, qr (the dynamic code
+                        as the token its QR code reads), or a pairing token
                         (SP:0…); codes are read from stdin. Pairings are kept in
                         ~/.config/sendspin-bridge, so a paired player stays paired
       --config-dir DIR  keep the identity, pairings and source credentials in DIR instead
@@ -163,17 +164,22 @@ func pairingRequest(_ method: String) -> PairingRequest {
     switch method {
     case "static": pairingMethod = .staticCode
     case "dynamic": pairingMethod = .dynamicCode
+    case "qr": pairingMethod = .dynamicQRCode
     default:
-        guard let token = PairingToken.decodePairingPSK(method) else { fail("--pair: static, dynamic, or a pairing token") }
+        guard let token = PairingToken.decodePairingPSK(method) else { fail("--pair: static, dynamic, qr, or a pairing token") }
         pairingMethod = .token(token)
     }
     return PairingRequest(method: pairingMethod) { prompt in
         let again: Bool
         switch prompt {
-        case .staticCode(let wrong): again = wrong
-        case .dynamicCode(let wrong): again = wrong
+        case .staticCode(let wrong), .dynamicCode(let wrong), .dynamicQRCode(let wrong): again = wrong
         }
-        print((again ? "That code didn't match. " : "") + "Enter the \(prompt.length)-digit code: ", terminator: "")
+        let start = again ? "That code didn't match. " : ""
+        if case .dynamicQRCode = prompt {
+            print(start + "Enter the token the QR code reads: ", terminator: "")
+        } else {
+            print(start + "Enter the \(prompt.length)-digit code: ", terminator: "")
+        }
         fflush(stdout)
         return await Task.detached { readLine() }.value
     }

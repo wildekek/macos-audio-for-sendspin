@@ -48,6 +48,8 @@ public enum PairingMethod: Sendable, Equatable {
     case staticCode
     /// The 6 digits the player shows or speaks, new for each attempt.
     case dynamicCode
+    /// The same code as a QR code on the player's screen: a version-1 pairing token, scanned.
+    case dynamicQRCode
 }
 
 /// What the operator is asked to enter.
@@ -56,12 +58,15 @@ public enum PairingPrompt: Sendable, Equatable {
     case staticCode(again: Bool)
     /// The code the player shows or speaks now; `again` after a wrong one.
     case dynamicCode(again: Bool)
+    /// The QR code the player shows now, its token as read; `again` after a wrong one.
+    case dynamicQRCode(again: Bool)
 
-    /// Digits the code has.
+    /// Digits the code has; none for a QR code.
     public var length: Int {
         switch self {
         case .staticCode: 8
         case .dynamicCode: 6
+        case .dynamicQRCode: 0
         }
     }
 }
@@ -69,7 +74,8 @@ public enum PairingPrompt: Sendable, Equatable {
 /// A pairing the operator started.
 public struct PairingRequest: Sendable {
     public var method: PairingMethod
-    /// Asked for the code each time one is needed: the digits entered, or nil to cancel.
+    /// Asked for the code each time one is needed: the digits entered (or the token a QR code
+    /// read), or nil to cancel.
     public var code: @Sendable (PairingPrompt) async -> String?
 
     public init(method: PairingMethod, code: @escaping @Sendable (PairingPrompt) async -> String?) {

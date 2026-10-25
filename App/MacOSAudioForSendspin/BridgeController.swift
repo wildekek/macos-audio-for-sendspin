@@ -1074,6 +1074,9 @@ final class BridgeController {
 
     private static func pairingWay(_ methods: PairMethods) -> PairingWay? {
         if methods.dynamicCode != nil { return .code(.dynamicCode) }
+        // Only as a QR code: scanned, when there's a camera to scan it with (messaging.md,
+        // server/activate). Digits are easier, so they come first.
+        if methods.dynamicQRCode != nil, QRScanner.hasCamera { return .code(.dynamicQRCode) }
         if methods.staticCode != nil { return .code(.staticCode) }
         if methods.pairingPSK != nil { return .token }
         return nil
@@ -1264,7 +1267,8 @@ final class BridgeController {
 
     private static func way(_ way: PairingWay, offers method: PairingMethod) -> Bool {
         switch (way, method) {
-        case (.token, .token), (.code(.dynamicCode), .dynamicCode), (.code(.staticCode), .staticCode): true
+        case (.token, .token), (.code(.dynamicCode), .dynamicCode), (.code(.dynamicQRCode), .dynamicQRCode),
+             (.code(.staticCode), .staticCode): true
         default: false
         }
     }

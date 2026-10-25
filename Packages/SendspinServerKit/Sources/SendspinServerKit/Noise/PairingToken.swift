@@ -26,7 +26,7 @@ public enum PairingToken {
     }
 
     /// A version-1 token's pairing code: its first 24 payload bytes.
-    static func decodeDynamicCode(_ input: String) -> Data? {
+    public static func decodeDynamicCode(_ input: String) -> Data? {
         payload(of: input, version: "1", minimumSize: 24)?.prefix(24)
     }
 

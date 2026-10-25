@@ -253,8 +253,20 @@ struct PairMethodsTests {
         let methods = try JSONDecoder().decode(PairMethods.self, from: Data(json.utf8))
         #expect(methods.pairingPSK == [.device])
         #expect(methods.dynamicCode == [.display])
+        #expect(methods.dynamicQRCode == nil)
         #expect(Set(methods.ignored) == ["pairing_psk.moon", "dynamic_pairing_code.hologram",
                                          "dynamic_pairing_code.telepathy", "future_method"])
+    }
+}
+
+extension PairMethodsTests {
+    /// A dynamic code offered only as a QR code is offered: servers implement every method,
+    /// and pick `qr_code` when they can scan one (pairing.md, Dynamic Pairing Code Flow).
+    @Test func readsTheQRCodeFormat() throws {
+        let json = #"{"dynamic_pairing_code":{"formats":["qr_code"],"out_channels":["display"]}}"#
+        let methods = try JSONDecoder().decode(PairMethods.self, from: Data(json.utf8))
+        #expect(methods.dynamicCode == nil)
+        #expect(methods.dynamicQRCode == [.display])
     }
 }
 

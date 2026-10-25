@@ -548,6 +548,21 @@ struct PairingCaption: View {
                 busy(methodToRetry == .staticCode
                      ? "Waiting for \(speaker). Press its pairing button, if it has one."
                      : "Waiting for \(speaker)…")
+            case .enteringCode(.dynamicQRCode(let again)):
+                // Scanned in the window tokens are scanned in; there's nothing to paste.
+                if bridge.scanning == pairing.name {
+                    Button("Scanning in a window…") { bridge.startScanning(pairing.name) }
+                        .buttonStyle(.link)
+                } else {
+                    Text(again ? "That code didn't match. Scan the code \(speaker) shows now."
+                         : "\(speaker) shows its pairing code as a QR code on its screen.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { bridge.startScanning(pairing.name) } label: {
+                        Label("Scan the Code", systemImage: "camera")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
             case .enteringCode(let prompt):
                 Text(promptText(prompt))
                     .fixedSize(horizontal: false, vertical: true)
@@ -577,6 +592,7 @@ struct PairingCaption: View {
 
     private var methodToRetry: PairingMethod? {
         if methods?.dynamicCode != nil { return .dynamicCode }
+        if methods?.dynamicQRCode != nil, QRScanner.hasCamera { return .dynamicQRCode }
         if methods?.staticCode != nil { return .staticCode }
         return nil
     }
@@ -590,7 +606,7 @@ struct PairingCaption: View {
             let place = leaflet && !onDevice ? "on the leaflet that came with \(speaker)"
                 : onDevice && !leaflet ? "on \(speaker)" : "on \(speaker) or its leaflet"
             return start + "Enter the 8-digit code \(place):"
-        case .dynamicCode(let again):
+        case .dynamicCode(let again), .dynamicQRCode(let again):
             return (again ? "That code didn't match. " : "") + "Enter the code that \(speaker) \(shows) now:"
         }
     }

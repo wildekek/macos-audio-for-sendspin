@@ -390,6 +390,13 @@
       "w": 1764,
       "h": 420,
       "title": "In Settings: every speaker that isn\u2019t paired, under Paired, with Pair\u2026"
+    },
+    "PairQRCode.dc.html": {
+      "x": 0,
+      "y": 22920,
+      "w": 1808,
+      "h": 660,
+      "title": "A dynamic code the speaker shows only as a QR code: scanned in the same window"
     }
   },
   "createdOnFiles": {
@@ -520,6 +527,14 @@
       "w": 240,
       "x": 0,
       "y": 21220
+    },
+    "qrcode": {
+      "kind": "title1",
+      "maxW": 1808,
+      "text": "Pairing by a code the speaker shows as a QR code",
+      "w": 240,
+      "x": 0,
+      "y": 22660
     }
   },
   "order": [
@@ -577,7 +592,8 @@
     "SourcesMA4.dc.html",
     "SourcesMA5.dc.html",
     "TrustMenu.dc.html",
-    "TrustSettings.dc.html"
+    "TrustSettings.dc.html",
+    "PairQRCode.dc.html"
   ],
   "pages": [],
   "title": "Sendspin menu redesign"
