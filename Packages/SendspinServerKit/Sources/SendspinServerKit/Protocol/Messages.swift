@@ -266,9 +266,9 @@ public struct ServerCommand: Encodable, Sendable {
 // MARK: - Envelope
 
 enum MessageCoding {
-    private struct Envelope: Decodable {
-        var type: String
-    }
+    /// A JSON message isn't an object with a `type` string and a `payload` object: a protocol
+    /// error, on which the receiver MUST close (messaging.md, Binary Message ID Structure).
+    struct Malformed: Error {}
 
     private struct Incoming<Payload: Decodable>: Decodable {
         var payload: Payload
@@ -280,7 +280,10 @@ enum MessageCoding {
     }
 
     static func type(of data: Data) throws -> String {
-        try JSONDecoder().decode(Envelope.self, from: data).type
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String, object["payload"] is [String: Any]
+        else { throw Malformed() }
+        return type
     }
 
     static func payload<P: Decodable>(_: P.Type, from data: Data) throws -> P {

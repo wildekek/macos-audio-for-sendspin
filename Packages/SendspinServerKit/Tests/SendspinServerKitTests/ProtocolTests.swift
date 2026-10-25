@@ -35,6 +35,14 @@ struct MessageTests {
         "buffer_capacity":621312}}}
         """.utf8)
 
+    /// A message without a payload object is malformed, whatever its type: the session closes.
+    @Test func rejectsMessagesWithoutAPayloadObject() throws {
+        #expect(try MessageCoding.type(of: Data(#"{"type":"client/leave","payload":{}}"#.utf8)) == "client/leave")
+        for bad in [#"{"type":"client/leave"}"#, #"{"type":"x/new","payload":3}"#, #"{"payload":{}}"#, "[]"] {
+            #expect(throws: MessageCoding.Malformed.self) { try MessageCoding.type(of: Data(bad.utf8)) }
+        }
+    }
+
     @Test func decodesAux2Hello() throws {
         #expect(try MessageCoding.type(of: Self.aux2Hello) == "client/hello")
         let hello = try MessageCoding.payload(ClientHello.self, from: Self.aux2Hello)
