@@ -21,9 +21,14 @@ public final class ServiceListener: @unchecked Sendable {
         let port: UInt16
         /// Who connects, for the log.
         let peers: String
+        /// Whether an upgrade request with an `Origin` header is refused: only a client's
+        /// endpoint must (connection.md, Server Initiated Connections).
+        let refusesOrigin: Bool
 
-        public static let server = Kind(serviceType: "_sendspin-server._tcp", port: 8927, peers: "players")
-        public static let client = Kind(serviceType: "_sendspin._tcp", port: 8928, peers: "servers")
+        public static let server = Kind(serviceType: "_sendspin-server._tcp", port: 8927, peers: "players",
+                                        refusesOrigin: false)
+        public static let client = Kind(serviceType: "_sendspin._tcp", port: 8928, peers: "servers",
+                                        refusesOrigin: true)
     }
 
     public static let path = "/sendspin"
@@ -69,7 +74,7 @@ public final class ServiceListener: @unchecked Sendable {
     private func listen(on port: NWEndpoint.Port) {
         let listener: NWListener
         do {
-            listener = try NWListener(using: WebSocketConnection.parameters(listening: true), on: port)
+            listener = try NWListener(using: WebSocketConnection.parameters(listening: true, refusingOrigin: kind.refusesOrigin), on: port)
         } catch {
             Log.error("Can't listen for \(kind.peers): \(error)")
             return
