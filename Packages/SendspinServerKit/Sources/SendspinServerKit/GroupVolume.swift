@@ -35,14 +35,22 @@ public enum GroupVolume {
     }
 }
 
-/// What the controller role needs of one player (roles/controller/v1.md).
-struct ControllerMember: Sendable {
+/// What the controller role needs of one member of a group (roles/controller/v1.md).
+public struct ControllerMember: Sendable {
     /// Plays in our group, rather than in a stopped group of its own.
-    var inGroup: Bool
-    var volume: Int?
-    var muted: Bool?
-    var canSetVolume: Bool
-    var canMute: Bool
+    public var inGroup: Bool
+    public var volume: Int?
+    public var muted: Bool?
+    public var canSetVolume: Bool
+    public var canMute: Bool
+
+    public init(inGroup: Bool, volume: Int?, muted: Bool?, canSetVolume: Bool, canMute: Bool) {
+        self.inGroup = inGroup
+        self.volume = volume
+        self.muted = muted
+        self.canSetVolume = canSetVolume
+        self.canMute = canMute
+    }
 }
 
 extension ControllerState {

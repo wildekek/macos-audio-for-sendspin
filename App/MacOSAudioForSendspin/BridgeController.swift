@@ -344,6 +344,14 @@ final class BridgeController {
 
     private func start() async {
         Log.info("Starting (\(identity.name))")
+        // The Mac's own speakers, while they play along, are in the group a controller acts on.
+        await group.setLocalMember(LocalMember(
+            state: { @MainActor [weak self] in self?.localControllerMember },
+            setVolume: { @MainActor [weak self] in self?.setPlayerVolume(Self.localKey, $0) },
+            setMuted: { @MainActor [weak self] in
+                self?.localPlayer?.isMuted = $0
+                self?.updateLocalStatus()
+            }))
         await observeSystem()
         refreshDevice()
         // On the first launch the welcome window asks for each permission at its step.
@@ -762,7 +770,9 @@ final class BridgeController {
     /// it's ticked does it count in the group (its volume, whether a speaker is connected).
     private func updateLocalStatus() {
         guard let localPlayer else {
+            guard statuses[Self.localKey] != nil else { return }
             statuses[Self.localKey] = nil
+            Task { [group] in await group.membersChanged() }
             return
         }
         var status = directStatus
@@ -774,6 +784,14 @@ final class BridgeController {
         statuses[Self.localKey] = status
         syncDeviceToPlayers()
         applyLead()
+        Task { [group] in await group.membersChanged() }
+    }
+
+    /// The Mac's own speakers as a controller sees them: in the group while they play along.
+    private var localControllerMember: ControllerMember? {
+        guard let localPlayer else { return nil }
+        return ControllerMember(inGroup: true, volume: localVolume, muted: localPlayer.isMuted,
+                                canSetVolume: localVolume != nil, canMute: true)
     }
 
     /// Its row while the Mac plays on it directly: its volume is the Mac's volume then.

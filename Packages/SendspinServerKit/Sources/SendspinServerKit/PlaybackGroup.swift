@@ -9,6 +9,23 @@ public protocol GroupOutput: AnyObject, Sendable {
     func stop()
 }
 
+/// A member of the group that isn't a Sendspin player, such as this Mac's own speakers: a
+/// controller counts its volume and mute in the group's, and its commands reach it too.
+public struct LocalMember: Sendable {
+    /// Its volume and mute now; nil while it doesn't play in the group.
+    public var state: @Sendable () async -> ControllerMember?
+    public var setVolume: @Sendable (Int) async -> Void
+    public var setMuted: @Sendable (Bool) async -> Void
+
+    public init(state: @escaping @Sendable () async -> ControllerMember?,
+                setVolume: @escaping @Sendable (Int) async -> Void,
+                setMuted: @escaping @Sendable (Bool) async -> Void) {
+        self.state = state
+        self.setVolume = setVolume
+        self.setMuted = setMuted
+    }
+}
+
 /// A set of players that play the same live audio in sync.
 ///
 /// Every chunk is scheduled at its capture time plus a fixed lead. Capture time comes
@@ -33,6 +50,7 @@ public actor PlaybackGroup {
 
     private var sessions: [URL: (session: PlayerSession, task: Task<Void, Never>)] = [:]
     private var outputs: [ObjectIdentifier: any GroupOutput] = [:]
+    private var localMember: LocalMember?
     private var playing = false
     private var lateChunks = 0
     /// Counts recomputations of the controller state, so an older one doesn't send late.
@@ -87,14 +105,20 @@ public actor PlaybackGroup {
 
     // MARK: Controller role (roles/controller/v1.md)
 
-    /// A player's volume, mute or place in the group changed: send every controller its
+    public func setLocalMember(_ member: LocalMember) async {
+        localMember = member
+        await membersChanged()
+    }
+
+    /// A member's volume, mute or place in the group changed: send every controller its
     /// group's state, if that changed.
-    func membersChanged() async {
+    public func membersChanged() async {
         controllerGeneration += 1
         let generation = controllerGeneration
         var members: [(session: PlayerSession, member: ControllerMember)] = []
         for (session, _) in sessions.values { members.append((session, await session.controllerMember())) }
-        let group = ControllerState(group: members.map(\.member).filter(\.inGroup))
+        let local = await localMember?.state()
+        let group = ControllerState(group: members.map(\.member).filter(\.inGroup) + (local.map { [$0] } ?? []))
         for (session, member) in members {
             guard generation == controllerGeneration else { return }
             // A player out of the group is a group of its own.
@@ -108,21 +132,26 @@ public actor PlaybackGroup {
         for (session, _) in sessions.values { members.append((session, await session.controllerMember())) }
         guard let own = members.first(where: { $0.session === controller }) else { return }
         let targets = own.member.inGroup ? members.filter(\.member.inGroup) : [own]
+        let local = own.member.inGroup ? await localMember?.state() : nil
         switch command.command {
         case "volume":
             guard let volume = command.volume else { return }
-            // One command per player, after redistributing what one can't take (Setting group volume).
+            // One command per member, after redistributing what one can't take (Setting group volume).
+            enum Member: Hashable { case player(ObjectIdentifier), local }
             let players = targets.filter { $0.member.canSetVolume && $0.member.volume != nil }
-            let current = Dictionary(uniqueKeysWithValues: players.map { (ObjectIdentifier($0.session), $0.member.volume!) })
+            var current = Dictionary(uniqueKeysWithValues: players.map { (Member.player(ObjectIdentifier($0.session)), $0.member.volume!) })
+            if let local, local.canSetVolume, let level = local.volume { current[.local] = level }
             let levels = GroupVolume.redistribute(current, to: volume)
-            for player in players where levels[ObjectIdentifier(player.session)] != player.member.volume {
-                await player.session.setVolume(levels[ObjectIdentifier(player.session)]!)
+            for player in players where levels[.player(ObjectIdentifier(player.session))] != player.member.volume {
+                await player.session.setVolume(levels[.player(ObjectIdentifier(player.session))]!)
             }
+            if let level = levels[.local], level != local?.volume { await localMember?.setVolume(level) }
         case "mute":
             guard let mute = command.mute else { return }
             for player in targets where player.member.canMute && player.member.muted != mute {
                 await player.session.setMuted(mute)
             }
+            if let local, local.canMute, local.muted != mute { await localMember?.setMuted(mute) }
         default:
             return
         }
