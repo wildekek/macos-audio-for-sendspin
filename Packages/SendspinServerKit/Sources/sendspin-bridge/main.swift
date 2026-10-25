@@ -37,6 +37,9 @@ let usage = """
       --tone            send a 440 Hz test tone (-20 dBFS) instead of capturing
       --lead-ms N       playback lead / player buffer in ms (default: 1000)
       --name NAME       server name shown to players (default: Sendspin Bridge)
+      --pair METHOD     pair with the players first: static, dynamic, or a pairing token
+                        (SP:0…); codes are read from stdin. Pairings are kept in
+                        ~/.config/sendspin-bridge, so a paired player stays paired
       -v, --verbose     debug logging
     """
 
@@ -56,6 +59,7 @@ struct Options {
     var tone = false
     var leadMs = 1000
     var name = "Sendspin Bridge"
+    var pair: String?
     var players: [String] = []
 }
 
@@ -94,6 +98,7 @@ func parseOptions() -> Options {
             guard let ms = Int(value(for: arg)), ms > 0 else { fail("--lead-ms needs a positive number") }
             options.leadMs = ms
         case "--name": options.name = value(for: arg)
+        case "--pair": options.pair = value(for: arg)
         case "-v", "--verbose": Log.minimumLevel = .debug
         case "-h", "--help": print(usage); exit(0)
         default:
@@ -120,6 +125,38 @@ func requireQuietDevice(_ device: AudioDevice) {
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("error: \(message)\n\n\(usage)\n".utf8))
     exit(2)
+}
+
+/// Pairings with players, kept next to the identity.
+func loadPairings() -> PlayerPairings {
+    let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge/pairings.json")
+    let records = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: Data].self, from: $0) } ?? [:]
+    return PlayerPairings(records: records) { records in
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        FileManager.default.createFile(atPath: file.path, contents: data, attributes: [.posixPermissions: 0o600])
+    }
+}
+
+/// `--pair`: the method, with codes typed on stdin.
+func pairingRequest(_ method: String) -> PairingRequest {
+    let pairingMethod: PairingMethod
+    switch method {
+    case "static": pairingMethod = .staticCode
+    case "dynamic": pairingMethod = .dynamicCode
+    default:
+        guard let token = PairingToken.decodePairingPSK(method) else { fail("--pair: static, dynamic, or a pairing token") }
+        pairingMethod = .token(token)
+    }
+    return PairingRequest(method: pairingMethod) { prompt in
+        let again: Bool
+        switch prompt {
+        case .staticCode(let wrong): again = wrong
+        case .dynamicCode(let wrong): again = wrong
+        }
+        print((again ? "That code didn't match. " : "") + "Enter the \(prompt.length)-digit code: ", terminator: "")
+        fflush(stdout)
+        return await Task.detached { readLine() }.value
+    }
 }
 
 /// A stable server id, so players see the same server across restarts.
@@ -217,14 +254,18 @@ func run() async {
     let (source, stopCapture) = audioSource(options)
 
     let identity = loadIdentity(name: options.name)
+    let pairings = loadPairings()
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
     for url in urls {
         // Players named on the command line are the user's explicit choice: approved.
-        let session = PlayerSession(url: url, identity: identity, approve: { _, _ in true })
+        let session = PlayerSession(url: url, identity: identity, pairings: pairings,
+                                    pairing: options.pair.map(pairingRequest), approve: { _, _ in true })
         Task {
             var bufferWarned = false
             for await status in session.updates {
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
+                    + (status.paired ? ", paired" : "")
+                    + (status.pairing.map { ", pairing \($0)" } ?? "")
                     + (status.volume.map { ", volume \($0)" } ?? "")
                     + (status.muted == true ? ", muted" : ""))
                 let needMs = status.requiredBufferMs + PlaybackGroup.sendMarginMs
