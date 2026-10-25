@@ -79,6 +79,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .background(OpensOnActiveSpace())
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
         // SwiftUI makes this view at launch and keeps it while the window is closed, so the
@@ -180,6 +181,20 @@ struct SettingsView: View {
             } catch {
                 uninstallError = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Settings opens on the Space the user is on. SwiftUI keeps the window between openings, on
+/// the Space it was last on, and activating the app would switch to that Space instead.
+private struct OpensOnActiveSpace: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { View() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class View: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.collectionBehavior.insert(.moveToActiveSpace)
         }
     }
 }
