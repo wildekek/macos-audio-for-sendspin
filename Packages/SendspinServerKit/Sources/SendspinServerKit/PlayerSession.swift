@@ -141,6 +141,9 @@ public actor PlayerSession {
     private var connectionPSK = SendspinPSK.sentinel
     /// Between our Noise message 1 of a re-handshake and the client's message 2.
     private var rehandshake: (handshake: NoiseInitiatorHandshake, psk: Data, longTerm: Bool, then: AfterRehandshake)?
+    /// A re-handshake gets the handshake's timeout too: without message 2, the connection closes
+    /// (connection.md, Failure Handling).
+    private var rehandshakeTimeout: Task<Void, Never>?
     /// How the connection ends when we end it ourselves, as when a pairing fails.
     private var endOfConnection: SessionEnd?
     /// The group let go of the player (`shutdown()`): its connection ends by our doing.
@@ -509,6 +512,8 @@ public actor PlayerSession {
     }
 
     private func resetConnectionState() {
+        rehandshakeTimeout?.cancel()
+        rehandshakeTimeout = nil
         socket = nil
         channel = nil
         hello = nil
@@ -1697,6 +1702,8 @@ extension PlayerSession {
             let message1 = try handshake.writeMessage1(payload: payload)
             sendMessage("noise/handshake", NoiseHandshakeMessage(data: Base64URL.encode(message1)))
             rehandshake = (handshake, psk, longTerm, next)
+            rehandshakeTimeout?.cancel()
+            rehandshakeTimeout = socket.flatMap(Self.closeAfterTimeout)
         } catch {
             failPairing("Pairing failed: \(error)", abort: nil)
         }
@@ -1709,6 +1716,8 @@ extension PlayerSession {
         // A miss fails: no Sentinel fallback in a re-handshake.
         let (payload, transport) = try state.handshake.readMessage2(message2)
         guard payload == Self.message2Payload else { throw SessionError.handshake("Noise message 2 payload isn't {}") }
+        rehandshakeTimeout?.cancel()
+        rehandshakeTimeout = nil
         channel = SecureChannel(transport: transport)
         rehandshake = nil
         connectionPSK = state.psk
