@@ -608,7 +608,9 @@ public actor PlayerSession {
     private func goodbye(_ reason: String) -> SessionEnd {
         let name = status.name ?? url.absoluteString
         switch reason {
-        case "restart":
+        case "restart", "shutdown":
+            // Both SHOULD be reconnected; a player that's gone stops it, when its mDNS service
+            // goes (messaging.md, client/goodbye).
             Log.info("\(name): goodbye (\(reason)), reconnecting")
             return .reconnect
         case "concurrent_attempt" where declaredActivities.contains("playback"):
