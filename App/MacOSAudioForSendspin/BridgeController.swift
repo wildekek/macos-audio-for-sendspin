@@ -1392,11 +1392,19 @@ final class BridgeController {
         applyLead()
     }
 
-    /// The connected speaker that needs the most buffer, if it needs more than the setting.
+    /// The ticked speaker that needs the most buffer, if it needs more than the setting. One
+    /// that's reconnecting keeps what it needed: a lower lead and back would restart every
+    /// stream twice, a gap on all speakers.
     var leadRequirement: (name: String, ms: Int)? {
         // A speaker gets its audio up to `sendMarginMs` after capture; the Mac's own output
         // plays it right here.
-        let needs = statuses.filter { $0.value.connection == .connected }.map { key, status in
+        let needs = statuses.filter { key, status in
+            switch status.connection {
+            case .connected: true
+            case .connecting, .unavailable, .disconnected(reason: nil): selected.contains(key)
+            default: false
+            }
+        }.map { key, status in
             (name: status.name ?? "A speaker",
              ms: status.requiredBufferMs + (key == Self.localKey ? 0 : PlaybackGroup.sendMarginMs))
         }
