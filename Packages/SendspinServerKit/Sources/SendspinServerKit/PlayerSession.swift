@@ -38,6 +38,8 @@ public struct PlayerStatus: Sendable, Equatable {
     public var paired = false
     /// The pairing methods it offers, from its hello.
     public var pairMethods: PairMethods?
+    /// A pairing the operator started on this session.
+    public var pairing: PairingProgress?
     public var volume: Int?
     public var muted: Bool?
     public var canSetVolume = false
@@ -81,6 +83,26 @@ public actor PlayerSession {
     private var activated = false
     /// It answered our long-term PSK on the Sentinel: it lost our pairing.
     private var notRecognized = false
+
+    // Pairing, the server's side (pairing.md).
+    /// The pairing the operator started on this session; once done it's an ordinary paired one.
+    private let pairingRequest: PairingRequest?
+    private var pairingFinished = false
+    private var attempt: PairingAttempt?
+    /// Pairing activations sent since the last Noise handshake (pairing.md, PAKE: `sid`).
+    private var pairingIndex = 0
+    /// A wrong static code: the next prompt says so.
+    private var staticCodeWasWrong = false
+    private var pairingInitTimeout: Task<Void, Never>?
+    /// What the connection's handshake needs again for a re-handshake.
+    private var suite: NoiseSuite = .chaChaPoly
+    private var clientKey: Curve25519.KeyAgreement.PublicKey?
+    /// The PSK the connection runs on now.
+    private var connectionPSK = SendspinPSK.sentinel
+    /// Between our Noise message 1 of a re-handshake and the client's message 2.
+    private var rehandshake: (handshake: NoiseInitiatorHandshake, psk: Data, longTerm: Bool, then: AfterRehandshake)?
+    /// How the connection ends when we end it ourselves, as when a pairing fails.
+    private var endOfConnection: SessionEnd?
     /// The group let go of the player (`shutdown()`): its connection ends by our doing.
     private var shuttingDown = false
     /// The activities last declared: playback only while there's something to play.
@@ -116,10 +138,11 @@ public actor PlayerSession {
     /// A player we dial and keep connected. One the user just `chosen` is claimed for playback
     /// when it connects.
     public init(url: URL, identity: ServerIdentity, pairings: PlayerPairings = PlayerPairings(),
-                chosen: Bool = false, approve: @escaping Approval) {
+                chosen: Bool = false, pairing: PairingRequest? = nil, approve: @escaping Approval) {
         self.url = url
         self.identity = identity
         self.pairings = pairings
+        pairingRequest = pairing
         self.approve = approve
         claiming = chosen
         incoming = nil
@@ -133,6 +156,7 @@ public actor PlayerSession {
         url = URL(string: "ws://\(connection.remoteDescription)") ?? URL(string: "ws://incoming")!
         self.identity = identity
         self.pairings = pairings
+        pairingRequest = nil
         self.approve = approve
         incoming = connection.socket
         isIncoming = true
@@ -195,6 +219,15 @@ public actor PlayerSession {
             }
             resetConnectionState()
             if Task.isCancelled { break }
+            // An attempt ends with its connection: the operator starts another one. Until one
+            // started, the session keeps trying to reach the speaker.
+            if pairingRequest != nil, !pairingFinished, status.pairing != nil {
+                if case .failed = status.pairing {} else {
+                    status.pairing = .failed("The connection to the speaker ended.")
+                }
+                status.connection = .pairingRequired
+                return
+            }
 
             switch outcome {
             case .reconnect:
@@ -285,6 +318,9 @@ public actor PlayerSession {
         }
         channel = SecureChannel(transport: transport)
         status.clientID = clientInit.clientID
+        self.suite = suite
+        self.clientKey = clientKey
+        connectionPSK = status.paired ? (longTerm ?? SendspinPSK.sentinel) : SendspinPSK.sentinel
         Log.debug("\(url): Noise handshake done (\(suite.rawValue))")
 
         sendMessage("server/hello", ServerHello(name: identity.name))
@@ -308,6 +344,7 @@ public actor PlayerSession {
                 timeout = nil
             }
         }
+        if let endOfConnection { return endOfConnection }
         // A drop without client/goodbye: assume `restart` (messaging.md, client/goodbye).
         if hello != nil, !shuttingDown {
             Log.info("\(status.name ?? url.absoluteString): closed without a goodbye, reconnecting")
@@ -355,6 +392,11 @@ public actor PlayerSession {
         hello = nil
         activated = false
         notRecognized = false
+        attempt = nil
+        pairingIndex = 0
+        pairingInitTimeout?.cancel()
+        rehandshake = nil
+        endOfConnection = nil
         status.paired = false
         declaredActivities = []
         sentActivation = false
@@ -377,6 +419,8 @@ public actor PlayerSession {
     /// Handle one JSON message; returns how the session ends when the client leaves.
     private func handle(_ data: Data, receivedAtUs: Int64) async throws -> SessionEnd? {
         let type = try MessageCoding.type(of: data)
+        // Mid re-handshake, old-key messages may still come; nothing goes out but the handshake.
+        if rehandshake != nil, type != "noise/handshake", type != "client/goodbye" { return nil }
         switch type {
         case "client/goodbye":
             return goodbye(try MessageCoding.payload(ClientGoodbye.self, from: data).reason)
@@ -394,6 +438,22 @@ public actor PlayerSession {
             handleState(try MessageCoding.payload(ClientState.self, from: data))
         case "client/leave":
             leaveGroup("left the group")
+        case "noise/handshake":
+            try await finishRehandshake(MessageCoding.payload(NoiseHandshakeMessage.self, from: data))
+        case "client/pair-pending":
+            try handlePairPending(MessageCoding.payload(ClientPairPendingMessage.self, from: data))
+        case "client/pair-init":
+            try handlePairInit(MessageCoding.payload(ClientPairInitMessage.self, from: data))
+        case "client/pair-auth":
+            try handlePairAuth(MessageCoding.payload(ClientPairAuthMessage.self, from: data))
+        case "client/pair-retry":
+            try handlePairRetry()
+        case "client/pair-confirm":
+            try handlePairConfirm(MessageCoding.payload(ClientPairConfirmMessage.self, from: data))
+        case "client/pair-finalize":
+            try await handlePairFinalize(MessageCoding.payload(ClientPairFinalizeMessage.self, from: data))
+        case "pair/abort":
+            handlePairAbort(try MessageCoding.payload(PairAbortMessage.self, from: data).reason)
         default:
             Log.debug("\(status.name ?? "?"): ignoring \(type)")
         }
@@ -438,6 +498,9 @@ public actor PlayerSession {
         guard hello.supportedRoles.contains("player@v1"), hello.playerSupport != nil else {
             sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
             return .stop(.failed("not a player"))
+        }
+        if let pairingRequest, !pairingFinished {
+            return startPairing(pairingRequest)
         }
         // While our record exists, a player on the Sentinel MUST NOT play: pairing again fixes it.
         if notRecognized {
@@ -568,6 +631,8 @@ public actor PlayerSession {
     // MARK: Outbound
 
     private func sendMessage<P: Encodable>(_ type: String, _ payload: P) {
+        // After our Noise message 1, only the handshake until the new keys are in place.
+        guard rehandshake == nil || type == "noise/handshake" else { return }
         do {
             send(SecureChannel.jsonType, try MessageCoding.encode(type: type, payload: payload))
         } catch {
@@ -650,7 +715,7 @@ public actor PlayerSession {
     /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
     /// The player gets the format closest to the source (see `FormatChoice`).
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int, leadUs: Int64) {
-        guard let socket, activated, !left, ready, available else { return }
+        guard let socket, activated, !left, ready, available, rehandshake == nil else { return }
         // A lead too short for this player's buffer: wait for the group's lead to be raised,
         // which restarts the stream, rather than start it short (player/v1.md, Server Audio
         // Send Constraints).
@@ -771,6 +836,351 @@ struct PlayerBufferAccount {
         guard counted + bytes <= capacity else { return false }
         chunks.append((endUs, bytes))
         return true
+    }
+}
+
+// MARK: - Pairing, the server's side (pairing.md)
+
+/// One pairing attempt: from the pairing server/activate until success or pair/abort.
+private struct PairingAttempt {
+    let method: PairingMethod
+    let index: Int
+    /// client/pair-init arrived.
+    var started = false
+    /// Dynamic code: the client's commitment, and our nonce from the first round.
+    var commitB: Data?
+    var nonceA: Data?
+    var round = 0
+    /// This round's code, CPace run and session id, once the operator entered it.
+    var code: String?
+    var cpace: CPace?
+    var sid: Data?
+    /// CPace derived the key from the client's share.
+    var derived = false
+    /// client/pair-confirm checked out: client/pair-finalize may follow.
+    var confirmed = false
+}
+
+private enum AfterRehandshake {
+    /// To the pairing PSK, for the Pairing PSK flow.
+    case pairing
+    /// To the new long-term PSK, after a pairing.
+    case paired
+}
+
+extension PlayerSession {
+    /// The attempts, rounds and flows of pairing.md, Methods; the operator's codes come
+    /// from `PairingRequest.code`.
+    private func startPairing(_ request: PairingRequest) -> SessionEnd? {
+        status.pairing = .starting
+        // Only a method the speaker offers (pairing.md, client/hello pair-method descriptor).
+        let offered = switch request.method {
+        case .token: status.pairMethods?.pairingPSK != nil
+        case .staticCode: status.pairMethods?.staticCode != nil
+        case .dynamicCode: status.pairMethods?.dynamicCode != nil
+        }
+        guard offered else {
+            status.pairing = .failed("The speaker doesn't offer this way of pairing.")
+            return .stop(.pairingRequired)
+        }
+        if case .token(let token) = request.method {
+            // The token must be this device's (pairing.md, Pairing PSK Flow).
+            guard token.clientID == status.clientID else {
+                Log.warning("\(status.name ?? "?"): the pairing token is another device's")
+                status.pairing = .failed("That pairing token belongs to another device.")
+                return .stop(.pairingRequired)
+            }
+            // The connection runs on the Sentinel or an old pairing: switch to its pairing PSK.
+            // Nothing but server/activate may come first (messaging.md, Communication).
+            sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+            sentActivation = true
+            beginRehandshake(to: token.pairingPSK, longTerm: false, then: .pairing)
+            return nil
+        }
+        activatePairing()
+        return nil
+    }
+
+    private var methodName: (method: String, format: String?) {
+        switch pairingRequest?.method {
+        case .token: ("pairing_psk", nil)
+        case .staticCode: ("static_pairing_code", nil)
+        case .dynamicCode, nil: ("dynamic_pairing_code", "digits")
+        }
+    }
+
+    /// A pairing activation admits one attempt; it doesn't touch roles or streams.
+    private func activatePairing() {
+        guard let pairingRequest else { return }
+        pairingIndex += 1
+        attempt = PairingAttempt(method: pairingRequest.method, index: pairingIndex)
+        let (method, format) = methodName
+        sendMessage("server/activate", ServerActivate(activities: ["pairing"], activeRoles: [],
+                                                      pairing: .init(method: method, format: format)))
+        sentActivation = true
+        sendGroupUpdate()
+        // Our own timeout while waiting for client/pair-init (pairing.md, Entering and leaving
+        // pairing), long enough for a button press or a pairing window to be opened.
+        let index = pairingIndex
+        pairingInitTimeout?.cancel()
+        pairingInitTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(180))
+            guard !Task.isCancelled else { return }
+            await self?.pairingInitTimedOut(index)
+        }
+    }
+
+    private func pairingInitTimedOut(_ index: Int) {
+        guard let attempt, attempt.index == index, !attempt.started else { return }
+        failPairing("The speaker didn't start pairing.", abort: "user_cancelled")
+    }
+
+    /// A lower index is a leftover from a superseded pairing, discarded; a higher one is an error.
+    private func isCurrent(_ index: Int) throws -> Bool {
+        guard index <= pairingIndex else { throw SessionError.pairing("pairing_index \(index) ahead of \(pairingIndex)") }
+        return index == pairingIndex && attempt != nil
+    }
+
+    private func handlePairPending(_ message: ClientPairPendingMessage) throws {
+        guard try isCurrent(message.pairingIndex) else { return }
+        // From an unauthenticated peer: plain text, at most 200 bytes.
+        status.pairing = .waiting(message: message.message?.truncated(toUTF8Bytes: 200))
+    }
+
+    private func handlePairInit(_ message: ClientPairInitMessage) throws {
+        guard try isCurrent(message.pairingIndex), var attempt, !attempt.started else { return }
+        attempt.started = true
+        pairingInitTimeout?.cancel()
+        switch attempt.method {
+        case .token:
+            status.pairing = .checking  // client/pair-finalize follows at once
+        case .staticCode:
+            attempt.round = 1
+            self.attempt = attempt
+            askForCode(.staticCode(again: staticCodeWasWrong))
+            return
+        case .dynamicCode:
+            guard let commit = message.commitB.flatMap(Base64URL.decode), commit.count == 32 else {
+                throw SessionError.pairing("client/pair-init without commit_B")
+            }
+            let nonceA = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+            attempt.commitB = commit
+            attempt.nonceA = nonceA
+            attempt.round = 1
+            self.attempt = attempt
+            sendMessage("server/pair-init", ServerPairInitReceived(nonceA: Base64URL.encode(nonceA)))
+            askForCode(.dynamicCode(again: false))
+            return
+        }
+        self.attempt = attempt
+    }
+
+    /// The operator enters the code; the session goes on meanwhile.
+    private func askForCode(_ prompt: PairingPrompt) {
+        guard let pairingRequest, let attempt else { return }
+        status.pairing = .enteringCode(prompt)
+        let index = attempt.index, round = attempt.round
+        Task { [weak self] in
+            let code = await pairingRequest.code(prompt)
+            await self?.codeEntered(code, prompt: prompt, index: index, round: round)
+        }
+    }
+
+    private func codeEntered(_ code: String?, prompt: PairingPrompt, index: Int, round: Int) {
+        guard var attempt, attempt.index == index, attempt.round == round, attempt.code == nil,
+              let channel else { return }
+        guard let code else {
+            failPairing(nil, abort: "user_cancelled")
+            return
+        }
+        // Separators never count (pairing.md, Pairing Code Presentation).
+        let digits = code.filter(\.isASCII).filter(\.isNumber)
+        guard digits.count == prompt.length else {
+            askForCode(prompt)
+            return
+        }
+        let sid = DynamicPairingCode.sessionID(handshakeHash: channel.handshakeHash, pairingIndex: index, round: round)
+        do {
+            let cpace = try CPace(role: .initiator, prs: Data(digits.utf8), sid: sid, ad: Data("server".utf8))
+            attempt.code = digits
+            attempt.sid = sid
+            attempt.cpace = cpace
+            self.attempt = attempt
+            status.pairing = .checking
+            sendMessage("server/pair-auth", ServerPairAuthReceived(pakeMsg1: Base64URL.encode(cpace.publicShare)))
+        } catch {
+            failPairing("Pairing failed: \(error)", abort: nil)
+        }
+    }
+
+    private func handlePairAuth(_ message: ClientPairAuthMessage) throws {
+        guard var attempt, var cpace = attempt.cpace, !attempt.derived else {
+            throw SessionError.pairing("client/pair-auth out of sequence")
+        }
+        guard let share = Base64URL.decode(message.pakeMsg2) else { throw SessionError.pairing("malformed pake_msg_2") }
+        try cpace.derive(peerShare: share, peerAD: Data("client".utf8))
+        guard let tag = cpace.tag() else { throw SessionError.pairing("no confirmation tag") }
+        attempt.cpace = cpace
+        attempt.derived = true
+        self.attempt = attempt
+        sendMessage("server/pair-confirm", ServerPairConfirmReceived(serverKC: Base64URL.encode(tag)))
+    }
+
+    /// The client's check of our tag failed: the code was wrong. Another round, same code.
+    private func handlePairRetry() throws {
+        guard var attempt, case .dynamicCode = attempt.method, attempt.derived else {
+            throw SessionError.pairing("client/pair-retry out of sequence")
+        }
+        guard attempt.round < 20 else {
+            failPairing("Too many wrong codes.", abort: "pairing_code_mismatch")
+            return
+        }
+        attempt.round += 1
+        attempt.code = nil
+        attempt.cpace = nil
+        attempt.sid = nil
+        attempt.derived = false
+        self.attempt = attempt
+        sendMessage("server/pair-init", ServerPairInitReceived(nonceA: nil))
+        askForCode(.dynamicCode(again: true))
+    }
+
+    private func handlePairConfirm(_ message: ClientPairConfirmMessage) throws {
+        guard var attempt, let cpace = attempt.cpace, attempt.derived, !attempt.confirmed,
+              let sid = attempt.sid, let isk = cpace.isk else {
+            throw SessionError.pairing("client/pair-confirm out of sequence")
+        }
+        guard let tag = Base64URL.decode(message.clientKC), cpace.verify(peerTag: tag) else {
+            failPairing("That code didn't match.", abort: "pairing_code_mismatch")
+            return
+        }
+        // The dynamic code is bound to this handshake: the client's committed nonce must
+        // open, and give the code the operator entered (pairing.md, Server verification).
+        if case .dynamicCode = attempt.method {
+            guard let sealed = message.wrappedNonceB.flatMap(Base64URL.decode),
+                  let nonceB = try? DynamicPairingCode.unwrap(sealed, .nonce, sid: sid, isk: isk, suite: suite),
+                  DynamicPairingCode.commitment(to: nonceB) == attempt.commitB,
+                  let channel, let nonceA = attempt.nonceA,
+                  DynamicPairingCode.digits(handshakeHash: channel.handshakeHash, nonceA: nonceA, nonceB: nonceB) == attempt.code
+            else { throw SessionError.pairing("the pairing code isn't bound to this handshake") }
+        }
+        attempt.confirmed = true
+        self.attempt = attempt
+    }
+
+    private func handlePairFinalize(_ message: ClientPairFinalizeMessage) async throws {
+        guard let attempt, attempt.started, let clientID = status.clientID else {
+            throw SessionError.pairing("client/pair-finalize out of sequence")
+        }
+        let psk: Data
+        switch attempt.method {
+        case .token:
+            guard let value = message.longTermPSK.flatMap(Base64URL.decode) else {
+                throw SessionError.pairing("client/pair-finalize without long_term_psk")
+            }
+            psk = value
+        case .staticCode, .dynamicCode:
+            guard attempt.confirmed, let sid = attempt.sid, let isk = attempt.cpace?.isk,
+                  let sealed = message.wrappedPSK.flatMap(Base64URL.decode),
+                  let value = try? DynamicPairingCode.unwrap(sealed, .psk, sid: sid, isk: isk, suite: suite) else {
+                throw SessionError.pairing("wrapped_psk doesn't open")
+            }
+            psk = value
+        }
+        guard psk.count == 32, psk != SendspinPSK.sentinel, psk != connectionPSK else {
+            throw SessionError.pairing("unusable long-term PSK")
+        }
+        // Persisted before we say so; the client persists its record on server/pair-finalize.
+        pairings.store(psk, for: clientID)
+        sendMessage("server/pair-finalize", EmptyPayload())
+        self.attempt = nil
+        pairingFinished = true
+        notRecognized = false
+        status.pairing = .paired
+        Log.info("\(status.name ?? clientID): paired")
+        beginRehandshake(to: psk, longTerm: true, then: .paired)
+    }
+
+    private func handlePairAbort(_ reason: String) {
+        guard let attempt else { return }
+        if reason == "pairing_code_mismatch", case .staticCode = attempt.method {
+            // The client found our tag wrong: the static code was. A new attempt, in the
+            // pairing window the device keeps open.
+            staticCodeWasWrong = true
+            activatePairing()
+            return
+        }
+        let text = switch reason {
+        case "attempt_timeout": "The speaker stopped waiting for the code."
+        case "method_not_supported": "The speaker doesn't offer this way of pairing."
+        case "user_cancelled": "Pairing was cancelled on the speaker."
+        case "pairing_code_mismatch": "Too many wrong codes. Check the speaker, then try again."
+        case "concurrent_attempt": "The speaker is pairing with another server."
+        default: "The speaker ended pairing (\(reason))."
+        }
+        failPairing(text, abort: nil)
+    }
+
+    /// Leave pairing, and end the connection: the operator starts a new attempt. A cancel
+    /// says why first (pairing.md, Entering and leaving pairing).
+    private func failPairing(_ text: String?, abort reason: String?) {
+        if let reason { sendMessage("pair/abort", PairAbortMessage(reason: reason)) }
+        sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+        attempt = nil
+        pairingInitTimeout?.cancel()
+        status.pairing = text.map { .failed($0) } ?? .failed("Pairing was cancelled.")
+        endOfConnection = .stop(.pairingRequired)
+        socket?.close()
+    }
+
+    /// Cancel the pairing in progress, from this Mac.
+    public func cancelPairing() {
+        guard attempt != nil || status.pairing == .starting else { return }
+        failPairing(nil, abort: "user_cancelled")
+    }
+
+    // MARK: Re-handshake (connection.md, Re-handshake)
+
+    /// New session keys on the same connection: the prologue is the old handshake hash, and
+    /// nothing else goes out until the new keys are in place.
+    private func beginRehandshake(to psk: Data, longTerm: Bool, then next: AfterRehandshake) {
+        guard let channel, let clientKey else { return }
+        var handshake = NoiseInitiatorHandshake(suite: suite, prologue: channel.handshakeHash,
+                                                localStatic: identity.privateKey, remoteStatic: clientKey, psk: psk)
+        do {
+            let payload = try JSONEncoder().encode(
+                NoiseMessage1Payload(pskID: SendspinPSK.id(for: psk), pskCategory: longTerm ? "lt" : "pr"))
+            let message1 = try handshake.writeMessage1(payload: payload)
+            sendMessage("noise/handshake", NoiseHandshakeMessage(data: Base64URL.encode(message1)))
+            rehandshake = (handshake, psk, longTerm, next)
+        } catch {
+            failPairing("Pairing failed: \(error)", abort: nil)
+        }
+    }
+
+    private func finishRehandshake(_ message: NoiseHandshakeMessage) async throws {
+        guard var state = rehandshake, let message2 = Base64URL.decode(message.data) else {
+            throw SessionError.handshake("noise/handshake out of sequence")
+        }
+        // A miss fails: no Sentinel fallback in a re-handshake.
+        let (_, transport) = try state.handshake.readMessage2(message2)
+        channel = SecureChannel(transport: transport)
+        rehandshake = nil
+        connectionPSK = state.psk
+        pairingIndex = 0
+        status.paired = state.longTerm
+        Log.debug("\(status.name ?? "?"): re-handshake done (\(state.longTerm ? "lt" : "pr"))")
+        // The first message under the new keys is server/activate.
+        switch state.then {
+        case .pairing:
+            activatePairing()
+        case .paired:
+            guard let clientID = status.clientID, await approve(clientID, true) else {
+                sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+                return
+            }
+            activatePlayback()
+        }
     }
 }
 

@@ -242,11 +242,25 @@ public struct ServerHello: Encodable, Sendable {
 }
 
 public struct ServerActivate: Encodable, Sendable {
+    /// The pairing attempt a `pairing` activity admits (messaging.md, server/activate).
+    public struct Pairing: Encodable, Sendable {
+        public var method: String
+        /// The dynamic code's emission format; absent for the other methods.
+        public var format: String?
+    }
+
     public var activities: [String]
     public var activeRoles: [String]
+    public var pairing: Pairing?
+
+    public init(activities: [String], activeRoles: [String], pairing: Pairing? = nil) {
+        self.activities = activities
+        self.activeRoles = activeRoles
+        self.pairing = pairing
+    }
 
     enum CodingKeys: String, CodingKey {
-        case activities
+        case activities, pairing
         case activeRoles = "active_roles"
     }
 }

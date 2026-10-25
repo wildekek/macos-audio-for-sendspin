@@ -100,7 +100,7 @@ struct PairAbortMessage: Codable {
 
 // Dynamic Pairing Code flow (pairing.md, Messages). Binary values are base64url.
 
-struct ServerPairInitReceived: Decodable {
+struct ServerPairInitReceived: Codable {
     /// In the first round only.
     var nonceA: String?
 
@@ -109,7 +109,7 @@ struct ServerPairInitReceived: Decodable {
     }
 }
 
-struct ServerPairAuthReceived: Decodable {
+struct ServerPairAuthReceived: Codable {
     /// The server's CPace share `Ya`.
     var pakeMsg1: String
 
@@ -118,7 +118,7 @@ struct ServerPairAuthReceived: Decodable {
     }
 }
 
-struct ServerPairConfirmReceived: Decodable {
+struct ServerPairConfirmReceived: Codable {
     /// The server's confirmation tag `Ta`.
     var serverKC: String
 
@@ -237,7 +237,7 @@ struct ClientStreamStartMessage: Encodable {
     var source: Source
 }
 
-struct ClientPairInitMessage: Encodable {
+struct ClientPairInitMessage: Codable {
     var pairingIndex: Int
     /// The commitment to nonce_B, in the Dynamic Pairing Code flow.
     var commitB: String?
@@ -248,7 +248,7 @@ struct ClientPairInitMessage: Encodable {
     }
 }
 
-struct ClientPairAuthMessage: Encodable {
+struct ClientPairAuthMessage: Codable {
     /// This Mac's CPace share `Yb`.
     var pakeMsg2: String
 
@@ -257,10 +257,11 @@ struct ClientPairAuthMessage: Encodable {
     }
 }
 
-struct ClientPairConfirmMessage: Encodable {
+struct ClientPairConfirmMessage: Codable {
     /// This Mac's confirmation tag `Tb`.
     var clientKC: String
-    var wrappedNonceB: String
+    /// In the Dynamic Pairing Code flow only.
+    var wrappedNonceB: String?
 
     enum CodingKeys: String, CodingKey {
         case clientKC = "client_kc"
@@ -268,7 +269,7 @@ struct ClientPairConfirmMessage: Encodable {
     }
 }
 
-struct ClientPairPendingMessage: Encodable {
+struct ClientPairPendingMessage: Codable {
     var pairingIndex: Int
     var message: String?
 
@@ -279,7 +280,7 @@ struct ClientPairPendingMessage: Encodable {
 }
 
 /// The new long-term PSK: plain in the Pairing PSK flow, wrapped in the code flows.
-struct ClientPairFinalizeMessage: Encodable {
+struct ClientPairFinalizeMessage: Codable {
     /// base64url, 43 characters.
     var longTermPSK: String?
     /// base64url, 64 characters.
