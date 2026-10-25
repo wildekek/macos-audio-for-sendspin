@@ -188,8 +188,11 @@ actor SourceSession {
     /// The PSK named in Noise message 1. A miss in the first handshake falls back to the
     /// Sentinel PSK, and the server learns we lost the credential; in a re-handshake it fails.
     private func choosePSK(_ payload: Data, rehandshake: Bool) async throws -> (Data, PSKCategory) {
+        // A psk_id that isn't 43 base64url characters (32 bytes) breaks the payload's shape: a
+        // silent failure, not a lookup miss (messaging.md, noise/handshake).
         guard let named = try? JSONDecoder().decode(NoiseMessage1Received.self, from: payload),
-              let category = PSKCategory(rawValue: named.pskCategory)
+              let category = PSKCategory(rawValue: named.pskCategory),
+              named.pskID.utf8.count == 43, Base64URL.decode(named.pskID)?.count == 32
         else { throw SessionError.handshake("malformed Noise message 1 payload") }
         let credentials = await client.credentials
         switch category {
