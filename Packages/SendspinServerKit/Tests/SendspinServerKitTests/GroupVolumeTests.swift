@@ -23,3 +23,25 @@ struct GroupVolumeTests {
         #expect(GroupVolume.redistribute(["a": 50, "b": 30], to: -10) == ["a": 0, "b": 0])
     }
 }
+
+struct ControllerStateTests {
+    static func player(_ volume: Int, muted: Bool = false, volumeCommand: Bool = true, muteCommand: Bool = true)
+        -> ControllerMember {
+        ControllerMember(inGroup: true, volume: volume, muted: muted, canSetVolume: volumeCommand, canMute: muteCommand)
+    }
+
+    /// Only players that take the command count (Reading group volume, Reading group mute).
+    @Test func countsOnlyPlayersThatTakeTheCommand() {
+        let state = ControllerState(group: [Self.player(80, muted: true), Self.player(30, muted: true),
+                                            Self.player(0, muted: false, volumeCommand: false, muteCommand: false)])
+        #expect(state.volume == 55)
+        #expect(state.muted)
+        #expect(state.supportedCommands == ["volume", "mute", "switch"])
+        #expect(!ControllerState(group: [Self.player(50, muted: true), Self.player(50)]).muted)
+    }
+
+    @Test func withoutVolumeOrMuteThoseAreNotOffered() {
+        let state = ControllerState(group: [Self.player(20, muted: true, volumeCommand: false, muteCommand: false)])
+        #expect(state == ControllerState(supportedCommands: ["switch"], volume: 100, muted: false))
+    }
+}

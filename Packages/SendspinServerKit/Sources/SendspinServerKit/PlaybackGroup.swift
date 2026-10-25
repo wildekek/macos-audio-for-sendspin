@@ -35,6 +35,8 @@ public actor PlaybackGroup {
     private var outputs: [ObjectIdentifier: any GroupOutput] = [:]
     private var playing = false
     private var lateChunks = 0
+    /// Counts recomputations of the controller state, so an older one doesn't send late.
+    private var controllerGeneration = 0
 
     public init(name: String, leadMs: Int) {
         self.name = name
@@ -71,7 +73,7 @@ public actor PlaybackGroup {
     /// Add a player; the group keeps it connected until it is removed.
     public func add(_ session: PlayerSession) async {
         guard sessions[session.url] == nil else { return }
-        await session.join(groupID: id, groupName: name)
+        await session.join(groupID: id, groupName: name, group: self)
         await session.setPlaying(playing)
         sessions[session.url] = (session, Task { await session.run() })
     }
@@ -80,6 +82,50 @@ public actor PlaybackGroup {
         guard let entry = sessions.removeValue(forKey: url) else { return }
         entry.task.cancel()
         await entry.session.shutdown()
+        await membersChanged()
+    }
+
+    // MARK: Controller role (roles/controller/v1.md)
+
+    /// A player's volume, mute or place in the group changed: send every controller its
+    /// group's state, if that changed.
+    func membersChanged() async {
+        controllerGeneration += 1
+        let generation = controllerGeneration
+        var members: [(session: PlayerSession, member: ControllerMember)] = []
+        for (session, _) in sessions.values { members.append((session, await session.controllerMember())) }
+        let group = ControllerState(group: members.map(\.member).filter(\.inGroup))
+        for (session, member) in members {
+            guard generation == controllerGeneration else { return }
+            // A player out of the group is a group of its own.
+            await session.updateController(member.inGroup ? group : ControllerState(group: [member]))
+        }
+    }
+
+    /// A controller's command for its group: ours, or the stopped group of its own it's in.
+    func command(_ command: ControllerCommand, from controller: PlayerSession) async {
+        var members: [(session: PlayerSession, member: ControllerMember)] = []
+        for (session, _) in sessions.values { members.append((session, await session.controllerMember())) }
+        guard let own = members.first(where: { $0.session === controller }) else { return }
+        let targets = own.member.inGroup ? members.filter(\.member.inGroup) : [own]
+        switch command.command {
+        case "volume":
+            guard let volume = command.volume else { return }
+            // One command per player, after redistributing what one can't take (Setting group volume).
+            let players = targets.filter { $0.member.canSetVolume && $0.member.volume != nil }
+            let current = Dictionary(uniqueKeysWithValues: players.map { (ObjectIdentifier($0.session), $0.member.volume!) })
+            let levels = GroupVolume.redistribute(current, to: volume)
+            for player in players where levels[ObjectIdentifier(player.session)] != player.member.volume {
+                await player.session.setVolume(levels[ObjectIdentifier(player.session)]!)
+            }
+        case "mute":
+            guard let mute = command.mute else { return }
+            for player in targets where player.member.canMute && player.member.muted != mute {
+                await player.session.setMuted(mute)
+            }
+        default:
+            return
+        }
     }
 
     public func add(output: any GroupOutput) {

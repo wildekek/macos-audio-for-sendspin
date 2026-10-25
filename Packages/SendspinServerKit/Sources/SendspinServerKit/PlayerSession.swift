@@ -138,6 +138,12 @@ public actor PlayerSession {
     private var visualizerBuffer = VisualizerBufferAccount()
     private var visualizerDrops = 0
 
+    // The controller role (roles/controller/v1.md).
+    /// The group the player was added to, which carries out its controller's commands.
+    private weak var playbackGroup: PlaybackGroup?
+    /// The controller state last sent.
+    private var controllerState: ControllerState?
+
     private var group: (id: String, name: String)?
     private var playing = false
     /// The player left the group (see `PlayerStatus.Connection.left`).
@@ -410,8 +416,11 @@ public actor PlayerSession {
         endOfConnection = nil
         status.paired = false
         declaredActivities = []
+        // The others' group lost a member.
+        controllerChanged()
         activeRoles = []
         visualizerRequest = nil
+        controllerState = nil
         sentActivation = false
         available = false
         ready = false
@@ -449,6 +458,8 @@ public actor PlayerSession {
                                                   serverTransmitted: ServerClock.nowMicros()))
         case "client/state":
             if let end = handleState(try MessageCoding.payload(ClientState.self, from: data)) { return end }
+        case "client/command":
+            handleCommand(try MessageCoding.payload(ClientCommand.self, from: data))
         case "client/leave":
             leaveGroup("left the group")
         case "noise/handshake":
@@ -559,13 +570,14 @@ public actor PlayerSession {
         return nil
     }
 
-    static let implementedRoles = ["player@v1", "visualizer@v1"]
+    static let implementedRoles = ["player@v1", "controller@v1", "visualizer@v1"]
 
     /// The roles we activate: every one the client lists that we implement, each with the
     /// support object it requires (messaging.md, client/hello). All are v1, so there's no
     /// version to choose (overview.md, Priority and Activation).
     private static func roles(for hello: ClientHello) -> [String] {
         var roles = ["player@v1"]
+        if hello.supportedRoles.contains("controller@v1") { roles.append("controller@v1") }
         if hello.supportedRoles.contains("visualizer@v1"), hello.visualizerSupport != nil { roles.append("visualizer@v1") }
         return roles
     }
@@ -576,6 +588,7 @@ public actor PlayerSession {
         // A held player may have sent client/state already, but not for the roles it gets now.
         ready = false
         visualizerRequest = nil
+        controllerState = nil
         declareActivities(force: true)
         if claiming {
             // Sound normally follows within a moment; without it, the claim lapses.
@@ -587,6 +600,8 @@ public actor PlayerSession {
         sentActivation = true
         sendGroupUpdate()
         status.connection = left ? .left : .connected
+        // Its controller gets the group's state at once (messaging.md, server/state).
+        controllerChanged()
     }
 
     /// Declare playback only while there's something to play, as the spec asks: a server that
@@ -622,6 +637,7 @@ public actor PlayerSession {
         declareActivities()
         sendGroupUpdate()
         status.connection = .connected
+        controllerChanged()
     }
 
     /// The player stops taking part, being in use by something else or having sent
@@ -637,6 +653,7 @@ public actor PlayerSession {
         endStreams()
         declareActivities()
         status.connection = .left
+        controllerChanged()
     }
 
     private func handleState(_ state: ClientState) -> SessionEnd? {
@@ -664,6 +681,7 @@ public actor PlayerSession {
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
             if activated { ready = true }
+            controllerChanged()
         }
         // Only a change counts: a player says `available: false` until its clock is in sync
         // (messaging.md, Clock Synchronization), so its first state often does.
@@ -718,9 +736,47 @@ public actor PlayerSession {
 
     // MARK: Group interface
 
-    func join(groupID: String, groupName: String) {
+    func join(groupID: String, groupName: String, group playbackGroup: PlaybackGroup? = nil) {
         group = (groupID, groupName)
+        self.playbackGroup = playbackGroup
         sendGroupUpdate()
+    }
+
+    // MARK: Controller role (roles/controller/v1.md)
+
+    func controllerMember() -> ControllerMember {
+        ControllerMember(inGroup: activated && !left && ready, volume: status.volume, muted: status.muted,
+                         canSetVolume: ready && status.canSetVolume, canMute: ready && status.canMute)
+    }
+
+    /// Send the controller its group's state, when it changed.
+    func updateController(_ state: ControllerState) {
+        guard activated, activeRoles.contains("controller@v1"), rehandshake == nil, state != controllerState else { return }
+        controllerState = state
+        sendMessage("server/state", ServerState(controller: state))
+    }
+
+    /// Something the group's controller state depends on changed.
+    private func controllerChanged() {
+        let group = playbackGroup
+        Task { await group?.membersChanged() }
+    }
+
+    private func handleCommand(_ command: ClientCommand) {
+        // Only for an active role, and only what we offer (Controller messages).
+        guard let controller = command.controller, activated, activeRoles.contains("controller@v1"),
+              controllerState?.supportedCommands.contains(controller.command) == true
+        else { return }
+        Log.info("\(status.name ?? "?"): controller \(controller.command)"
+            + (controller.volume.map { " \($0)" } ?? "") + (controller.mute.map { " \($0)" } ?? ""))
+        if controller.command == "switch" {
+            // Our group and a stopped one of its own are the whole cycle; from its own, it goes
+            // back to the group it left (Switch command cycle).
+            if left { rejoin() } else { leaveGroup("switched to a group of its own") }
+            return
+        }
+        let group = playbackGroup
+        Task { await group?.command(controller, from: self) }
     }
 
     func setPlaying(_ playing: Bool) {

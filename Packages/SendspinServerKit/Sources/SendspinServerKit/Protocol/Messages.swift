@@ -243,6 +243,17 @@ public struct ClientState: Decodable, Sendable {
     public var visualizer: VisualizerConfig?
 }
 
+/// The `controller` object of client/command (roles/controller/v1.md).
+public struct ControllerCommand: Decodable, Sendable {
+    public var command: String
+    public var volume: Int?
+    public var mute: Bool?
+}
+
+public struct ClientCommand: Decodable, Sendable {
+    public var controller: ControllerCommand?
+}
+
 public struct ClientGoodbye: Decodable, Sendable {
     public var reason: String
 }
@@ -325,6 +336,26 @@ public struct StreamStart: Encodable, Sendable {
         case player, visualizer
         case serverTransmitted = "server_transmitted"
     }
+}
+
+/// The `controller` object of server/state: the state of the client's whole group.
+public struct ControllerState: Encodable, Equatable, Sendable {
+    public var supportedCommands: [String]
+    public var volume: Int
+    public var muted: Bool
+    /// There's no queue to repeat or shuffle: the group plays the Mac's live sound.
+    public var repeatMode = "off"
+    public var shuffle = false
+
+    enum CodingKeys: String, CodingKey {
+        case volume, muted, shuffle
+        case supportedCommands = "supported_commands"
+        case repeatMode = "repeat"
+    }
+}
+
+public struct ServerState: Encodable, Sendable {
+    public var controller: ControllerState?
 }
 
 public struct StreamEnd: Encodable, Sendable {

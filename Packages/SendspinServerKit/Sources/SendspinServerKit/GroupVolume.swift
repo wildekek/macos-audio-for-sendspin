@@ -34,3 +34,27 @@ public enum GroupVolume {
         return levels.mapValues { Int($0.rounded()) }
     }
 }
+
+/// What the controller role needs of one player (roles/controller/v1.md).
+struct ControllerMember: Sendable {
+    /// Plays in our group, rather than in a stopped group of its own.
+    var inGroup: Bool
+    var volume: Int?
+    var muted: Bool?
+    var canSetVolume: Bool
+    var canMute: Bool
+}
+
+extension ControllerState {
+    /// The state of a group of `members`: the average volume of those that take volume
+    /// commands, and muted only when all that take mute commands are. Without any, 100 and
+    /// unmuted, and the command isn't offered. `switch` always is: there's always a group to
+    /// switch to, ours or one of its own.
+    init(group members: [ControllerMember]) {
+        let volumes = members.filter(\.canSetVolume).compactMap(\.volume)
+        let mutes = members.filter(\.canMute).compactMap(\.muted)
+        self.init(supportedCommands: (volumes.isEmpty ? [] : ["volume"]) + (mutes.isEmpty ? [] : ["mute"]) + ["switch"],
+                  volume: GroupVolume.level(Dictionary(uniqueKeysWithValues: volumes.enumerated().map { ($0, $1) })) ?? 100,
+                  muted: !mutes.isEmpty && mutes.allSatisfy { $0 })
+    }
+}
