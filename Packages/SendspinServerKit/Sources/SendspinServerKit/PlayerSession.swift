@@ -1480,7 +1480,11 @@ extension PlayerSession {
     }
 
     private func handlePairPending(_ message: ClientPairPendingMessage) throws {
-        guard try isCurrent(message.pairingIndex) else { return }
+        guard try isCurrent(message.pairingIndex), let attempt else { return }
+        // It only comes before an attempt starts, and never in the Pairing PSK Flow: otherwise
+        // it's out of sequence, a protocol error (pairing.md, Messages).
+        if attempt.started { throw SessionError.pairing("client/pair-pending after client/pair-init") }
+        if case .token = attempt.method { throw SessionError.pairing("client/pair-pending in the Pairing PSK Flow") }
         // From an unauthenticated peer: plain text, at most 200 bytes.
         status.pairing = .waiting(message: message.message?.truncated(toUTF8Bytes: 200))
     }
