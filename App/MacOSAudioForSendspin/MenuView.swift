@@ -406,7 +406,7 @@ private struct PairingCaption: View {
             Spacer(minLength: 0)
             switch pairing.progress {
             case .checking, .paired: EmptyView()
-            case .failed: CloseButton(help: "Close") { bridge.endSpeakerPairing() }
+            case .failed: CloseButton(help: "Close") { bridge.closeSpeakerPairing() }
             default: CloseButton(help: "Cancel pairing") { bridge.cancelSpeakerPairing() }
             }
         }

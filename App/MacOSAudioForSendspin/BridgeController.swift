@@ -972,22 +972,28 @@ final class BridgeController {
     /// Speakers the user just ticked: should one turn out to need pairing, pairing starts.
     private var pairWhenNeeded: Set<String> = []
 
-    /// Ticking a speaker that needs pairing goes straight to pairing it.
-    private func startPairingIfTicked(_ name: String, _ status: PlayerStatus) {
-        guard pairWhenNeeded.contains(name), speakerPairing == nil, tokenEntry == nil else { return }
+    /// Ticking a speaker that needs pairing goes straight to pairing it; true when it did.
+    private func startPairingIfTicked(_ name: String, _ status: PlayerStatus) -> Bool {
+        guard pairWhenNeeded.contains(name), speakerPairing == nil, tokenEntry == nil else { return false }
         switch status.connection {
         case .connected, .notApproved, .awaitingApproval, .taken, .left, .disconnected:
             pairWhenNeeded.remove(name)
         case .pairingRequired, .notRecognized:
             pairWhenNeeded.remove(name)
             switch pairingWay(status) {
-            case .code(let method): Task { self.startPairing(name, method: method) }
-            case .token: askForToken(name)
-            case nil: break
+            case .code(let method):
+                Task { self.startPairing(name, method: method) }
+                return true
+            case .token:
+                askForToken(name)
+                return true
+            case nil:
+                break
             }
         default:
             break
         }
+        return false
     }
 
     /// The speaker whose row asks for its pairing token, and whether the last one didn't match.
@@ -999,7 +1005,9 @@ final class BridgeController {
     }
 
     func cancelTokenEntry() {
+        guard let name = tokenEntry?.name else { return }
         tokenEntry = nil
+        untickIfUnpaired(name)
     }
 
     func pairWithToken(_ name: String, token: PairingToken.PairingPSK) {
@@ -1067,6 +1075,13 @@ final class BridgeController {
             playerPairings.remove(clientID)
         }
         Log.info("Forgot the pairing with \(name ?? clientID)")
+    }
+
+    /// The user closes a failed attempt: a speaker that still needs pairing leaves the group.
+    func closeSpeakerPairing() {
+        guard let name = speakerPairing?.name else { return }
+        endSpeakerPairing()
+        untickIfUnpaired(name)
     }
 
     /// Done with what the menu shows, as when a failed attempt is dismissed.
@@ -1169,7 +1184,6 @@ final class BridgeController {
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
         if speakerPairing?.name == name { pairingProgressed(name, status) }
-        startPairingIfTicked(name, status)
         if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
@@ -1182,6 +1196,7 @@ final class BridgeController {
         applyLead()
         if formatsChanged { applyFormat() }
         if status.connection == .taken { speakerTaken(name) }
+        if !startPairingIfTicked(name, status) { untickIfUnpaired(name) }
     }
 
     /// Another server took the speaker: it leaves the group as if unticked, so the menu shows
@@ -1191,6 +1206,24 @@ final class BridgeController {
     /// ticking it again doesn't approve whatever identity shows up next.
     private func speakerTaken(_ name: String) {
         Log.info("\(name): unticked, another server has it")
+        untick(name)
+    }
+
+    /// A speaker that can't play without pairing isn't kept in the group, ticked with a warning:
+    /// it's unticked, as one another server takes, and ticking it again pairs it. Not while
+    /// its pairing shows under the row.
+    private func untickIfUnpaired(_ name: String) {
+        guard let status = statuses[name], [.pairingRequired, .notRecognized].contains(status.connection),
+              selected.contains(name), speakerPairing?.name != name, tokenEntry?.name != name,
+              !pairWhenNeeded.contains(name) else { return }
+        Log.info("\(name): unticked, it needs pairing")
+        untick(name)
+    }
+
+    /// Out of the group as if the user unticked it, but keeping its approval, which SHOULD
+    /// persist (pairing.md, Unpaired Access): ticking it again doesn't approve whatever
+    /// identity shows up next.
+    private func untick(_ name: String) {
         let approval = approvedPlayers[name]
         if menuState.group.contains(name) { perform(.remove(name)) } else { setSelected(name, false) }
         if let approval {
