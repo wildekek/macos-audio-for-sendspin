@@ -349,6 +349,13 @@ final class BridgeController {
         Task { await start() }
     }
 
+    /// Before quitting: a server the Mac is a source for gets the stream's end and
+    /// `client/goodbye` `shutdown` (messaging.md, client/goodbye), with a moment to go out.
+    func prepareToQuit() async {
+        await source.stop()
+        try? await Task.sleep(for: .milliseconds(200))
+    }
+
     private func start() async {
         Log.info("Starting (\(identity.name))")
         // The Mac's own speakers, while they play along, are in the group a controller acts on.

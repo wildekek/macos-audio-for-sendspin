@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pairingWindowClose: Task<Void, Never>?
     private var scanWindow: NSPanel?
 
+    /// The server the Mac is a source for hears why it goes (`shutdown`) before the app quits.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            await bridge.prepareToQuit()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !bridge.isWelcomeDone || AppLocation.needsMove { showWelcome() }
         bridge.onPairingCode = { [weak self] code in self?.pairingCodeChanged(code) }
