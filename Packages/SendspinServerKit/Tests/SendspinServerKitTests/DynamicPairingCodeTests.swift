@@ -33,5 +33,11 @@ struct DynamicPairingCodeTests {
         #expect(try DynamicPairingCode.wrap(nonceB, .nonce, sid: sid, isk: isk, suite: .chaChaPoly)
                 == Self.hex("15703718a09271455d53a7750193bde7e7ecc3ff0c20cb124c02069eb5798901"
                             + "1bbb99db443a1f0eac9639c7c417fc81"))
+        // The server's side opens it again, and only with the same label, sid and ISK.
+        let sealed = try DynamicPairingCode.wrap(nonceB, .nonce, sid: sid, isk: isk, suite: .chaChaPoly)
+        #expect(try DynamicPairingCode.unwrap(sealed, .nonce, sid: sid, isk: isk, suite: .chaChaPoly) == nonceB)
+        #expect(throws: (any Error).self) {
+            try DynamicPairingCode.unwrap(sealed, .psk, sid: sid, isk: isk, suite: .chaChaPoly)
+        }
     }
 }

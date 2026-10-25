@@ -48,6 +48,25 @@ struct PairingTokenTests {
         let token = PairingToken.encode(clientKey: Data(0x00...0x1F), pairingPSK: Data(0xE0...0xFF))
         #expect(token == "SP:0AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYP6BYPC4PSOLZXH5DU6V97M5XXO74HR6LZ7J5PW674PT6X37T6757Y")
     }
+
+    /// Decoding is lenient with what an operator pastes, and strict about everything else.
+    @Test func decodesLeniently() throws {
+        let token = "SP:0AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYP6BYPC4PSOLZXH5DU6V97M5XXO74HR6LZ7J5PW674PT6X37T6757Y"
+        let expected = PairingToken.PairingPSK(clientKey: Data(0x00...0x1F), pairingPSK: Data(0xE0...0xFF))
+        #expect(PairingToken.decodePairingPSK(token) == expected)
+        #expect(PairingToken.decodePairingPSK("  " + token.lowercased() + "\n") == expected)
+        #expect(PairingToken.decodePairingPSK(String(token.dropFirst(3))) == expected)
+        // 9 is how a 2 is written; a 2 typed instead still decodes.
+        #expect(PairingToken.decodePairingPSK(token.replacingOccurrences(of: "9", with: "2")) == expected)
+        #expect(PairingToken.decodePairingPSK(String(token.dropLast(10))) == nil)  // too short
+        #expect(PairingToken.decodePairingPSK("SP:1" + token.dropFirst(4)) == nil)  // another version
+        #expect(PairingToken.decodePairingPSK(token + "!") == nil)
+    }
+
+    /// The reference vector in pairing.md, QR-code emission.
+    @Test func decodesTheDynamicCodeVector() {
+        #expect(PairingToken.decodeDynamicCode("SP:14DQ6FY7E4XTOP9HJ5LV6Z3PO57YPD4XT6T97N5Y") == Data(0xE0...0xF7))
+    }
 }
 
 struct TimeFilterTests {

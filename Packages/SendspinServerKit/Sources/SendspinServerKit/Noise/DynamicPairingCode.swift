@@ -44,6 +44,12 @@ enum DynamicPairingCode {
         return try suite.encrypt(key: key, nonce: 0, ad: Data(), plaintext: value)
     }
 
+    /// The server's side of `wrap`: the 32-byte value, or a throw if it doesn't decrypt.
+    static func unwrap(_ sealed: Data, _ label: WrapLabel, sid: Data, isk: Data, suite: NoiseSuite) throws -> Data {
+        let key = SymmetricKey(data: SHA256.hash(data: Data(label.rawValue.utf8) + sid + isk))
+        return try suite.decrypt(key: key, nonce: 0, ad: Data(), ciphertext: sealed)
+    }
+
     private static func bigEndian(_ value: UInt32) -> Data {
         withUnsafeBytes(of: value.bigEndian) { Data($0) }
     }
