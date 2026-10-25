@@ -127,6 +127,13 @@ public struct AudioDevice: Hashable, Sendable {
         }
     }
 
+    /// The step the Sendspin device's volume settles on for `scalar`: its control has libASPL's
+    /// default 96 raw steps, `scalar = (step / 96)²`, so a written volume reads back as the
+    /// nearest step, and above 30 % not every whole percent has one of its own.
+    public static func sendspinVolumeStep(_ scalar: Float32) -> Int {
+        Int((max(0, min(1, scalar)).squareRoot() * 96).rounded())
+    }
+
     /// The output volume as the menu bar's volume control shows it, 0…1, also for devices
     /// whose volume is per channel (the built-in speakers); nil if it has none.
     public var mainVolume: Float32? {

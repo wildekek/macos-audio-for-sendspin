@@ -296,8 +296,11 @@ final class BridgeController {
     private var listener: ServiceListener?
     private var systemObservations: [PropertyObservation] = []
     private var deviceObservations: [PropertyObservation] = []
-    /// Volume we just wrote to the device ourselves; its change notification is not a user action.
-    private var expectedDeviceVolume: Float?
+    /// Volumes we wrote to the device in the last second, as its steps: their change
+    /// notifications are not a user action. Several can be in flight (a group's players report
+    /// a new volume one by one, and each report writes the group level again), each write is
+    /// notified many times, and every notification reads whatever the device holds by then.
+    private var recentDeviceWrites: [(step: Int, at: ContinuousClock.Instant)] = []
 
     init() {
         let defaults = UserDefaults.standard
@@ -1804,15 +1807,16 @@ final class BridgeController {
     }
 
     private func followDeviceVolume(_ volume: Float32) {
+        let step = AudioDevice.sendspinVolumeStep(volume)
+        recentDeviceWrites.removeAll { $0.at < .now - .seconds(1) }
+        guard !recentDeviceWrites.contains(where: { $0.step == step }) else { return }
         deviceVolume = volume
         guard destination == .speakers else { return }
-        if let expected = expectedDeviceVolume, abs(expected - volume) < 0.005 {
-            expectedDeviceVolume = nil
-            return
-        }
         let current = connectedVolumes()
+        // The device has no step of its own for some levels; the nearest one stands for it.
+        guard let level = GroupVolume.level(current), AudioDevice.sendspinVolumeStep(Float(level) / 100) != step
+        else { return }
         let target = Int((volume * 100).rounded())
-        guard GroupVolume.level(current) != target else { return }
         for (name, level) in GroupVolume.redistribute(current, to: target) where current[name] != level {
             setPlayerVolume(name, level)
         }
@@ -1844,8 +1848,10 @@ final class BridgeController {
         guard let device = sendspinDevice else { return }
         if let level = GroupVolume.level(connectedVolumes()) {
             let scalar = Float(level) / 100
-            if abs(deviceVolume - scalar) >= 0.005 {
-                expectedDeviceVolume = scalar
+            let step = AudioDevice.sendspinVolumeStep(scalar)
+            if AudioDevice.sendspinVolumeStep(deviceVolume) != step {
+                recentDeviceWrites.removeAll { $0.at < .now - .seconds(1) }
+                recentDeviceWrites.append((step, .now))
                 deviceVolume = scalar
                 coreAudio.async { device.volume = scalar }
             }
