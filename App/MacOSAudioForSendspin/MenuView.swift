@@ -304,12 +304,17 @@ private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
 
-    /// While it's being paired, what's under the row says it all: no warning on it.
+    /// While it's being paired, what's under the row says it all: no warning on it. Its check
+    /// is grey, in the group but not playing yet, and unticking it cancels the pairing.
     private var row: SpeakerMenu.Row {
         var row = bridge.row(for: player)
         if bridge.speakerPairing?.name == player.instanceName || bridge.tokenEntry?.name == player.instanceName {
             row.status = nil
             row.showsWarning = false
+            if row.check != .none {
+                row.check = .grey
+                row.click = .remove
+            }
         }
         return row
     }
@@ -335,10 +340,9 @@ private struct PlayerRow: View {
                           }
                       })
             if let entry = bridge.tokenEntry, entry.name == player.instanceName {
-                TokenCaption(speaker: player.name, again: entry.again) { token in
+                TokenCaption(speaker: player.name, locations: player.status?.pairMethods?.pairingPSK ?? [],
+                             again: entry.again) { token in
                     bridge.pairWithToken(player.instanceName, token: token)
-                } onCancel: {
-                    bridge.cancelTokenEntry()
                 }
             } else if let pairing = bridge.speakerPairing, pairing.name == player.instanceName {
                 PairingCaption(pairing: pairing, speaker: player.name, methods: player.status?.pairMethods,
@@ -399,17 +403,10 @@ private struct PairingCaption: View {
     let bridge: BridgeController
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 6) {
-                content
-            }
-            Spacer(minLength: 0)
-            switch pairing.progress {
-            case .checking, .paired: EmptyView()
-            case .failed: CloseButton(help: "Close") { bridge.closeSpeakerPairing() }
-            default: CloseButton(help: "Cancel pairing") { bridge.cancelSpeakerPairing() }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            content
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
         .padding(.leading, destinationIndent)
         .padding(.bottom, 6)
@@ -486,63 +483,63 @@ private struct PairingCaption: View {
     }
 }
 
-/// A speaker that offers no code: paste its pairing token. Pasted tokens are read leniently
-/// (whitespace, case, the `SP:` prefix), as the spec asks.
+/// A speaker that offers no code: paste its pairing token, and pairing starts, as the code
+/// slots start once full. Pasted tokens are read leniently (whitespace, case, the `SP:`
+/// prefix), as the spec asks; anything else pasted reads as a token that didn't match.
 private struct TokenCaption: View {
     let speaker: String
+    /// Where the speaker says its token is (pairing.md, pair-method descriptor `locations`).
+    let locations: [PairMethods.Location]
     /// The last token didn't match: as with a wrong code, it's asked for again.
     let again: Bool
     let onPair: (PairingToken.PairingPSK) -> Void
-    let onCancel: () -> Void
     @State private var text = ""
     @State private var unreadable = false
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(again || unreadable ? "That token didn't match. Paste the pairing token of \(speaker) again:"
-                     : "Paste the pairing token of \(speaker):")
-                    .fixedSize(horizontal: false, vertical: true)
-                TextField("SP:0…", text: $text)
-                    .font(.system(.caption, design: .monospaced))
-                    .focused($focused)
-                    .onSubmit(pair)
-                Button("Pair", action: pair)
-                    .controlSize(.small)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            CloseButton(help: "Cancel pairing", action: onCancel)
+        VStack(alignment: .leading, spacing: 6) {
+            Text((again || unreadable ? "That token didn't match. " : "") + prompt)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("SP:0…", text: $text)
+                .font(.system(.caption, design: .monospaced))
+                .focused($focused)
+                .onSubmit(pair)
+                .onChange(of: text) { typed, now in
+                    if let token = PairingToken.decodePairingPSK(now) {
+                        onPair(token)
+                    } else if now.count - typed.count > 8 {
+                        // Pasted, and not a token.
+                        unreadable = true
+                        text = ""
+                    }
+                }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
         .padding(.leading, destinationIndent)
         .padding(.bottom, 6)
         .onAppear { focused = true }
     }
 
+    /// A printed token is a QR code (pairing.md, pair-method descriptor): scanned, then pasted.
+    private var prompt: String {
+        let onDevice = locations.contains(.device), onLeaflet = locations.contains(.leaflet)
+        if onDevice && onLeaflet { return "Scan the QR code on \(speaker) or its leaflet, then paste the token here:" }
+        if onDevice { return "Scan the QR code on \(speaker), then paste the token here:" }
+        if onLeaflet { return "Scan the QR code on the leaflet that came with \(speaker), then paste the token here:" }
+        if locations.contains(.operator) { return "Paste the pairing token you set up for \(speaker):" }
+        return "Paste the pairing token of \(speaker):"
+    }
+
     private func pair() {
+        guard !text.isEmpty else { return }
         guard let token = PairingToken.decodePairingPSK(text) else {
             unreadable = true
             text = ""
             return
         }
         onPair(token)
-    }
-}
-
-/// A small ⓧ: cancel or close what's under a row.
-private struct CloseButton: View {
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 

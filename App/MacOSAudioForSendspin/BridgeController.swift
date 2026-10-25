@@ -544,10 +544,15 @@ final class BridgeController {
     }
 
     private func dropSession(_ name: String) {
-        if speakerPairing?.name == name { endSpeakerPairing() }
+        let pairing = speakerPairing?.name == name
+        if pairing { endSpeakerPairing() }
         guard let session = sessions.removeValue(forKey: name) else { return }
         statuses[name] = nil
-        Task { await group.remove(url: session.url) }
+        Task { [group] in
+            // Unticked while pairing: the speaker is told why first (pair/abort user_cancelled).
+            if pairing { await session.cancelPairing() }
+            await group.remove(url: session.url)
+        }
     }
 
     // MARK: The Mac's own speakers
@@ -1004,12 +1009,6 @@ final class BridgeController {
         tokenEntry = (name, again)
     }
 
-    func cancelTokenEntry() {
-        guard let name = tokenEntry?.name else { return }
-        tokenEntry = nil
-        untickIfUnpaired(name)
-    }
-
     func pairWithToken(_ name: String, token: PairingToken.PairingPSK) {
         tokenEntry = nil
         startPairing(name, method: .token(token))
@@ -1042,18 +1041,6 @@ final class BridgeController {
         codeContinuation = nil
     }
 
-    /// Cancel from the menu: the speaker is told why (pair/abort `user_cancelled`).
-    func cancelSpeakerPairing() {
-        guard let pairing = speakerPairing else { return }
-        if let codeContinuation {
-            self.codeContinuation = nil
-            codeContinuation.resume(returning: nil)
-        } else if let session = sessions[pairing.name] {
-            Task { await session.cancelPairing() }
-        }
-        speakerPairing = nil
-    }
-
     /// Paired speakers for Settings: their names, as last seen.
     var pairedSpeakerList: [(clientID: String, name: String)] {
         pairedSpeakers.filter { playerPairings.isPaired($0.key) }
@@ -1075,13 +1062,6 @@ final class BridgeController {
             playerPairings.remove(clientID)
         }
         Log.info("Forgot the pairing with \(name ?? clientID)")
-    }
-
-    /// The user closes a failed attempt: a speaker that still needs pairing leaves the group.
-    func closeSpeakerPairing() {
-        guard let name = speakerPairing?.name else { return }
-        endSpeakerPairing()
-        untickIfUnpaired(name)
     }
 
     /// Done with what the menu shows, as when a failed attempt is dismissed.
