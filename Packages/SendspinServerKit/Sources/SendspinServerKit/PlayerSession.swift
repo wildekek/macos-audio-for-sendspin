@@ -214,6 +214,8 @@ public actor PlayerSession {
     private var playing = false
     /// The player left the group (see `PlayerStatus.Connection.left`).
     private var left = false
+    /// It left by `switch`, not by becoming unavailable or `client/leave`.
+    private var leftBySwitch = false
     /// The stopped group of its own a held player, or one that left, is in.
     private var soloGroupID: String?
     private var lastGroupUpdate: GroupUpdate?
@@ -856,6 +858,7 @@ public actor PlayerSession {
         }
         Log.info("\(status.name ?? "?"): back in the group")
         left = false
+        leftBySwitch = false
         soloGroupID = nil
         declareActivities()
         sendGroupUpdate()
@@ -867,10 +870,11 @@ public actor PlayerSession {
     /// `client/leave`: move it to a stopped group of its own and end its stream. It stays
     /// there, even once available again, until the user selects it (messaging.md,
     /// External Source Handling).
-    private func leaveGroup(_ reason: String) {
+    private func leaveGroup(_ reason: String, bySwitch: Bool = false) {
         guard speaking, !left else { return }
         Log.info("\(status.name ?? "?"): \(reason); out of the group until it's selected again")
         left = true
+        leftBySwitch = bySwitch
         soloGroupID = UUID().uuidString
         sendGroupUpdate()
         endStreams()
@@ -1016,9 +1020,16 @@ public actor PlayerSession {
         Log.info("\(status.name ?? "?"): controller \(controller.command)"
             + (controller.volume.map { " \($0)" } ?? "") + (controller.mute.map { " \($0)" } ?? ""))
         if controller.command == "switch" {
-            // Our group and a stopped one of its own are the whole cycle; from its own, it goes
-            // back to the group it left (Switch command cycle).
-            if left { rejoin() } else { leaveGroup("switched to a group of its own") }
+            // The cycle is our group while it plays, then one of its own. From its own it goes
+            // back: first of all to the group it left by becoming unavailable or client/leave,
+            // and to one it switched away from only while that plays (Switch command cycle).
+            if !left {
+                leaveGroup("switched to a group of its own", bySwitch: true)
+            } else if !leftBySwitch || playing {
+                rejoin()
+            } else {
+                Log.info("\(status.name ?? "?"): no group plays to switch to; it stays on its own")
+            }
             return
         }
         let group = playbackGroup
