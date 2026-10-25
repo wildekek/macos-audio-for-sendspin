@@ -45,6 +45,8 @@ actor SourceSession {
     private var rehandshaking = false
     /// We're closing the connection (`close(goodbye:)`), so its end isn't the server's doing.
     private var closing = false
+    /// A client-stream/end that fell in a re-handshake, sent after the new server/activate.
+    private var streamEndHeld = false
 
     // Pairing.
     private var pairingIndex = 0
@@ -285,8 +287,13 @@ actor SourceSession {
     /// Validate and apply server/activate (messaging.md, server/activate).
     private func handleActivate(_ activate: ServerActivateReceived) async throws -> Bool {
         // Any server/activate ends a re-handshake's hold on our messages, an inadmissible one too:
-        // its answer must go out (connection.md, Re-handshake).
+        // its answer must go out (connection.md, Re-handshake). A stream end that fell in the
+        // hold goes first; a changed state follows once the activation is applied.
         rehandshaking = false
+        if streamEndHeld {
+            streamEndHeld = false
+            sendMessage("client-stream/end", EmptyPayload())
+        }
         let activities = Set(activate.activities)
         let unpaired = matched != .longTerm
 
@@ -351,7 +358,7 @@ actor SourceSession {
         state.sourceActive = roles.contains("source@v1")
         if wasActive && !state.sourceActive { endStream(reason: "source role removed") }
         if !state.sourceActive { lastSentState = nil }
-        if state.sourceActive && !wasActive { sendState(force: true) }
+        if state.sourceActive && !wasActive { sendState(force: true) } else { sendState() }
         if activities.contains("playback"), let serverID = state.serverID {
             await client.recordPlayback(serverID: serverID)
         }
@@ -637,7 +644,7 @@ actor SourceSession {
     private func endStream(reason: String) {
         startAuthorized = false
         guard state.streaming else { return }
-        sendMessage("client-stream/end", EmptyPayload())
+        if rehandshaking { streamEndHeld = true } else { sendMessage("client-stream/end", EmptyPayload()) }
         state.streaming = false
         pipeline = nil
         Log.info("Source: stream ended (\(reason))")
