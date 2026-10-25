@@ -1239,9 +1239,11 @@ final class BridgeController {
     func forgetPairing(clientID: String) {
         let name = pairedSpeakers.removeValue(forKey: clientID)
         // Forgotten, it's a new speaker again: unticked, to pair or allow anew (the server guide).
+        // As the menu unticks it: the last one leaving gives the Mac its own speakers back.
         let untick = { [weak self] in
             guard let self, let name, selected.contains(name) else { return }
-            setSelected(name, false)
+            perform(.remove(name))
+            if selected.contains(name) { setSelected(name, false) }
         }
         if let (key, session) = sessions.first(where: { statuses[$0.key]?.clientID == clientID }) {
             Task {
@@ -2072,10 +2074,10 @@ final class BridgeController {
     private var leadNeed: (key: String, name: String, ms: Int)? {
         // A speaker gets its audio up to `sendMarginMs` after capture; the Mac's own output
         // plays it right here.
+        // Only ticked speakers: one paired from Settings is connected meanwhile, unticked.
         let needs = statuses.filter { key, status in
             switch status.connection {
-            case .connected: true
-            case .connecting, .unavailable, .disconnected(reason: nil): selected.contains(key)
+            case .connected, .connecting, .unavailable, .disconnected(reason: nil): selected.contains(key)
             default: false
             }
         }.map { key, status in
