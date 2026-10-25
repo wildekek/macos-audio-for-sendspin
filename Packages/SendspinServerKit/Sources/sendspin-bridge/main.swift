@@ -35,6 +35,9 @@ let usage = """
       --local NAME      also play on this Mac output (e.g. "MacBook Pro Speakers"), in sync
                         with the players, as the app does with the Mac's own speakers
       --tone            send a 440 Hz test tone (-20 dBFS) instead of capturing
+      --input PLAYER    play this Sendspin input (a source@v1 device) instead of capturing;
+                        it may be one of the players too
+      --probe           print the roles of the players (one connection each) and exit
       --lead-ms N       playback lead / player buffer in ms (default: 1000)
       --name NAME       server name shown to players (default: Sendspin Bridge)
       --unpair          once connected, forget the pairing with the players (both sides)
@@ -58,6 +61,8 @@ struct Options {
     var local: String?
     var device = "Sendspin"
     var tone = false
+    var input: String?
+    var probe = false
     var leadMs = 1000
     var name = "Sendspin Bridge"
     var pair: String?
@@ -96,6 +101,8 @@ func parseOptions() -> Options {
         case "--device": options.device = value(for: arg)
         case "--local": options.local = value(for: arg)
         case "--tone": options.tone = true
+        case "--input": options.input = value(for: arg)
+        case "--probe": options.probe = true
         case "--lead-ms":
             guard let ms = Int(value(for: arg)), ms > 0 else { fail("--lead-ms needs a positive number") }
             options.leadMs = ms
@@ -250,19 +257,39 @@ func run() async {
     }
 
     let urls = await resolvePlayers(options.players)
+    if options.probe {
+        for url in urls {
+            do {
+                guard let hello = try await PlayerSession.probe(url: url, identity: loadIdentity(name: options.name),
+                                                                pairings: loadPairings())
+                else { fail("\(url.absoluteString): no hello") }
+                print("\(hello.name): \(hello.supportedRoles.joined(separator: ", "))")
+            } catch {
+                print("\(url.absoluteString): \(error)")
+            }
+        }
+        return
+    }
     if let formats = options.cycleFormats {
         await cycleFormats(formats, urls: urls, options: options)
         return
     }
-    let (source, stopCapture) = audioSource(options)
+    var inputURL: URL?
+    if let input = options.input { inputURL = await resolvePlayers([input])[0] }
+    let (source, stopCapture): (AsyncStream<CapturedBlock>, @Sendable () -> Void) =
+        inputURL == nil ? audioSource(options) : (AsyncStream { $0.finish() }, {})
 
     let identity = loadIdentity(name: options.name)
     let pairings = loadPairings()
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
-    for url in urls {
-        // Players named on the command line are the user's explicit choice: approved.
-        let session = PlayerSession(url: url, identity: identity, pairings: pairings,
-                                    pairing: options.pair.map(pairingRequest), approve: { _, _ in true })
+    var inputSession: PlayerSession?
+    for url in urls + (inputURL.map { urls.contains($0) ? [] : [$0] } ?? []) {
+        // Players and the input named on the command line are the user's explicit choice: approved.
+        let uses: PlayerSession.Uses = url != inputURL ? .speaker : urls.contains(url) ? [.speaker, .input] : .input
+        let session = PlayerSession(url: url, identity: identity, pairings: pairings, uses: uses,
+                                    pairing: options.pair.map(pairingRequest), approve: { _, _ in true },
+                                    approveInput: { _, _ in true })
+        if url == inputURL { inputSession = session }
         Task {
             var bufferWarned = false
             var unpaired = false
@@ -273,6 +300,8 @@ func run() async {
                 }
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
                     + (status.paired ? ", paired" : "")
+                    + (status.inputStreaming ? ", input streaming" : "")
+                    + (status.inputSignal.map { ", signal \($0)" } ?? "")
                     + (status.pairing.map { ", pairing \($0)" } ?? "")
                     + (status.volume.map { ", volume \($0)" } ?? "")
                     + (status.muted == true ? ", muted" : ""))
@@ -297,7 +326,13 @@ func run() async {
         await group.add(output: localPlayer!)
     }
 
-    let pump = Task {
+    let pump = Task { [inputSession] in
+        if let inputSession {
+            await inputSession.playInput(true)
+            for await block in inputSession.inputAudio {
+                await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
+            }
+        }
         for await block in source {
             await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
         }

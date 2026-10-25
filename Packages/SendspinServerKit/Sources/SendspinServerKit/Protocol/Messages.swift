@@ -128,6 +128,19 @@ public struct VisualizerSupport: Codable, Sendable {
     }
 }
 
+public struct SourceSupport: Codable, Sendable {
+    public struct Features: Codable, Sendable {
+        /// It reports `signal` in client/state.
+        public var lineSense: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case lineSense = "line_sense"
+        }
+    }
+
+    public var features: Features?
+}
+
 public struct UnpairedAccess: Codable, Sendable {
     public var enabled: Bool
 }
@@ -138,6 +151,7 @@ public struct ClientHello: Decodable, Sendable {
     public var supportedRoles: [String]
     public var playerSupport: PlayerSupport?
     public var visualizerSupport: VisualizerSupport?
+    public var sourceSupport: SourceSupport?
     public var unpairedAccess: UnpairedAccess?
     public var supportedPairMethods: PairMethods?
 
@@ -147,6 +161,7 @@ public struct ClientHello: Decodable, Sendable {
         case supportedRoles = "supported_roles"
         case playerSupport = "player@v1_support"
         case visualizerSupport = "visualizer@v1_support"
+        case sourceSupport = "source@v1_support"
         case unpairedAccess = "unpaired_access"
         case supportedPairMethods = "supported_pair_methods"
     }
@@ -242,6 +257,33 @@ public struct ClientState: Decodable, Sendable {
     public var player: PlayerState?
     public var visualizer: VisualizerConfig?
     public var artwork: ArtworkConfig?
+    public var source: SourceState?
+}
+
+/// The `source` object of client/state.
+public struct SourceState: Decodable, Sendable {
+    /// 'present' or 'absent', from a source with line sensing.
+    public var signal: String?
+}
+
+/// client-stream/start: the format of a source's input stream (roles/source/v1.md).
+public struct ClientStreamStart: Decodable, Sendable {
+    public struct Source: Decodable, Sendable {
+        public var codec: String
+        public var channels: Int
+        public var sampleRate: Int
+        public var bitDepth: Int
+        public var codecHeader: String?
+
+        enum CodingKeys: String, CodingKey {
+            case codec, channels
+            case sampleRate = "sample_rate"
+            case bitDepth = "bit_depth"
+            case codecHeader = "codec_header"
+        }
+    }
+
+    public var source: Source
 }
 
 /// The `artwork` object of client/state, and of stream/start (roles/artwork/v1.md).
@@ -289,7 +331,22 @@ public struct ClientGoodbye: Decodable, Sendable {
 // MARK: - Server -> client
 
 public struct ServerHello: Encodable, Sendable {
+    public struct SourceSupport: Encodable, Sendable {
+        /// Every server must accept FLAC and PCM input (roles/source/v1.md).
+        public var supportedCodecs = ["flac", "pcm"]
+
+        enum CodingKeys: String, CodingKey {
+            case supportedCodecs = "supported_codecs"
+        }
+    }
+
     public var name: String
+    public var sourceSupport = SourceSupport()
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case sourceSupport = "source@v1_support"
+    }
 }
 
 public struct ServerActivate: Encodable, Sendable {
@@ -413,8 +470,14 @@ public struct PlayerCommand: Encodable, Sendable {
     }
 }
 
+public struct SourceCommand: Encodable, Sendable {
+    /// 'start' or 'stop'.
+    public var command: String
+}
+
 public struct ServerCommand: Encodable, Sendable {
-    public var player: PlayerCommand
+    public var player: PlayerCommand?
+    public var source: SourceCommand?
 }
 
 // MARK: - Envelope

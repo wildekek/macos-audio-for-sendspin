@@ -30,6 +30,10 @@ public struct PlayerStatus: Sendable, Equatable {
         case failed(String)
     }
 
+    /// A speaker (player@v1 with its support object), an input (source@v1 with its), or both.
+    public var isSpeaker: Bool { supportedRoles.contains("player@v1") }
+    public var isInput: Bool { supportedRoles.contains("source@v1") }
+
     public var connection: Connection = .connecting
     public var name: String?
     /// The player's `client_id`: its Curve25519 public key, base64url.
@@ -51,6 +55,12 @@ public struct PlayerStatus: Sendable, Equatable {
     public var supportedFormats: [AudioFormatSpec] = []
     /// Format currently streamed to the player, while streaming.
     public var streamFormat: AudioFormatSpec?
+    /// The roles it offers, from its hello: a speaker has `player@v1`, an input `source@v1`.
+    public var supportedRoles: [String] = []
+    /// Its input streams to us, and plays on the group.
+    public var inputStreaming = false
+    /// 'present' or 'absent', from an input with line sensing.
+    public var inputSignal: String?
 
     public init() {}
 }
@@ -62,12 +72,39 @@ public actor PlayerSession {
     /// the operator's approval; paired, whether it's wanted at all.
     public typealias Approval = @Sendable (_ clientID: String, _ paired: Bool) async -> Bool
 
+    /// What the user has the device for: a speaker in the group, an input played on it, or both.
+    public struct Uses: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let speaker = Uses(rawValue: 1)
+        public static let input = Uses(rawValue: 2)
+    }
+
+    /// A block of an input's audio, with the server-clock time to treat as its capture.
+    public struct InputBlock: Sendable {
+        public var pcm: PCMBuffer
+        public var captureTimeUs: Int64
+    }
+
     public nonisolated let url: URL
     public nonisolated let updates: AsyncStream<PlayerStatus>
+    /// The input's audio while it streams, for the group to play.
+    public nonisolated let inputAudio: AsyncStream<InputBlock>
+    private let inputContinuation: AsyncStream<InputBlock>.Continuation
 
     private let identity: ServerIdentity
     private let pairings: PlayerPairings
     private let approve: Approval
+    /// Asked, separately, whether the device may be played as an input: never implied by
+    /// anything else the user did with it (roles/source/v1.md, Unpaired access).
+    private let approveInput: Approval?
+    private var uses: Uses
+    /// This connection's answers from `approve` and `approveInput`.
+    private var speakerApproved = false
+    private var inputApproved = false
+    /// Only reading the client's hello, to learn its roles (`probe`).
+    private var probing = false
+    private var probedHello: ClientHello?
     /// The player connected to us (client-initiated); otherwise we dial `url`.
     private let incoming: WebSocketConnection?
     public nonisolated let isIncoming: Bool
@@ -150,6 +187,20 @@ public actor PlayerSession {
     /// The channels of the active artwork stream.
     private var artworkStream: ArtworkConfig?
 
+    // The source role (roles/source/v1.md): the device's input, played on the group.
+    /// The user wants the input playing: it's started whenever the connection allows.
+    private var inputWanted = false
+    /// The client/state source object since the role was activated: only then may start go out.
+    private var sourceReady = false
+    /// The client holds our start, as far as we know: a stop or its unavailability clears it.
+    private var startPending = false
+    /// Starts not yet answered by client-stream/start, which may still come after a stop.
+    private var startsUnanswered = 0
+    /// The open input stream, from client-stream/start to client-stream/end. Without a decoder
+    /// its audio is discarded: it came after a stop, or in a format we can't decode.
+    private var inputStream: (decoder: SourceDecoder?, timeline: InputTimeline)?
+    private var undecodableChunks = 0
+
     private var group: (id: String, name: String)?
     private var playing = false
     /// The player left the group (see `PlayerStatus.Connection.left`).
@@ -161,16 +212,35 @@ public actor PlayerSession {
     /// A player we dial and keep connected. One the user just `chosen` is claimed for playback
     /// when it connects.
     public init(url: URL, identity: ServerIdentity, pairings: PlayerPairings = PlayerPairings(),
-                chosen: Bool = false, pairing: PairingRequest? = nil, approve: @escaping Approval) {
+                uses: Uses = .speaker, chosen: Bool = false, pairing: PairingRequest? = nil,
+                approve: @escaping Approval, approveInput: Approval? = nil) {
         self.url = url
         self.identity = identity
         self.pairings = pairings
+        self.uses = uses
         pairingRequest = pairing
         self.approve = approve
+        self.approveInput = approveInput
         claiming = chosen
         incoming = nil
         isIncoming = false
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
+        (inputAudio, inputContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(64))
+    }
+
+    /// Connect once, read the device's hello and close: which roles it has, before the user
+    /// chooses it. Nothing is activated, and a connection without activities ranks lowest, so
+    /// it takes the device from no other server (connection.md, Multiple servers).
+    public static func probe(url: URL, identity: ServerIdentity, pairings: PlayerPairings) async throws -> ClientHello? {
+        let session = PlayerSession(url: url, identity: identity, pairings: pairings) { _, _ in false }
+        return try await session.probeOnce()
+    }
+
+    private func probeOnce() async throws -> ClientHello? {
+        probing = true
+        defer { updatesContinuation.finish() }
+        _ = try await connectAndServe()
+        return probedHello
     }
 
     /// A player that connected to us. It's served once: we can't reconnect to it.
@@ -179,12 +249,15 @@ public actor PlayerSession {
         url = URL(string: "ws://\(connection.remoteDescription)") ?? URL(string: "ws://incoming")!
         self.identity = identity
         self.pairings = pairings
+        uses = .speaker
         pairingRequest = nil
         self.approve = approve
+        approveInput = nil
         incoming = connection.socket
         isIncoming = true
         claiming = false
         (updates, updatesContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
+        (inputAudio, inputContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(64))
     }
 
     public var currentStatus: PlayerStatus { status }
@@ -196,6 +269,7 @@ public actor PlayerSession {
         defer {
             socket?.close()
             updatesContinuation.finish()
+            inputContinuation.finish()
         }
         if isIncoming {
             // A player that connected to us comes back by itself; we can't dial it.
@@ -358,7 +432,10 @@ public actor PlayerSession {
                 if case .text = frame { throw SessionError.handshake("cleartext message after the handshake") }
                 continue
             }
-            guard message.type == SecureChannel.jsonType else { continue }
+            guard message.type == SecureChannel.jsonType else {
+                if message.type == Self.sourceAudioType { try handleSourceAudio(message.payload) }
+                continue
+            }
             if let end = try await handle(message.payload, receivedAtUs: receivedAtUs) {
                 return end
             }
@@ -428,6 +505,15 @@ public actor PlayerSession {
         visualizerRequest = nil
         controllerState = nil
         artworkRequest = nil
+        speakerApproved = false
+        inputApproved = false
+        // A start doesn't survive the connection (Default streaming behavior).
+        sourceReady = false
+        startPending = false
+        startsUnanswered = 0
+        inputStream = nil
+        status.inputStreaming = false
+        status.inputSignal = nil
         sentActivation = false
         available = false
         ready = false
@@ -467,6 +553,10 @@ public actor PlayerSession {
             if let end = handleState(try MessageCoding.payload(ClientState.self, from: data)) { return end }
         case "client/command":
             handleCommand(try MessageCoding.payload(ClientCommand.self, from: data))
+        case "client-stream/start":
+            return try handleClientStreamStart(MessageCoding.payload(ClientStreamStart.self, from: data))
+        case "client-stream/end":
+            handleClientStreamEnd()
         case "client/leave":
             leaveGroup("left the group")
         case "noise/handshake":
@@ -525,6 +615,13 @@ public actor PlayerSession {
             + "software \(hello.deviceInfo?.softwareVersion ?? "?"))")
 
         status.pairMethods = hello.supportedPairMethods
+        status.supportedRoles = hello.supportedRoles.filter {
+            ($0 != "player@v1" || hello.playerSupport != nil) && ($0 != "source@v1" || hello.sourceSupport != nil)
+        }
+        if probing {
+            probedHello = hello
+            return .stop(.disconnected(reason: nil))
+        }
         // A role we don't know may be a newer version than ours (overview.md, Detecting
         // Outdated Servers).
         let unknown = hello.supportedRoles.filter { !$0.hasPrefix("_") && !Self.implementedRoles.contains($0) }
@@ -532,9 +629,9 @@ public actor PlayerSession {
             Log.info("\(hello.name): offers roles this server doesn't implement: \(unknown.joined(separator: ", "))")
         }
 
-        guard hello.supportedRoles.contains("player@v1"), hello.playerSupport != nil else {
+        guard (uses.contains(.speaker) && status.isSpeaker) || (uses.contains(.input) && status.isInput) else {
             sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
-            return .stop(.failed("not a player"))
+            return .stop(.failed(uses.contains(.speaker) ? "not a speaker" : "not an input"))
         }
         if let pairingRequest, !pairingFinished {
             return startPairing(pairingRequest)
@@ -545,8 +642,9 @@ public actor PlayerSession {
             return .stop(.notRecognized)
         }
         if status.paired {
-            guard let clientID = status.clientID, await approve(clientID, true) else {
-                if isIncoming { return holdIncoming() }
+            await askApprovals()
+            guard speakerApproved || inputApproved else {
+                if isIncoming || awaitsInputApproval { return holdIncoming() }
                 return .stop(.disconnected(reason: nil))
             }
             activatePlayback()
@@ -558,8 +656,9 @@ public actor PlayerSession {
             Log.info("\(hello.name): doesn't admit unpaired access; it needs pairing")
             return .stop(.pairingRequired)
         }
-        guard let clientID = status.clientID, await approve(clientID, false) else {
-            if isIncoming { return holdIncoming() }
+        await askApprovals()
+        guard speakerApproved || inputApproved else {
+            if isIncoming || awaitsInputApproval { return holdIncoming() }
             Log.warning("\(hello.name): identity \(status.clientID ?? "?") isn't the approved one")
             return .stop(.notApproved)
         }
@@ -567,8 +666,21 @@ public actor PlayerSession {
         return nil
     }
 
-    /// Hold a player that connected to us with no activities, as the spec allows, until the
-    /// user allows it.
+    /// Ask whether it may play as a speaker, and as an input, for the uses it's wanted for.
+    private func askApprovals() async {
+        guard let clientID = status.clientID else { return }
+        let paired = status.paired
+        speakerApproved = uses.contains(.speaker) && status.isSpeaker ? await approve(clientID, paired) : false
+        inputApproved = uses.contains(.input) && status.isInput ? await approveInput?(clientID, paired) ?? false : false
+    }
+
+    /// Wanted only as an input, which the user hasn't allowed yet: it waits on an idle connection.
+    private var awaitsInputApproval: Bool {
+        uses.contains(.input) && status.isInput && !(uses.contains(.speaker) && status.isSpeaker)
+    }
+
+    /// Hold a device with no activities, as the spec allows, until the user allows it: a player
+    /// that connected to us, or an input not allowed yet.
     private func holdIncoming() -> SessionEnd? {
         sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
         sentActivation = true
@@ -577,28 +689,37 @@ public actor PlayerSession {
         return nil
     }
 
-    static let implementedRoles = ["player@v1", "controller@v1", "metadata@v1", "artwork@v1", "visualizer@v1", "color@v1"]
+    static let implementedRoles = ["player@v1", "controller@v1", "metadata@v1", "artwork@v1", "visualizer@v1", "color@v1", "source@v1"]
 
     /// The roles we activate: every one the client lists that we implement, each with the
-    /// support object it requires (messaging.md, client/hello). All are v1, so there's no
-    /// version to choose (overview.md, Priority and Activation).
-    private static func roles(for hello: ClientHello) -> [String] {
-        var roles = ["player@v1"]
-        for role in ["controller@v1", "metadata@v1", "artwork@v1", "color@v1"] where hello.supportedRoles.contains(role) {
-            roles.append(role)
+    /// support object it requires (messaging.md, client/hello), for what the user allowed it as.
+    /// All are v1, so there's no version to choose (overview.md, Priority and Activation).
+    private func wantedRoles() -> [String] {
+        guard let hello else { return [] }
+        var roles: [String] = []
+        if speakerApproved {
+            roles.append("player@v1")
+            for role in ["controller@v1", "metadata@v1", "artwork@v1", "color@v1"] where hello.supportedRoles.contains(role) {
+                roles.append(role)
+            }
+            if hello.supportedRoles.contains("visualizer@v1"), hello.visualizerSupport != nil { roles.append("visualizer@v1") }
         }
-        if hello.supportedRoles.contains("visualizer@v1"), hello.visualizerSupport != nil { roles.append("visualizer@v1") }
+        if inputApproved { roles.append("source@v1") }
         return roles
     }
 
+    /// The player role is active: the device is a speaker in our group, or has left it.
+    private var speaking: Bool { activated && activeRoles.contains("player@v1") }
+
     private func activatePlayback() {
         activated = true
-        activeRoles = hello.map(Self.roles) ?? ["player@v1"]
+        activeRoles = wantedRoles()
         // A held player may have sent client/state already, but not for the roles it gets now.
         ready = false
         visualizerRequest = nil
         controllerState = nil
         artworkRequest = nil
+        sourceReady = false
         declareActivities(force: true)
         if claiming {
             // Sound normally follows within a moment; without it, the claim lapses.
@@ -619,12 +740,65 @@ public actor PlayerSession {
         controllerChanged()
     }
 
+    /// The uses or approvals changed on an activated connection: activate the roles they call
+    /// for now, without reconnecting (messaging.md, server/activate).
+    private func updateRoles() {
+        let wanted = wantedRoles()
+        guard wanted != activeRoles else { return }
+        let added = wanted.filter { !activeRoles.contains($0) }
+        // A removed stream role's stream ends first; the speaker's roles go together.
+        if activeRoles.contains("player@v1") && !wanted.contains("player@v1") { endStreams() }
+        if added.contains("player@v1") {
+            ready = false
+            visualizerRequest = nil
+            controllerState = nil
+            artworkRequest = nil
+        }
+        if added.contains("source@v1") { sourceReady = false }
+        if !wanted.contains("source@v1") {
+            // The client ends its stream itself; what's still in flight is discarded.
+            startPending = false
+            inputStream?.decoder = nil
+        }
+        Log.info("\(status.name ?? "?"): roles \(wanted.isEmpty ? "none" : wanted.joined(separator: ", "))")
+        activeRoles = wanted
+        declareActivities(force: true)
+        sendGroupUpdate()
+        let now = ServerClock.nowMicros()
+        let metadata = added.contains("metadata@v1") ? TimestampOnlyState(timestamp: now) : nil
+        let color = added.contains("color@v1") ? TimestampOnlyState(timestamp: now) : nil
+        if metadata != nil || color != nil { sendMessage("server/state", ServerState(metadata: metadata, color: color)) }
+        controllerChanged()
+    }
+
+    /// What the user has the device for changed: its roles follow, on the same connection.
+    public func use(_ uses: Uses) async {
+        guard uses != self.uses else { return }
+        self.uses = uses
+        await reevaluate()
+    }
+
+    /// Ask the approvals again, and activate what they allow now.
+    private func reevaluate() async {
+        guard hello != nil, sentActivation, rehandshake == nil, !notRecognized, attempt == nil else { return }
+        await askApprovals()
+        if activated {
+            updateRoles()
+            sendInputCommand()
+        } else if speakerApproved || inputApproved {
+            Log.info("\(status.name ?? "?"): allowed")
+            activatePlayback()
+        }
+    }
+
     /// Declare playback only while there's something to play, as the spec asks: a server that
     /// keeps an unused activity wins players it doesn't need (messaging.md, server/activate).
     /// The player role stays active, so the stream starts at once when sound comes.
     private func declareActivities(force: Bool = false) {
         guard activated else { return }
-        let activities = (playing || claiming) && !left ? ["playback"] : []
+        let speakerPlays = speaking && (playing || claiming) && !left
+        let inputPlays = activeRoles.contains("source@v1") && inputWanted
+        let activities = speakerPlays || inputPlays ? ["playback"] : []
         guard force || activities != declaredActivities else { return }
         declaredActivities = activities
         sendMessage("server/activate", ServerActivate(activities: activities, activeRoles: activeRoles))
@@ -632,10 +806,7 @@ public actor PlayerSession {
 
     /// The user allowed a held player (ticked it): activate playback on the same connection.
     public func reevaluateApproval() async {
-        guard status.connection == .awaitingApproval, let clientID = status.clientID, await approve(clientID, status.paired)
-        else { return }
-        Log.info("\(status.name ?? "?"): allowed")
-        activatePlayback()
+        await reevaluate()
     }
 
     /// The user selected a player that left: back into the group, if it's available again.
@@ -660,7 +831,7 @@ public actor PlayerSession {
     /// there, even once available again, until the user selects it (messaging.md,
     /// External Source Handling).
     private func leaveGroup(_ reason: String) {
-        guard activated, !left else { return }
+        guard speaking, !left else { return }
         Log.info("\(status.name ?? "?"): \(reason); out of the group until it's selected again")
         left = true
         soloGroupID = UUID().uuidString
@@ -704,7 +875,7 @@ public actor PlayerSession {
             status.canMute = commands.contains("mute")
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
-            if activated { ready = true }
+            if speaking { ready = true }
             controllerChanged()
         }
         // Only a change counts: a player says `available: false` until its clock is in sync
@@ -712,6 +883,13 @@ public actor PlayerSession {
         if wasAvailable && !available {
             leaveGroup("in use elsewhere")
         }
+        if let source = state.source, activated, activeRoles.contains("source@v1") {
+            sourceReady = true
+            status.inputSignal = source.signal
+        }
+        // Unavailable is an implicit stop: the client drops our start (Default streaming behavior).
+        if !available { startPending = false }
+        sendInputCommand()
         return nil
     }
 
@@ -746,7 +924,7 @@ public actor PlayerSession {
     private func sendGroupUpdate() {
         guard sentActivation else { return }
         let update: GroupUpdate
-        if activated && !left {
+        if speaking && !left {
             guard let group else { return }
             update = GroupUpdate(playbackState: playing ? "playing" : "stopped", groupID: group.id, groupName: group.name)
         } else {
@@ -769,7 +947,7 @@ public actor PlayerSession {
     // MARK: Controller role (roles/controller/v1.md)
 
     func controllerMember() -> ControllerMember {
-        ControllerMember(inGroup: activated && !left && ready, volume: status.volume, muted: status.muted,
+        ControllerMember(inGroup: speaking && !left && ready, volume: status.volume, muted: status.muted,
                          canSetVolume: ready && status.canSetVolume, canMute: ready && status.canMute)
     }
 
@@ -848,7 +1026,7 @@ public actor PlayerSession {
     /// Send one block of group audio, and its visualization; `timestampUs` is its play time
     /// on the server clock.
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int, leadUs: Int64) {
-        guard activated, !left, available, rehandshake == nil else { return }
+        guard speaking, !left, available, rehandshake == nil else { return }
         deliverAudio(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth, leadUs: leadUs)
         visualize(pcm, timestampUs: timestampUs)
         if artworkStream == nil, let request = artworkRequest { startArtwork(request.streamed) }
@@ -988,6 +1166,103 @@ public actor PlayerSession {
         }
         sendMessage("stream/start", StreamStart(serverTransmitted: ServerClock.nowMicros(), artwork: config))
         artworkStream = config
+    }
+
+    // MARK: Input (roles/source/v1.md)
+
+    static let sourceAudioType: UInt8 = 12
+
+    /// Play the device's input on the group, or stop it.
+    public func playInput(_ play: Bool) {
+        guard play != inputWanted else { return }
+        inputWanted = play
+        // Playback is declared before the start, so the connection ranks as it streams.
+        declareActivities()
+        sendInputCommand()
+    }
+
+    /// Start the input when it's wanted and may start, stop it when it's not wanted any more
+    /// (Source command semantics).
+    private func sendInputCommand() {
+        guard activated, activeRoles.contains("source@v1"), rehandshake == nil else { return }
+        if inputWanted {
+            guard sourceReady, available, !startPending, inputStream == nil else { return }
+            startPending = true
+            startsUnanswered += 1
+            Log.info("\(status.name ?? "?"): starting its input")
+            sendMessage("server/command", ServerCommand(source: SourceCommand(command: "start")))
+        } else if startPending || inputStream?.decoder != nil {
+            startPending = false
+            // Until its client-stream/end, what it still sends is discarded.
+            inputStream?.decoder = nil
+            status.inputStreaming = false
+            Log.info("\(status.name ?? "?"): stopping its input")
+            sendMessage("server/command", ServerCommand(source: SourceCommand(command: "stop")))
+        }
+    }
+
+    private func handleClientStreamStart(_ start: ClientStreamStart) throws -> SessionEnd? {
+        let name = status.name ?? "?"
+        if inputStream == nil {
+            // Opening one is only an answer to our start (Default streaming behavior).
+            guard startsUnanswered > 0 else {
+                Log.warning("\(name): opened an input stream without our start")
+                return .stop(.failed("protocol error"))
+            }
+            startsUnanswered -= 1
+            startPending = false
+        }
+        guard ServerHello.SourceSupport().supportedCodecs.contains(start.source.codec) else {
+            Log.warning("\(name): sends its input as \(start.source.codec), which we didn't offer")
+            return .stop(.failed("protocol error"))
+        }
+        let format = SourceFormat(codec: start.source.codec, channels: start.source.channels,
+                                  sampleRate: start.source.sampleRate, bitDepth: start.source.bitDepth,
+                                  codecHeader: start.source.codecHeader.flatMap { Data(base64Encoded: $0) })
+        let wanted = inputWanted && activeRoles.contains("source@v1")
+        let decoder = wanted ? SourceDecoder(format: format) : nil
+        if wanted && decoder == nil {
+            Log.error("\(name): can't decode its input (\(format.codec) \(format.sampleRate) Hz \(format.bitDepth)-bit "
+                + "\(format.channels) ch)")
+        } else if decoder != nil {
+            Log.info("\(name): input streaming \(format.codec) \(format.sampleRate) Hz \(format.bitDepth)-bit \(format.channels) ch")
+        }
+        // A new format replaces the stream's in place, on a new timeline.
+        inputStream = (decoder, InputTimeline(sampleRate: format.sampleRate, channels: format.channels))
+        status.inputStreaming = decoder != nil
+        return nil
+    }
+
+    private func handleClientStreamEnd() {
+        guard let stream = inputStream else { return }
+        Log.info("\(status.name ?? "?"): input stream ended (for its clock \(stream.timeline.doubled) frames doubled, "
+            + "\(stream.timeline.dropped) dropped; \(stream.timeline.resyncs) restarts after a gap)")
+        inputStream = nil
+        startPending = false
+        status.inputStreaming = false
+    }
+
+    /// One chunk of the input: its first sample's capture time, then whole codec units.
+    private func handleSourceAudio(_ payload: Data) throws {
+        // Each of these closes the connection (Source Audio Chunks).
+        guard payload.count >= 8 else { throw SessionError.protocolViolation("source audio shorter than 9 bytes") }
+        guard let stream = inputStream else { throw SessionError.protocolViolation("source audio without an input stream") }
+        guard available else { throw SessionError.protocolViolation("source audio while unavailable") }
+        guard let decoder = stream.decoder else { return }
+        let timestampUs = payload.prefix(8).reduce(Int64(0)) { $0 << 8 | Int64($1) }
+        guard let samples = decoder.decode(payload.dropFirst(8)) else {
+            undecodableChunks += 1
+            if undecodableChunks == 1 || undecodableChunks.isMultiple(of: 100) {
+                Log.warning("\(status.name ?? "?"): \(undecodableChunks) input chunks didn't decode")
+            }
+            return
+        }
+        var timeline = stream.timeline
+        let placed = timeline.place(samples, timestampUs: timestampUs)
+        inputStream?.timeline = timeline
+        inputContinuation.yield(InputBlock(
+            pcm: PCMBuffer(samples: placed.samples, sampleRate: decoder.format.sampleRate, channels: decoder.format.channels),
+            captureTimeUs: placed.captureTimeUs))
     }
 
     // MARK: Player control
@@ -1389,11 +1664,14 @@ enum SessionError: Error, CustomStringConvertible {
     case handshake(String)
     /// A pairing protocol error (pairing.md): the connection closes without a message.
     case pairing(String)
+    /// A message a role's rules say closes the connection.
+    case protocolViolation(String)
 
     var description: String {
         switch self {
         case .handshake(let detail): "handshake failed: \(detail)"
         case .pairing(let detail): "pairing protocol error: \(detail)"
+        case .protocolViolation(let detail): "protocol error: \(detail)"
         }
     }
 }
