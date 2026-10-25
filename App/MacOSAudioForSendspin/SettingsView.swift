@@ -41,6 +41,7 @@ struct SettingsView: View {
             }
 
             pairings
+            unpairedSpeakers
             allowedSources
             pairingHeldBack
 
@@ -107,7 +108,13 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\(forgetting?.name ?? "It") and this Mac can't play together until you pair them again.")
+            if forgetting?.clientID == nil {
+                Text("\(forgetting?.name ?? "It") and this Mac can't play together until you pair them again.")
+            } else {
+                // Forgotten, a speaker is unticked: new again (the server guide).
+                Text("\(forgetting?.name ?? "It") stops playing and becomes a new speaker: pair it again, "
+                     + "or tick it in the menu to let it play unpaired.")
+            }
         }
         .alert("Couldn't uninstall", isPresented: Binding(get: { uninstallError != nil },
                                                           set: { if !$0 { uninstallError = nil } })) {
@@ -118,7 +125,7 @@ struct SettingsView: View {
     }
 
     /// What this Mac is paired with: the server it's a source for, and speakers it plays to,
-    /// each with a way to forget it. Pairing itself happens in the menu.
+    /// each with a way to forget it. Speakers are paired under Not paired, or from the menu.
     @ViewBuilder private var pairings: some View {
         let status = bridge.sourceStatus
         let serverPaired = status.hasPairing || status.paired
@@ -140,6 +147,68 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Speakers on the network that aren't paired, each with Pair…: what pairing asks for shows
+    /// under it, as under its row in the menu. Paired, it moves up.
+    @ViewBuilder private var unpairedSpeakers: some View {
+        let speakers = bridge.unpairedSpeakerList
+        if !speakers.isEmpty {
+            Section {
+                ForEach(speakers, id: \.instanceName) { speaker in
+                    let pairing = isPairing(speaker.instanceName)
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledContent {
+                            if !pairing {
+                                Button("Pair…") { bridge.pairFromSettings(speaker.instanceName) }
+                            }
+                        } label: {
+                            Text(speaker.name)
+                            Text(speaker.allowed ? "Plays unpaired" : "New")
+                        }
+                        if pairing {
+                            HStack(alignment: .top, spacing: 8) {
+                                pairingCaption(speaker.instanceName, name: speaker.name)
+                                Button("Cancel") { bridge.cancelPairing(speaker.instanceName) }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Not paired")
+            } footer: {
+                Text("Only a paired speaker is sure to be yours: another device with its name can't take its place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func isPairing(_ name: String) -> Bool {
+        bridge.speakerPairing?.name == name || bridge.tokenEntry?.name == name
+    }
+
+    /// The menu's captions, without its indent.
+    @ViewBuilder private func pairingCaption(_ instanceName: String, name: String) -> some View {
+        let methods = bridge.pairMethods(for: instanceName)
+        if let entry = bridge.tokenEntry, entry.name == instanceName {
+            tokenCaption(instanceName, name: name, phase: .looking(again: entry.again))
+        } else if let pairing = bridge.speakerPairing, pairing.name == instanceName {
+            if case .token = pairing.method {
+                tokenCaption(instanceName, name: name, phase: pairing.progress == .paired ? .paired : .pairing)
+            } else {
+                PairingCaption(pairing: pairing, speaker: name, methods: methods, bridge: bridge, indent: 0)
+            }
+        }
+    }
+
+    private func tokenCaption(_ instanceName: String, name: String, phase: TokenCaption.Phase) -> some View {
+        TokenCaption(speaker: name, locations: bridge.pairMethods(for: instanceName)?.pairingPSK ?? [], phase: phase,
+                     scanning: bridge.scanning == instanceName, indent: 0,
+                     onScan: { bridge.startScanning(instanceName) }) { token in
+            bridge.pairWithToken(instanceName, token: token)
         }
     }
 

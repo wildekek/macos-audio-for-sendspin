@@ -472,6 +472,12 @@ final class BridgeController {
     /// it again does (messaging.md, client/goodbye).
     private func updateDiscovered() {
         discovered = browsed.filter { $0.instanceName != sourceStatus.advertisedName } + manualPlayers()
+        // One that's gone is probed again once it's back: it may pair another way by then.
+        let names = Set(discovered.map(\.instanceName))
+        for name in probed.union(offeredPairMethods.keys) where !names.contains(name) && sessions[name] == nil {
+            probed.remove(name)
+            offeredPairMethods[name] = nil
+        }
         reconcile()
         probeNewDevices()
     }
@@ -493,13 +499,15 @@ final class BridgeController {
         if isSelected { pairWhenNeeded.insert(instanceName) } else { pairWhenNeeded.remove(instanceName) }
         if !isSelected, tokenEntry?.name == instanceName { tokenEntry = nil }
         if !isSelected, scanning == instanceName { scanning = nil }
+        // Paired from Settings meanwhile: ticked, it's a speaker as any; unticked, the pairing ends.
+        if pairingUnticked == instanceName { pairingUnticked = nil }
         if isSelected {
             selected.insert(instanceName)
-            // Choosing a player that shows "Identity changed" accepts its new identity: the
-            // user picks it knowingly. It reconnects below, and the new identity is approved.
+            // Choosing a player that shows "Identity changed" accepts the identity it shows: the
+            // user picks it knowingly, an impostor or not. It reconnects below, approved.
             if statuses[instanceName]?.connection == .notApproved {
                 var approved = approvedPlayers
-                approved[instanceName] = nil
+                approved[instanceName] = statuses[instanceName]?.clientID
                 defaults.set(approved, forKey: "approvedPlayers")
                 Log.info("\(instanceName): accepting its new identity")
             }
@@ -540,6 +548,12 @@ final class BridgeController {
         if paired { return true }
         var approved = approvedPlayers
         if let known = approved[instanceName] { return known == clientID }
+        // Under a paired speaker's name, another device without our pairing: not the one you
+        // paired, so it shows "Identity changed" until you accept it (pairing.md, Unpaired Access).
+        if pairedSpeakers.values.contains(instanceName) {
+            Log.warning("\(instanceName): an unpaired identity under a paired speaker's name (\(clientID))")
+            return false
+        }
         approved[instanceName] = clientID
         defaults.set(approved, forKey: "approvedPlayers")
         Log.info("\(instanceName): approved (\(clientID))")
@@ -553,7 +567,8 @@ final class BridgeController {
             let currentURL = discovered.first { $0.instanceName == name }?.url
             let uses = uses(for: name)
             if isRetryingWhileGone(name) { Log.info("\(statuses[name]?.name ?? name) is gone; waiting until it's announced again") }
-            if uses.isEmpty || (currentURL != nil && currentURL != session.url) || isRetryingWhileGone(name) {
+            if (uses.isEmpty && pairingUnticked != name) || (currentURL != nil && currentURL != session.url)
+                || isRetryingWhileGone(name) {
                 dropSession(name)
             } else {
                 // Its roles follow on the same connection, as when a ticked speaker becomes the source.
@@ -1145,8 +1160,9 @@ final class BridgeController {
         guard let player = discovered.first(where: { $0.instanceName == name }) else { return }
         endSpeakerPairing()
         dropSession(name)
-        // A source is paired from its row under Source: it isn't ticked as a speaker.
-        if sourcePairing != name, !selected.contains(name) {
+        // A source is paired from its row under Source, and a speaker from Settings: neither is
+        // ticked as a speaker.
+        if sourcePairing != name, pairingUnticked != name, !selected.contains(name) {
             selected.insert(name)
             defaults.set(Array(selected), forKey: "selectedPlayers")
         }
@@ -1180,18 +1196,61 @@ final class BridgeController {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// A speaker being paired from Settings that isn't ticked: it stays unticked, and is
+    /// connected to only for the pairing.
+    private var pairingUnticked: String?
+
+    /// Speakers on the network that aren't paired, for Settings, where each can be: allowed to
+    /// play unpaired, or new. Pairing MUST be clearly available to a speaker that's neither
+    /// (pairing.md, Unpaired Access).
+    var unpairedSpeakerList: [(instanceName: String, name: String, allowed: Bool)] {
+        let paired = Set(pairedSpeakers.filter { playerPairings.isPaired($0.key) }.values)
+        let approved = approvedPlayers
+        return Set(discovered.map(\.instanceName))
+            .filter { !paired.contains($0) && !isSourceOnly($0) && pairMethods(for: $0).flatMap(Self.pairingWay) != nil }
+            .map { (instanceName: $0, name: displayName($0), allowed: approved[$0] != nil) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Settings' Pair…: by what it offers, as the speaker's row in the menu pairs it.
+    func pairFromSettings(_ name: String) {
+        guard let way = pairMethods(for: name).flatMap(Self.pairingWay) else { return }
+        if !selected.contains(name) { pairingUnticked = name }
+        switch way {
+        case .code(let method): startPairing(name, method: method)
+        case .token: askForToken(name)
+        }
+    }
+
+    /// Settings' Cancel. A ticked speaker connects again as it was; an unticked one is let go.
+    func cancelPairing(_ name: String) {
+        if tokenEntry?.name == name { tokenEntry = nil }
+        if scanning == name { scanning = nil }
+        pairingUnticked = nil
+        if speakerPairing?.name == name { dropSession(name) }
+        reconcile()
+    }
+
     /// Forget a pairing. A connected speaker forgets it too (server/unpair); it then connects
     /// anew, unpaired, as any speaker that isn't.
     func forgetPairing(clientID: String) {
         let name = pairedSpeakers.removeValue(forKey: clientID)
+        // Forgotten, it's a new speaker again: unticked, to pair or allow anew (the server guide).
+        let untick = { [weak self] in
+            guard let self, let name, selected.contains(name) else { return }
+            setSelected(name, false)
+        }
         if let (key, session) = sessions.first(where: { statuses[$0.key]?.clientID == clientID }) {
             Task {
+                // server/unpair goes out first; unticking drops the connection.
                 await session.unpair()
                 dropSession(key)
+                untick()
                 reconcile()
             }
         } else {
             playerPairings.remove(clientID)
+            untick()
         }
         Log.info("Forgot the pairing with \(name ?? clientID)")
     }
@@ -1201,6 +1260,13 @@ final class BridgeController {
         codeContinuation?.resume(returning: nil)
         codeContinuation = nil
         speakerPairing = nil
+    }
+
+    private static func way(_ way: PairingWay, offers method: PairingMethod) -> Bool {
+        switch (way, method) {
+        case (.token, .token), (.code(.dynamicCode), .dynamicCode), (.code(.staticCode), .staticCode): true
+        default: false
+        }
     }
 
     private func pairingProgressed(_ name: String, _ status: PlayerStatus) {
@@ -1218,8 +1284,9 @@ final class BridgeController {
             sourcePairing = nil
             playSource(name)
         }
-        if progress == .paired, status.connection == .connected {
-            // "Paired" stays a moment, then the row is just a speaker that plays.
+        if progress == .paired, status.connection == .connected || pairingUnticked == name {
+            // "Paired" stays a moment, then the row is just a speaker that plays; one paired from
+            // Settings unticked is let go.
             speakerPairing?.progress = .paired
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
@@ -1227,6 +1294,18 @@ final class BridgeController {
                     speakerPairing = nil
                     if scanning == name { scanning = nil }
                 }
+                if pairingUnticked == name {
+                    pairingUnticked = nil
+                    reconcile()
+                }
+            }
+        } else if case .failed = progress, let method = speakerPairing?.method,
+                  let way = status.pairMethods.flatMap(Self.pairingWay), !Self.way(way, offers: method) {
+            // It offers another way now than when it was last seen, as its hello just said: that one.
+            Log.info("\(name): pairs another way now")
+            switch way {
+            case .code(let method): Task { self.startPairing(name, method: method) }
+            case .token: askForToken(name)
             }
         } else if case .failed = progress, case .token = speakerPairing?.method {
             // A wrong token reads as a wrong code does: asked again, under the row. The speaker
@@ -1253,6 +1332,8 @@ final class BridgeController {
         didSet { defaults.set(try? JSONEncoder().encode(devices), forKey: "knownDevices") }
     }
     private var probing: Set<String> = []
+    /// Probed since launch.
+    private var probed: Set<String> = []
 
     /// A source under Source, in the menu.
     struct Source: Identifiable {
@@ -1303,12 +1384,15 @@ final class BridgeController {
         return !playerPairings.isPaired(device.clientID)
     }
 
-    /// Learn each new device's roles once, by a connection that only reads its hello.
+    /// Learn each new device's roles once, by a connection that only reads its hello; and, once
+    /// a launch, how a known one pairs, for Settings: that isn't kept.
     private func probeNewDevices() {
-        for player in discovered where devices[player.instanceName] == nil && sessions[player.instanceName] == nil
+        for player in discovered where (devices[player.instanceName] == nil || !probed.contains(player.instanceName))
+            && sessions[player.instanceName] == nil
             && !probing.contains(player.instanceName) && !Self.isIncoming(player.instanceName) {
             let name = player.instanceName
             probing.insert(name)
+            probed.insert(name)
             Task {
                 defer { probing.remove(name) }
                 guard let probe = try? await PlayerSession.probe(url: player.url, identity: identity, pairings: playerPairings)

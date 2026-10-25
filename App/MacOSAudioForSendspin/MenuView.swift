@@ -278,7 +278,7 @@ private struct SourceRow: View {
 
 
 /// Where what hangs under a destination starts: past its icon.
-private let destinationIndent: CGFloat = 36
+let destinationIndent: CGFloat = 36
 
 /// Before any speaker or server is found: what the app is looking for, and where to
 /// read which speakers work with it.
@@ -503,7 +503,7 @@ private struct PlayerRow: View {
                    ? "Click its name, then paste its pairing token, to pair it again."
                    : "Click its name to pair it again.")
         case .notApproved:
-            "This speaker presents a different identity than the one you allowed. "
+            "This speaker presents a different identity than the one you paired with or allowed. "
                 + "If you trust it, click its name."
         default:
             ""
@@ -512,11 +512,13 @@ private struct PlayerRow: View {
 }
 
 /// A pairing in progress, under the speaker's row: what it waits for, and the code entry.
-private struct PairingCaption: View {
+struct PairingCaption: View {
     let pairing: BridgeController.SpeakerPairing
     let speaker: String
     let methods: PairMethods?
     let bridge: BridgeController
+    /// Past the row's icon in the menu; Settings has none.
+    var indent = destinationIndent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -524,7 +526,7 @@ private struct PairingCaption: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
-        .padding(.leading, destinationIndent)
+        .padding(.leading, indent)
         .padding(.bottom, 6)
     }
 
@@ -603,7 +605,7 @@ private struct PairingCaption: View {
 /// window of its own (`QRScanView`); it can also be pasted. Pairing starts as soon as there's a
 /// token, as the code slots start once full. Pasted tokens are read leniently (whitespace,
 /// case, the `SP:` prefix), as the spec asks; anything else reads as a token that didn't match.
-private struct TokenCaption: View {
+struct TokenCaption: View {
     enum Phase: Equatable {
         /// `again`: the last token didn't match, as with a wrong code.
         case looking(again: Bool)
@@ -617,6 +619,8 @@ private struct TokenCaption: View {
     let phase: Phase
     /// Its QR code is being scanned in the scan window.
     let scanning: Bool
+    /// Past the row's icon in the menu; Settings has none.
+    var indent = destinationIndent
     /// Opens the scan window, or brings it forward.
     let onScan: () -> Void
     let onPair: (PairingToken.PairingPSK) -> Void
@@ -664,7 +668,8 @@ private struct TokenCaption: View {
                 case .looking:
                     Text((wrong ? "That token didn't match. " : "") + prompt)
                         .fixedSize(horizontal: false, vertical: true)
-                    TextField("SP:0…", text: $text)
+                    TextField("Pairing token", text: $text, prompt: Text("SP:0…"))
+                        .labelsHidden()
                         .font(.system(.caption, design: .monospaced))
                         .focused($focused)
                         .onSubmit(pair)
@@ -682,7 +687,7 @@ private struct TokenCaption: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
-        .padding(.leading, destinationIndent)
+        .padding(.leading, indent)
         .padding(.bottom, 6)
         .onAppear { if !scannable { focused = true } }
     }
@@ -735,6 +740,8 @@ private struct CodeEntry: View {
         ZStack {
             TextField("Pairing code", text: $digits)
                 .textFieldStyle(.plain)
+                // In Settings' form its title would be a label beside it, widening the row.
+                .labelsHidden()
                 .focused($focused)
                 .opacity(0.02)
                 .onChange(of: digits) { _, typed in

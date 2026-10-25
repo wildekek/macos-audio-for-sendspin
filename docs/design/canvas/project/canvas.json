@@ -376,6 +376,20 @@
       "w": 760,
       "h": 520,
       "title": "M5 \u00b7 Listed, each opens it in Music Assistant"
+    },
+    "TrustMenu.dc.html": {
+      "x": 0,
+      "y": 21480,
+      "w": 1132,
+      "h": 520,
+      "title": "In the menu: only \u201cIdentity changed\u201d, where a speaker isn\u2019t the one you chose"
+    },
+    "TrustSettings.dc.html": {
+      "x": 0,
+      "y": 22120,
+      "w": 1764,
+      "h": 420,
+      "title": "In Settings: every speaker that isn\u2019t paired, under Paired, with Pair\u2026"
     }
   },
   "createdOnFiles": {
@@ -498,6 +512,14 @@
       "w": 240,
       "x": 0,
       "y": 19580
+    },
+    "trust": {
+      "kind": "title1",
+      "maxW": 1764,
+      "text": "Paired, allowed or new: the menu flags an impostor, Settings offers Pair\u2026",
+      "w": 240,
+      "x": 0,
+      "y": 21220
     }
   },
   "order": [
@@ -553,7 +575,9 @@
     "SourcesMA2.dc.html",
     "SourcesMA3.dc.html",
     "SourcesMA4.dc.html",
-    "SourcesMA5.dc.html"
+    "SourcesMA5.dc.html",
+    "TrustMenu.dc.html",
+    "TrustSettings.dc.html"
   ],
   "pages": [],
   "title": "Sendspin menu redesign"
