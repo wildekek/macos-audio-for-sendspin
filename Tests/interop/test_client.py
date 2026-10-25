@@ -26,6 +26,10 @@ Scenarios:
     rehandshake-timeout     Paired by its pairing token, a player that never answers the
                             re-handshake to its new long-term PSK is closed after the
                             handshake timeout (connection.md, Failure Handling).
+    pair-pending-in-psk-flow
+                            A client/pair-pending in the Pairing PSK Flow, which has no
+                            holding back, is out of sequence: a protocol error, so the server
+                            closes (pairing.md, Messages).
 """
 
 import argparse
@@ -271,7 +275,8 @@ async def silent_close_backoff(bridge: Bridge, player: Player):
         raise Failure(f"still retrying every {gaps[-1]} s after {len(gaps)} handshakes that closed at once")
 
 
-async def rehandshake_timeout(bridge: Bridge, player: Player):
+async def pairing_psk_activation(bridge: Bridge, player: Player):
+    """Start the bridge pairing by the player's token, up to the pairing activation."""
     await bridge.start("--pair", player.token, player.url)
     ws, done = await player.next_connection(10)
     session = Session(await player.handshake(ws))
@@ -283,6 +288,21 @@ async def rehandshake_timeout(bridge: Bridge, player: Player):
     activate = await session.expect("server/activate", 5)
     if activate.get("pairing", {}).get("method") != "pairing_psk":
         raise Failure(f"expected a pairing_psk activation, got {activate}")
+    return session, done
+
+
+async def pair_pending_in_psk_flow(bridge: Bridge, player: Player):
+    session, done = await pairing_psk_activation(bridge, player)
+    await session.send("client/pair-pending", {"pairing_index": 1})
+    try:
+        await asyncio.wait_for(session.closed.wait(), 5)
+    except asyncio.TimeoutError:
+        raise Failure("the server kept the connection after an out-of-sequence client/pair-pending") from None
+    done.set()
+
+
+async def rehandshake_timeout(bridge: Bridge, player: Player):
+    session, done = await pairing_psk_activation(bridge, player)
     long_term = os.urandom(32)
     await session.send("client/pair-init", {"pairing_index": 1})
     await session.send("client/pair-finalize", {"long_term_psk": b64url_encode(long_term)})
@@ -303,7 +323,8 @@ async def rehandshake_timeout(bridge: Bridge, player: Player):
 
 
 SCENARIOS = {"message2-payload": message2_payload, "shutdown-reconnects": shutdown_reconnects,
-             "silent-close-backoff": silent_close_backoff, "rehandshake-timeout": rehandshake_timeout}
+             "silent-close-backoff": silent_close_backoff, "rehandshake-timeout": rehandshake_timeout,
+             "pair-pending-in-psk-flow": pair_pending_in_psk_flow}
 
 
 async def main() -> int:
