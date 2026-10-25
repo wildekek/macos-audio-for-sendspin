@@ -215,6 +215,8 @@ func resolvePlayers(_ queries: [String]) async -> [URL] {
 
 func run() async {
     let options = parseOptions()
+    // A tool for testing: it plays on test players too, which announce themselves at 127.0.0.1.
+    PlayerBrowser.allowsLoopback = true
 
     if options.list {
         let players = await PlayerBrowser.discover()

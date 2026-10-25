@@ -333,6 +333,10 @@ final class BridgeController {
         chosenDestination = Destination(rawValue: defaults.string(forKey: "destination") ?? "") ?? .speakers
 
         Log.minimumLevel = defaults.bool(forKey: "verboseLogging") ? .debug : .info
+        #if DEBUG
+        // The dev build plays on test players too, which announce themselves at 127.0.0.1.
+        PlayerBrowser.allowsLoopback = true
+        #endif
         let logger = Logger(subsystem: "eu.vooijs.MacOSAudioForSendspin", category: "bridge")
         Log.handler = { level, message in
             switch level {

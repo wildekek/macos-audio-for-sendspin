@@ -20,6 +20,11 @@ public struct DiscoveredPlayer: Sendable, Hashable {
 public enum PlayerBrowser {
     public static let serviceType = "_sendspin._tcp"
 
+    /// Whether players advertising a loopback address are connected to. A server SHOULD NOT
+    /// (connection.md, mDNS); test players announce themselves on this Mac only, as 127.0.0.1,
+    /// so development builds and the command-line bridge allow it.
+    public nonisolated(unsafe) static var allowsLoopback = false
+
     /// Browse for `duration` and return every player that could be resolved.
     public static func discover(for duration: Duration = .seconds(3)) async -> [DiscoveredPlayer] {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: serviceType, domain: nil),
@@ -264,35 +269,68 @@ public enum PlayerBrowser {
         }
     }
 
+    /// Only a player whose advertised `path` is an RFC 3986 `path-absolute`, at an address that
+    /// isn't loopback or unspecified, is connected to (connection.md, mDNS).
     private static func resolve(_ result: NWBrowser.Result) async -> DiscoveredPlayer? {
         guard case let .service(name, _, _, _) = result.endpoint else { return nil }
-        var path = "/sendspin"
-        var displayName: String?
-        if case let .bonjour(txt) = result.metadata {
-            if let value = txt["path"], value.hasPrefix("/") { path = value }
-            displayName = txt["name"]
+        guard case let .bonjour(txt) = result.metadata, let path = txt["path"], isPathAbsolute(path) else {
+            Log.debug("\(name): no valid path advertised; not connecting")
+            return nil
         }
-        guard let (host, port) = await resolveHostPort(result.endpoint),
-              let url = URL(string: "ws://\(host):\(port)\(path)") else { return nil }
-        return DiscoveredPlayer(instanceName: name, displayName: displayName, url: url)
+        guard let (host, port) = await resolveHostPort(result.endpoint) else { return nil }
+        guard allowsLoopback || !isLoopbackOrUnspecified(host) else {
+            Log.debug("\(name): advertises a loopback or unspecified address; not connecting")
+            return nil
+        }
+        guard let url = URL(string: "ws://\(hostString(host)):\(port)\(path)") else { return nil }
+        return DiscoveredPlayer(instanceName: name, displayName: txt["name"], url: url)
+    }
+
+    /// RFC 3986, section 3.3: `"/" [ segment-nz *( "/" segment ) ]`, so it starts with one `/`
+    /// (not two), and every character is a `pchar`, `/`, or a `%` with two hex digits.
+    static func isPathAbsolute(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), !path.hasPrefix("//") else { return false }
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@/")
+        let scalars = Array(path.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            if scalars[index] == "%" {
+                guard index + 2 < scalars.count, scalars[index + 1].properties.isASCIIHexDigit,
+                      scalars[index + 2].properties.isASCIIHexDigit else { return false }
+                index += 3
+            } else {
+                guard allowed.contains(scalars[index]) else { return false }
+                index += 1
+            }
+        }
+        return true
+    }
+
+    static func isLoopbackOrUnspecified(_ host: NWEndpoint.Host) -> Bool {
+        switch host {
+        // All of 127.0.0.0/8 is loopback; Network's `isLoopback` covers only 127.0.0.1.
+        case .ipv4(let address): address.rawValue.first == 127 || address == .any
+        case .ipv6(let address): address.isLoopback || address == .any
+        default: false
+        }
     }
 
     /// Resolve a Bonjour service endpoint to an IPv4 host and port by connecting to it.
-    private static func resolveHostPort(_ endpoint: NWEndpoint) async -> (String, UInt16)? {
+    private static func resolveHostPort(_ endpoint: NWEndpoint) async -> (NWEndpoint.Host, UInt16)? {
         let parameters = NWParameters.tcp
         if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ip.version = .v4
         }
         let connection = NWConnection(to: endpoint, using: parameters)
         let queue = DispatchQueue(label: "sendspin.resolve")
-        let resolved: (String, UInt16)? = await withCheckedContinuation { continuation in
+        let resolved: (NWEndpoint.Host, UInt16)? = await withCheckedContinuation { continuation in
             let once = OnceFlag()
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    var answer: (String, UInt16)?
+                    var answer: (NWEndpoint.Host, UInt16)?
                     if case let .hostPort(host, port)? = connection.currentPath?.remoteEndpoint {
-                        answer = (hostString(host), port.rawValue)
+                        answer = (host, port.rawValue)
                     }
                     if once.claim() { continuation.resume(returning: answer) }
                 case .failed, .cancelled, .waiting:
