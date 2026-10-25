@@ -1681,7 +1681,9 @@ extension PlayerSession {
         case .pairing:
             activatePairing()
         case .paired:
-            guard let clientID = status.clientID, await approve(clientID, true) else {
+            // As after a hello on a paired connection: the roles follow from what's approved.
+            await askApprovals()
+            guard speakerApproved || inputApproved else {
                 sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
                 return
             }
