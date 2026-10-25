@@ -320,9 +320,12 @@ public actor PlayerSession {
             if status.connection != .unavailable { status.connection = .connecting }
             var outcome: SessionEnd
             var unreachable = false
+            let started = ContinuousClock.now
             do {
                 outcome = try await connectAndServe()
-                backoff = .seconds(1)
+                // Only a connection that lasted resets the backoff: one that closes right after
+                // its handshake is retried ever later too (messaging.md, client/goodbye).
+                if ContinuousClock.now - started > .seconds(10) { backoff = .seconds(1) }
             } catch is CancellationError {
                 break
             } catch where Self.isUnreachable(error) {
