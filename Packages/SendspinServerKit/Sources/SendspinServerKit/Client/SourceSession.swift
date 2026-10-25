@@ -302,6 +302,19 @@ actor SourceSession {
             sendMessage("client/goodbye", ClientGoodbyeMessage(reason: "unauthorized"))
             return true
         }
+        // A pairing method we don't offer under this PSK makes the activation inadmissible too:
+        // it's answered, the connection stays open, and admission isn't applied to it
+        // (messaging.md, server/activate; connection.md, Multiple servers).
+        let method: PairingMethod?
+        switch (activate.pairing?.method, matched) {
+        case ("pairing_psk", .pairing): method = .token
+        case ("dynamic_pairing_code", .sentinel) where activate.pairing?.format == "digits": method = .code
+        default: method = nil
+        }
+        if activities.contains("pairing"), method == nil {
+            sendMessage("pair/abort", PairAbortMessage(reason: "method_not_supported"))
+            return false
+        }
 
         let first = !activated
         if first {
@@ -334,13 +347,10 @@ actor SourceSession {
         if activities.contains("pairing") {
             pairingIndex += 1
             await endPairingAttempt()  // each pairing activation admits one attempt of its own
-            switch (activate.pairing?.method, matched) {
-            case ("pairing_psk", .pairing):
-                startPairingPSK()
-            case ("dynamic_pairing_code", .sentinel) where activate.pairing?.format == "digits":
-                await startPairingCode()
-            default:
-                sendMessage("pair/abort", PairAbortMessage(reason: "method_not_supported"))
+            switch method {
+            case .token: startPairingPSK()
+            case .code: await startPairingCode()
+            case nil: break  // answered above
             }
         } else if pendingPSK != nil || codeAttempt != nil {
             // Left pairing without server/pair-finalize: persist nothing.
@@ -351,6 +361,8 @@ actor SourceSession {
     }
 
     // MARK: Pairing
+
+    private enum PairingMethod { case token, code }
 
     /// Pairing PSK flow: pair-init and pair-finalize back to back, with a new long-term PSK.
     private func startPairingPSK() {
