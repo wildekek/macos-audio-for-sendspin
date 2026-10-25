@@ -1133,6 +1133,16 @@ extension PlayerSession {
         socket?.close()
     }
 
+    /// Forget the pairing. A connected speaker is told to forget it too (server/unpair), and
+    /// says goodbye with `unpaired`; one that isn't keeps its record until it's paired again,
+    /// which replaces it.
+    public func unpair() {
+        guard let clientID = status.clientID else { return }
+        if status.paired, channel != nil { sendMessage("server/unpair", EmptyPayload()) }
+        pairings.remove(clientID)
+        Log.info("\(status.name ?? clientID): pairing forgotten")
+    }
+
     /// Cancel the pairing in progress, from this Mac.
     public func cancelPairing() {
         guard attempt != nil || status.pairing == .starting else { return }

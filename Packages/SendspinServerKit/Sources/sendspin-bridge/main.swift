@@ -37,6 +37,7 @@ let usage = """
       --tone            send a 440 Hz test tone (-20 dBFS) instead of capturing
       --lead-ms N       playback lead / player buffer in ms (default: 1000)
       --name NAME       server name shown to players (default: Sendspin Bridge)
+      --unpair          once connected, forget the pairing with the players (both sides)
       --pair METHOD     pair with the players first: static, dynamic, or a pairing token
                         (SP:0…); codes are read from stdin. Pairings are kept in
                         ~/.config/sendspin-bridge, so a paired player stays paired
@@ -60,6 +61,7 @@ struct Options {
     var leadMs = 1000
     var name = "Sendspin Bridge"
     var pair: String?
+    var unpair = false
     var players: [String] = []
 }
 
@@ -99,6 +101,7 @@ func parseOptions() -> Options {
             options.leadMs = ms
         case "--name": options.name = value(for: arg)
         case "--pair": options.pair = value(for: arg)
+        case "--unpair": options.unpair = true
         case "-v", "--verbose": Log.minimumLevel = .debug
         case "-h", "--help": print(usage); exit(0)
         default:
@@ -262,7 +265,12 @@ func run() async {
                                     pairing: options.pair.map(pairingRequest), approve: { _, _ in true })
         Task {
             var bufferWarned = false
+            var unpaired = false
             for await status in session.updates {
+                if options.unpair, status.paired, status.connection == .connected, !unpaired {
+                    unpaired = true
+                    await session.unpair()
+                }
                 Log.info("\(status.name ?? url.absoluteString): \(status.connection)"
                     + (status.paired ? ", paired" : "")
                     + (status.pairing.map { ", pairing \($0)" } ?? "")
