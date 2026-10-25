@@ -240,3 +240,20 @@ struct PlayerBufferAccountTests {
         #expect(admits([(600, 1_000, 0, 0), (300, 2_000, 600, 500), (300, 3_000, 700, 0)]) == [true, true, false])
     }
 }
+
+struct PairMethodsTests {
+    /// Unknown methods, formats, channels and locations are ignored, and kept for the log: they
+    /// mean the client speaks a newer revision (pairing.md, client/hello pair-method descriptor).
+    @Test func ignoresAndTracksUnknownIdentifiers() throws {
+        let json = """
+            {"pairing_psk":{"locations":["device","moon"]},
+             "dynamic_pairing_code":{"formats":["digits","hologram"],"out_channels":["display","telepathy"]},
+             "future_method":{"x":1}}
+            """
+        let methods = try JSONDecoder().decode(PairMethods.self, from: Data(json.utf8))
+        #expect(methods.pairingPSK == [.device])
+        #expect(methods.dynamicCode == [.display])
+        #expect(Set(methods.ignored) == ["pairing_psk.moon", "dynamic_pairing_code.hologram",
+                                         "dynamic_pairing_code.telepathy", "future_method"])
+    }
+}

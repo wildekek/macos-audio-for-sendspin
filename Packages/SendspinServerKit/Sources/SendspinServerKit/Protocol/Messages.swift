@@ -180,6 +180,9 @@ public struct PairMethods: Decodable, Sendable, Equatable {
     public var staticCode: [Location]?
     /// How the device conveys its dynamic code, if it offers one in the digits format.
     public var dynamicCode: [OutChannel]?
+    /// What was ignored as unknown: methods, formats, channels and locations, as `method` or
+    /// `method.value`. Servers SHOULD track these: the client speaks a newer revision.
+    public var ignored: [String] = []
 
     public init(pairingPSK: [Location]? = nil, staticCode: [Location]? = nil, dynamicCode: [OutChannel]? = nil) {
         self.pairingPSK = pairingPSK
@@ -211,16 +214,26 @@ public struct PairMethods: Decodable, Sendable, Equatable {
         func descriptor(_ key: String) -> Descriptor? {
             try? container.decodeIfPresent(Descriptor.self, forKey: Key(stringValue: key))
         }
-        func locations(_ descriptor: Descriptor) -> [Location] {
-            (descriptor.locations ?? []).compactMap(Location.init(rawValue:))
+        var ignored: [String] = []
+        func known<T: RawRepresentable<String>>(_ values: [String]?, in method: String, as _: T.Type) -> [T] {
+            (values ?? []).compactMap { value in
+                guard let known = T(rawValue: value) else { ignored.append("\(method).\(value)"); return nil }
+                return known
+            }
         }
-        if let psk = descriptor("pairing_psk") { pairingPSK = locations(psk) }
-        if let code = descriptor("static_pairing_code") { staticCode = locations(code) }
-        // QR codes need a camera; a desktop app asks for digits (the implementation guide).
-        if let code = descriptor("dynamic_pairing_code"), (code.formats ?? []).contains("digits") {
-            let channels = (code.outChannels ?? []).compactMap(OutChannel.init(rawValue:))
-            if !channels.isEmpty { dynamicCode = channels }
+        if let psk = descriptor("pairing_psk") { pairingPSK = known(psk.locations, in: "pairing_psk", as: Location.self) }
+        if let code = descriptor("static_pairing_code") {
+            staticCode = known(code.locations, in: "static_pairing_code", as: Location.self)
         }
+        if let code = descriptor("dynamic_pairing_code") {
+            ignored += (code.formats ?? []).filter { !["digits", "qr_code"].contains($0) }.map { "dynamic_pairing_code.\($0)" }
+            let channels = known(code.outChannels, in: "dynamic_pairing_code", as: OutChannel.self)
+            // QR codes need a camera; a desktop app asks for digits (the implementation guide).
+            if (code.formats ?? []).contains("digits"), !channels.isEmpty { dynamicCode = channels }
+        }
+        let methods = ["pairing_psk", "static_pairing_code", "dynamic_pairing_code"]
+        ignored += container.allKeys.map(\.stringValue).filter { !methods.contains($0) }.sorted()
+        self.ignored = ignored
     }
 }
 

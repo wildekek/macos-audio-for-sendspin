@@ -657,6 +657,10 @@ public actor PlayerSession {
         if !unknown.isEmpty {
             Log.info("\(hello.name): offers roles this server doesn't implement: \(unknown.joined(separator: ", "))")
         }
+        // Like roles: identifiers from a newer revision of the spec (pairing.md, pair-method descriptor).
+        if let ignored = hello.supportedPairMethods?.ignored, !ignored.isEmpty {
+            Log.info("\(hello.name): offers pairing identifiers this server doesn't know: \(ignored.joined(separator: ", "))")
+        }
 
         guard (uses.contains(.speaker) && status.isSpeaker) || (uses.contains(.input) && status.isInput) else {
             sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
