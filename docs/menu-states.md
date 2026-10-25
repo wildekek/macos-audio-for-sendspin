@@ -69,7 +69,7 @@ the speaker buffer's delay.
 | In the group | Mac's output | Dot | Delay |
 |---|---|---|---|
 | Only the Mac's own output (speakers, AirPods, AirPlay) | That output | Empty | None |
-| Any Sendspin speaker, with or without the Mac's own output | Sendspin | Blue, or grey while nothing goes out | The speaker buffer, 300 ms or more (longer when the Mac's own output needs it) |
+| Any Sendspin speaker, with or without the Mac's own output | Sendspin | Blue, or grey while nothing goes out | The speaker buffer: what the speakers ask for (longer when the Mac's own output needs it) |
 
 Changing between the two switches the Mac's output, which costs a moment of silence, as any
 output switch in macOS does. What each choice leads to (adding, removing, clicking a name,

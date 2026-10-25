@@ -39,11 +39,6 @@ final class BridgeController {
         case server = "musicAssistant"
     }
 
-    enum Lead: Int, CaseIterable, Identifiable {
-        case low = 300, normal = 600, robust = 1000
-        var id: Int { rawValue }
-    }
-
     /// Sample rate of the Sendspin device (and the capture), and the bit depth streamed.
     struct StreamFormat: Hashable, Identifiable, Comparable {
         var sampleRate: Int
@@ -89,9 +84,8 @@ final class BridgeController {
     /// The Sendspin device's volume and mute, linked to the speakers (volume keys, Control Center).
     private var deviceVolume: Float = 1
     private var deviceMuted = false
-    private(set) var lead: Lead
     /// The lead the group and the device latency currently use (see `effectiveLeadMs`).
-    private var appliedLeadMs: Int
+    private var appliedLeadMs = PlaybackGroup.sendMarginMs
     /// The format chosen in the menu; `activeFormat` is what's applied.
     private(set) var selectedFormat: StreamFormat
     private(set) var deviceSampleRate = 48_000
@@ -291,7 +285,8 @@ final class BridgeController {
 
     init() {
         let defaults = UserDefaults.standard
-        let lead = Lead(rawValue: defaults.integer(forKey: "leadMs")) ?? .low
+        // The speaker buffer was a setting before the speakers' own needs decided it.
+        defaults.removeObject(forKey: "leadMs")
         // The pre-1.0 server ID; Sendspin 1 identifies the server by its Noise key.
         defaults.removeObject(forKey: "serverID")
         // Earlier versions remembered only the names of players that connected to us.
@@ -303,10 +298,8 @@ final class BridgeController {
         selected = Set(defaults.stringArray(forKey: "selectedPlayers") ?? [])
         selectedFormat = StreamFormat(sampleRate: defaults.object(forKey: "sampleRate") as? Int ?? 48_000,
                                       bitDepth: defaults.object(forKey: "bitDepth") as? Int ?? 16)
-        self.lead = lead
-        appliedLeadMs = lead.rawValue
         self.identity = identity
-        group = PlaybackGroup(name: identity.name, leadMs: lead.rawValue)
+        group = PlaybackGroup(name: identity.name, leadMs: PlaybackGroup.sendMarginMs)
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         source = SourceClient(name: identity.name, softwareVersion: version,
                               credentials: SourceCredentialsStore.load(), save: SourceCredentialsStore.save)
@@ -331,7 +324,7 @@ final class BridgeController {
     }
 
     private func start() async {
-        Log.info("Starting (\(identity.name), lead \(lead.rawValue) ms)")
+        Log.info("Starting (\(identity.name))")
         await observeSystem()
         refreshDevice()
         // On the first launch the welcome window asks for each permission at its step.
@@ -719,7 +712,7 @@ final class BridgeController {
         var status = directStatus
         status.canMute = true
         status.muted = localPlayer.isMuted
-        // The Mac's own output can need more than the speaker buffer gives: the group waits for it.
+        // The Mac's own output needs its latency and some margin: the group waits for it.
         status.requiredBufferMs = localPlayer.requiredLeadMs
         guard status != statuses[Self.localKey] else { return }
         statuses[Self.localKey] = status
@@ -1386,16 +1379,9 @@ final class BridgeController {
         }
     }
 
-    func setLead(_ lead: Lead) {
-        self.lead = lead
-        defaults.set(lead.rawValue, forKey: "leadMs")
-        applyLead()
-    }
-
-    /// The ticked speaker that needs the most buffer, if it needs more than the setting. One
-    /// that's reconnecting keeps what it needed: a lower lead and back would restart every
-    /// stream twice, a gap on all speakers.
-    var leadRequirement: (name: String, ms: Int)? {
+    /// The ticked speaker that needs the most buffer. One that's reconnecting keeps what it
+    /// needed: a lower lead and back would restart every stream twice, a gap on all speakers.
+    private var leadNeed: (name: String, ms: Int)? {
         // A speaker gets its audio up to `sendMarginMs` after capture; the Mac's own output
         // plays it right here.
         let needs = statuses.filter { key, status in
@@ -1408,21 +1394,20 @@ final class BridgeController {
             (name: status.name ?? "A speaker",
              ms: status.requiredBufferMs + (key == Self.localKey ? 0 : PlaybackGroup.sendMarginMs))
         }
-        guard let need = needs.max(by: { $0.ms < $1.ms }), need.ms > lead.rawValue else { return nil }
-        return need
+        return needs.max(by: { $0.ms < $1.ms })
     }
 
-    /// The setting, raised to what connected speakers need: the spec requires keeping at
-    /// least each player's min_buffer_ms + output_delay_ms queued.
-    var effectiveLeadMs: Int { leadRequirement?.ms ?? lead.rawValue }
+    /// What the speakers need, and no more: the group's send-ahead is the largest of its
+    /// players' `min_buffer_ms + output_delay_ms` (player/v1.md, Server Audio Send
+    /// Constraints). Players report the lowest values that keep them from underrunning, so
+    /// their word is taken; the lead adds only our own sending time.
+    private var effectiveLeadMs: Int { max(leadNeed?.ms ?? 0, PlaybackGroup.sendMarginMs) }
 
     private func applyLead() {
         let ms = effectiveLeadMs
         guard ms != appliedLeadMs else { return }
         appliedLeadMs = ms
-        if let requirement = leadRequirement {
-            Log.info("Speaker buffer \(ms) ms: \(requirement.name) needs more than the \(lead.rawValue) ms setting")
-        }
+        Log.info("Lead \(ms) ms" + (leadNeed.map { ": \($0.name) needs the most" } ?? ""))
         applyPresentationLatency()
         Task { await group.setLead(ms: ms) }
     }

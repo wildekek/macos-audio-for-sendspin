@@ -39,24 +39,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Picker("Speaker buffer", selection: Binding(get: { bridge.lead }, set: { bridge.setLead($0) })) {
-                    Text("300 ms").tag(BridgeController.Lead.low)
-                    Text("600 ms").tag(BridgeController.Lead.normal)
-                    Text("1 s").tag(BridgeController.Lead.robust)
-                }
-                .pickerStyle(.segmented)
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Longer buffers survive Wi-Fi hiccups. Video apps are told the delay to keep lip sync.")
-                    if let requirement = bridge.leadRequirement {
-                        Text("Using \(requirement.ms) ms: \(requirement.name) needs at least that much.")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
             pairedServer
             pairingHeldBack
 
