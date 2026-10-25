@@ -514,14 +514,19 @@ actor SourceSession {
 
     /// Bursts of 8 exchanges, each waiting for its reply, keeping the one with the smallest
     /// error (the time-filter's recommended usage): back to back until the filter converges,
-    /// since servers want the first client/state within seconds of activation, then every 10 s.
-    /// A re-handshake cuts a burst short; the filter itself carries over.
+    /// since servers want the first client/state within seconds of activation, then one
+    /// starting every 9 s: bursts MUST start no more than 10 s apart, however long one takes
+    /// (messaging.md, Clock Synchronization). A re-handshake cuts a burst short; the filter
+    /// itself carries over.
     private func startTimeSync() {
         timeSync = Task { [weak self] in
+            let clock = ContinuousClock()
             while !Task.isCancelled {
                 guard let self else { return }
+                let started = clock.now
                 await self.syncBurst()
-                try? await Task.sleep(for: await self.converged ? .seconds(10) : .milliseconds(100))
+                let next = await self.converged ? started + .seconds(9) : clock.now + .milliseconds(100)
+                try? await Task.sleep(until: next, clock: clock)
             }
         }
     }
