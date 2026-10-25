@@ -1882,7 +1882,7 @@ final class BridgeController {
                 coreAudio.async { device.volume = scalar }
             }
         }
-        let mutes = statuses.values.filter { $0.connection == .connected }.compactMap(\.muted)
+        let mutes = statuses.values.filter { $0.connection == .connected && $0.canMute }.compactMap(\.muted)
         if !mutes.isEmpty {
             let allMuted = mutes.allSatisfy { $0 }
             if allMuted != deviceMuted {
@@ -1892,8 +1892,10 @@ final class BridgeController {
         }
     }
 
+    /// The volumes the Mac's volume stands for: of the connected players that take volume
+    /// commands. A volume a player only reports isn't settable (player/v1.md, client/state).
     private func connectedVolumes() -> [String: Int] {
-        statuses.compactMapValues { $0.connection == .connected ? $0.volume : nil }
+        statuses.compactMapValues { $0.connection == .connected && $0.canSetVolume ? $0.volume : nil }
     }
 
     // MARK: Menu actions
