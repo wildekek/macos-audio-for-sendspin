@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approach E, the AirPlay picker</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+@keyframes spinner{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="width: 388px; height: 540px; box-sizing: border-box; padding: 24px; background: #e3e6ec; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; color: #1d1d1f">
+  <div style="width: 340px; box-sizing: border-box; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: #f5f5f7; border: 0.5px solid rgba(0, 0, 0, 0.16); border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16)">
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 28px">
+      <span style="font-weight: 600">Sendspin</span>
+      <span role="img" aria-label="{{ modeLabel }}" title="{{ modeLabel }}" style="{{ dotStyle }}"></span>
+    </div>
+    <div style="height: 1px; background: rgba(0, 0, 0, 0.1)"></div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <sc-for list="{{ speakers }}" as="s" hint-placeholder-count="5">
+        <div style="display: flex; align-items: center; gap: 10px; height: 38px">
+          <button aria-label="{{ s.onlyLabel }}" onClick="{{ s.only }}" style="display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 10px; height: 38px; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer">
+            <span style="display: flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 13px; background: rgba(0, 0, 0, 0.08); color: #1d1d1f">
+              <sc-if value="{{ s.isMac }}" hint-placeholder-val="{{ false }}">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="7.5" rx="1"></rect><path d="M1 12.5h14"></path></svg>
+              </sc-if>
+              <sc-if value="{{ s.isSpeaker }}" hint-placeholder-val="{{ true }}">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="1" width="8" height="12" rx="1.5"></rect><circle cx="7" cy="8.5" r="2"></circle><circle cx="7" cy="4" r="0.6"></circle></svg>
+              </sc-if>
+            </span>
+            <span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ s.name }}</span>
+          </button>
+          <sc-if value="{{ s.playing }}" hint-placeholder-val="{{ true }}">
+            <input type="range" min="0" max="100" value="{{ s.volume }}" onChange="{{ s.setVolume }}" aria-label="{{ s.volumeLabel }}" style="width: 80px; margin: 0; accent-color: #6e6e73">
+          </sc-if>
+          <sc-if value="{{ s.hasStatus }}" hint-placeholder-val="{{ false }}">
+            <span style="display: flex; align-items: center; gap: 4px; flex: none">
+              <svg width="12" height="12" viewBox="0 0 12 12" role="img" aria-label="Warning"><path d="M6 1 L11.2 10.5 H0.8 Z" fill="#c25e00" stroke="#c25e00" stroke-width="1" stroke-linejoin="round"></path><path d="M6 4.3v3" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round"></path><circle cx="6" cy="9" r="0.7" fill="#ffffff"></circle></svg>
+              <span style="font-size: 11px; color: #6e6e73; white-space: nowrap">{{ s.status }}</span>
+            </span>
+          </sc-if>
+          <sc-if value="{{ s.hasCheck }}" hint-placeholder-val="{{ true }}">
+            <button aria-label="{{ s.checkLabel }}" aria-pressed="{{ s.pressed }}" title="{{ s.checkLabel }}" onClick="{{ s.toggle }}" style="{{ s.checkStyle }}">
+              <sc-if value="{{ s.showsTick }}" hint-placeholder-val="{{ true }}">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2.5,6.5 5,9 9.5,3.5"></polyline></svg>
+              </sc-if>
+              <sc-if value="{{ s.joining }}" hint-placeholder-val="{{ false }}">
+                <svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true" style="animation: spinner 0.8s steps(8) infinite"><g stroke="#3c3c43" stroke-width="2" stroke-linecap="round"><path d="M11 4v3.2" opacity="0.9"></path><path d="M15.95 6.05l-2.26 2.26" opacity="0.78"></path><path d="M18 11h-3.2" opacity="0.66"></path><path d="M15.95 15.95l-2.26-2.26" opacity="0.54"></path><path d="M11 18v-3.2" opacity="0.42"></path><path d="M6.05 15.95l2.26-2.26" opacity="0.32"></path><path d="M4 11h3.2" opacity="0.24"></path><path d="M6.05 6.05l2.26 2.26" opacity="0.16"></path></g></svg>
+              </sc-if>
+            </button>
+          </sc-if>
+        </div>
+      </sc-for>
+      <div style="height: 1px; margin: 4px 0; background: rgba(0, 0, 0, 0.1)"></div>
+      <button onClick="{{ chooseMusicAssistant }}" style="display: flex; align-items: center; gap: 10px; height: 38px; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer">
+        <span style="{{ maIcon }}">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.5" y="2" width="11" height="4" rx="1"></rect><rect x="1.5" y="8" width="11" height="4" rx="1"></rect><circle cx="4" cy="4" r="0.6"></circle><circle cx="4" cy="10" r="0.6"></circle></svg>
+        </span>
+        <span style="white-space: nowrap">Music Assistant</span>
+      </button>
+      <sc-if value="{{ maCaption }}" hint-placeholder-val="{{ false }}">
+        <p style="margin: 0; padding: 0 0 6px 36px; font-size: 11px; line-height: 15px; color: #6e6e73">Choose speakers, groups and volume in Music Assistant.</p>
+      </sc-if>
+    </div>
+    <div style="height: 1px; background: rgba(0, 0, 0, 0.1)"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 22px">
+      <button style="padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer">Quit</button>
+      <button aria-label="Settings" style="display: flex; padding: 0; border: 0; background: none; color: inherit; cursor: pointer">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.4"></circle><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </div>
+  <div style="display: flex; justify-content: center; margin-top: 18px">
+    <button onClick="{{ reset }}" style="padding: 6px 14px; border: 1px solid rgba(60, 60, 67, 0.3); border-radius: 7px; background: #ffffff; font: inherit; font-size: 12px; color: #1d1d1f; cursor: pointer">Reset to the start</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":388,"height":540}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const on = this.state.on ?? true;
+    const destination = this.state.destination ?? 'speakers';
+    const direct = !on;
+    // Office is in the group but unavailable: it plays again once it's back.
+    const group = this.state.group ?? { mac: true, aux: true, office: true };
+    const volumes = this.state.volumes ?? { mac: 60, aux: 45, pe: 50, office: 50 };
+    const blue = '#0a7aff';
+    const onSpeakers = on && destination === 'speakers';
+    const maChosen = on && destination === 'musicAssistant';
+    const list = [
+      { id: 'mac', name: 'MacBook Pro Speakers', kind: 'mac' },
+      { id: 'aux', name: 'Home Assistant Connect AUX-2', kind: 'speaker' },
+      { id: 'pe', name: 'Home Assistant Voice PE', kind: 'speaker' },
+      { id: 'office', name: 'Office', kind: 'speaker', unavailable: true },
+      // Takes a second to connect: its check is a spinner meanwhile.
+      { id: 'flaky', name: 'Flaky Speaker', kind: 'speaker', slow: true },
+    ].filter((s) => !s.unavailable || group[s.id]);
+    const joining = this.state.joining ?? {};
+    // In the group as it shows: the group while the speakers play, the Mac alone while direct.
+    const member = (id) => !!group[id] && (onSpeakers || (direct && id === 'mac'));
+    const plays = (id) => member(id) && !list.find((s) => s.id === id).unavailable && !joining[id];
+    // A Sendspin speaker in the group needs Sendspin; the Mac's own speakers alone play
+    // directly, without the speaker buffer's delay.
+    const apply = (input) => {
+      // Nothing left that can play (only unavailable speakers): the Mac's own speakers take
+      // over, checked; the others stay in the group and join in once they're back.
+      const canPlay = list.some((s) => input[s.id] && !s.unavailable);
+      const next = canPlay ? input : { ...input, mac: true };
+      // A slow speaker that's added connects for a second before it plays.
+      const nowJoining = Object.fromEntries(list.filter((s) => s.slow && next[s.id] && !member(s.id)).map((s) => [s.id, true]));
+      for (const id of Object.keys(nowJoining)) {
+        setTimeout(() => this.setState({ joining: { ...(this.state.joining ?? {}), [id]: false } }), 1000);
+      }
+      const update = { group: next, joining: { ...joining, ...nowJoining } };
+      if (next.aux || next.pe || next.office || next.flaky) this.setState({ ...update, on: true, destination: 'speakers' });
+      // No Sendspin speaker left: the Mac's own speakers take over, checked, played directly.
+      else this.setState({ ...update, group: { mac: true }, on: false });
+    };
+    // Adding starts from what plays now, not from a group remembered while it was off.
+    const membersNow = Object.fromEntries(list.filter((s) => member(s.id)).map((s) => [s.id, true]));
+    const memberCount = Object.keys(membersNow).length;
+    // As the AirPlay picker: the device glyph never changes; the check on the right is the
+    // group. One rule for the checks: a row has one when it's groupable and what plays is too.
+    // Music Assistant isn't groupable, so while it plays there are none.
+    // A grey check: in the group, but it can't play now.
+    const speakers = list.map((s) => {
+      const inGroup = member(s.id);
+      const playing = plays(s.id);
+      const spinning = inGroup && !!joining[s.id];
+      const idle = inGroup && !playing && !spinning;
+      // A Sendspin speaker can always go (the Mac takes over when it was the last); the
+      // Mac's own speakers can't when they're all that plays.
+      const canLeave = inGroup && (s.id !== 'mac' || memberCount > 1);
+      return {
+        ...s,
+        isMac: s.kind === 'mac',
+        isSpeaker: s.kind === 'speaker',
+        playing,
+        inGroup,
+        joining: spinning,
+        showsTick: inGroup && !spinning,
+        hasStatus: !!s.unavailable,
+        status: 'Unavailable',
+        hasCheck: !maChosen,
+        pressed: inGroup ? 'true' : 'false',
+        checkLabel: spinning ? 'Connecting to ' + s.name + '; click to remove it'
+          : inGroup ? (canLeave ? 'Remove ' + s.name : s.name + ' plays') : 'Add ' + s.name,
+        onlyLabel: 'Play on ' + s.name + ' only',
+        volume: volumes[s.id],
+        volumeLabel: s.name + ' volume',
+        checkStyle: 'display: flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; padding: 0; border-radius: 11px; box-sizing: border-box; cursor: pointer; '
+          + (playing ? 'border: 0; background: ' + blue
+            : spinning ? 'border: 0; background: transparent'
+            : idle ? 'border: 0; background: rgba(60, 60, 67, 0.4)' : 'border: 1.5px solid rgba(60, 60, 67, 0.35); background: transparent'),
+        only: () => apply({ [s.id]: true }),
+        toggle: () => {
+          if (inGroup && !canLeave) return;
+          apply({ ...membersNow, [s.id]: !inGroup });
+        },
+        setVolume: (event) => this.setState({ volumes: { ...volumes, [s.id]: Number(event.target.value) } }),
+      };
+    });
+    return {
+      dotStyle: 'width: 10px; height: 10px; border-radius: 5px; flex: none; box-sizing: border-box; margin-right: 6px; '
+        + (on ? 'background: ' + blue : 'border: 1.5px solid rgba(60, 60, 67, 0.45)'),
+      modeLabel: on ? 'In use: the Mac plays through Sendspin' : 'Not in use: the Mac plays directly',
+      speakers,
+      maIcon: 'display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 13px; flex: none; '
+        + (maChosen ? 'background: ' + blue + '; color: #ffffff' : 'background: rgba(0, 0, 0, 0.08); color: #1d1d1f'),
+      maCaption: maChosen,
+      // Music Assistant can't be grouped with: choosing it dissolves the group, unavailable
+      // speakers too (they leave the list). A speaker chosen after it starts a new one.
+      chooseMusicAssistant: () => this.setState({ on: true, destination: 'musicAssistant', group: {}, joining: {} }),
+      // Back to how the board starts: every choice made since is forgotten.
+      reset: () => this.setState({ on: undefined, destination: undefined, group: undefined, volumes: undefined, joining: undefined }),
+    };
+  }
+}
+</script>
+</body>
+</html>

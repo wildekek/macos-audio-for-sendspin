@@ -1,0 +1,560 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "ApproachA.dc.html": {
+      "h": 380,
+      "title": "A \u00b7 Icons only (Sound menu)",
+      "w": 388,
+      "x": 0,
+      "y": 1300
+    },
+    "ApproachB.dc.html": {
+      "h": 380,
+      "title": "B \u00b7 Ticks only (Music)",
+      "w": 388,
+      "x": 468,
+      "y": 1300
+    },
+    "ApproachC.dc.html": {
+      "h": 380,
+      "title": "C \u00b7 Icons + group circle",
+      "w": 388,
+      "x": 936,
+      "y": 1300
+    },
+    "ApproachD.dc.html": {
+      "h": 380,
+      "title": "D \u00b7 The icon is the control (proposal)",
+      "w": 388,
+      "x": 1404,
+      "y": 1300
+    },
+    "ApproachE.dc.html": {
+      "h": 540,
+      "is_interactive": true,
+      "title": "E \u00b7 AirPlay picker (Apple's grouping)",
+      "w": 388,
+      "x": 0,
+      "y": 2040
+    },
+    "DotGlow.dc.html": {
+      "h": 330,
+      "is_interactive": true,
+      "title": "The dot, with a glow (play with Tweaks)",
+      "w": 860,
+      "x": 780,
+      "y": 2860
+    },
+    "Indicator.dc.html": {
+      "h": 260,
+      "title": "Sendspin in use: the indicator",
+      "w": 700,
+      "x": 0,
+      "y": 2860
+    },
+    "MacInMA.dc.html": {
+      "h": 580,
+      "is_interactive": true,
+      "title": "Music Assistant plays on this Mac (try it)",
+      "w": 388,
+      "x": 0,
+      "y": 3480
+    },
+    "MacInMAFlow.dc.html": {
+      "h": 536,
+      "title": "Who plays what",
+      "w": 896,
+      "x": 1108,
+      "y": 3480
+    },
+    "MacInMASettings.dc.html": {
+      "h": 330,
+      "title": "Settings: let Music Assistant play here",
+      "w": 508,
+      "x": 2084,
+      "y": 3480
+    },
+    "MacInMAStates.dc.html": {
+      "h": 420,
+      "title": "The Mac's row, with Music Assistant",
+      "w": 560,
+      "x": 468,
+      "y": 3480
+    },
+    "Main.dc.html": {
+      "h": 330,
+      "is_interactive": true,
+      "title": "New menu (try it)",
+      "w": 340,
+      "x": 0,
+      "y": 500
+    },
+    "Off.dc.html": {
+      "h": 380,
+      "title": "Direct \u00b7 Mac's own speakers",
+      "w": 388,
+      "x": 1404,
+      "y": 0
+    },
+    "OnAirPlayE.dc.html": {
+      "h": 400,
+      "title": "E \u00b7 On AirPlay: nothing can join",
+      "w": 388,
+      "x": 1108,
+      "y": 2040
+    },
+    "OnMusicAssistant.dc.html": {
+      "h": 380,
+      "title": "Sendspin \u00b7 Music Assistant",
+      "w": 388,
+      "x": 936,
+      "y": 0
+    },
+    "OnSpeakers.dc.html": {
+      "h": 380,
+      "title": "Sendspin \u00b7 speakers",
+      "w": 388,
+      "x": 468,
+      "y": 0
+    },
+    "RowStates.dc.html": {
+      "h": 680,
+      "title": "D \u00b7 every row state",
+      "w": 560,
+      "x": 1872,
+      "y": 1300
+    },
+    "RowStatesE.dc.html": {
+      "h": 680,
+      "title": "E \u00b7 every row state",
+      "w": 560,
+      "x": 468,
+      "y": 2040
+    },
+    "Today.dc.html": {
+      "h": 380,
+      "title": "Today",
+      "w": 388,
+      "x": 0,
+      "y": 0
+    },
+    "UnavailableE.dc.html": {
+      "h": 370,
+      "title": "E \u00b7 Unavailable, with more urgency",
+      "w": 560,
+      "x": 1576,
+      "y": 2040
+    },
+    "PairCodeX.dc.html": {
+      "x": 0,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "1 \u00b7 Today: a \u24e7 beside the caption"
+    },
+    "PairCodeSpinner.dc.html": {
+      "x": 468,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "2 \u00b7 The spinner cancels, as when joining"
+    },
+    "PairCodeLink.dc.html": {
+      "x": 936,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "3 \u00b7 A Cancel link, as the server captions link"
+    },
+    "PairCodeUntick.dc.html": {
+      "x": 1404,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "4 \u00b7 A grey check: unticking cancels"
+    },
+    "PairTokenField.dc.html": {
+      "x": 1872,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "5 \u00b7 Token: a field, the spinner cancels"
+    },
+    "PairTokenPaste.dc.html": {
+      "x": 2340,
+      "y": 4560,
+      "w": 388,
+      "h": 330,
+      "title": "6 \u00b7 Token: one Paste button, no field"
+    },
+    "PairTokenA.dc.html": {
+      "x": 0,
+      "y": 5010,
+      "w": 388,
+      "h": 330,
+      "title": "T1 \u00b7 A field and Pair"
+    },
+    "PairTokenB.dc.html": {
+      "x": 468,
+      "y": 5010,
+      "w": 388,
+      "h": 330,
+      "title": "T2 \u00b7 A field that pairs on paste, as the slots do"
+    },
+    "PairTokenC.dc.html": {
+      "x": 936,
+      "y": 5010,
+      "w": 388,
+      "h": 330,
+      "title": "T3 \u00b7 One Paste Token button"
+    },
+    "PairTokenD.dc.html": {
+      "x": 1404,
+      "y": 5010,
+      "w": 388,
+      "h": 330,
+      "title": "T4 \u00b7 Clipboard first: offered when you copied one"
+    },
+    "PairCameraMenu.dc.html": {
+      "x": 0,
+      "y": 5720,
+      "w": 840,
+      "h": 790,
+      "title": "C1 \u00b7 A bigger camera, in the menu"
+    },
+    "PairCameraWindow.dc.html": {
+      "x": 920,
+      "y": 5720,
+      "w": 900,
+      "h": 820,
+      "title": "C2 \u00b7 The camera in its own window"
+    },
+    "PairScanButton.dc.html": {
+      "x": 0,
+      "y": 6920,
+      "w": 1220,
+      "h": 420,
+      "title": "S1 \u00b7 A \u201cScan the QR Code\u201d button (chosen)"
+    },
+    "PairScanLink.dc.html": {
+      "x": 0,
+      "y": 7460,
+      "w": 1220,
+      "h": 420,
+      "title": "S2 \u00b7 \u201cScan the QR code\u201d as a link in the hint"
+    },
+    "PairWindowTitled.dc.html": {
+      "x": 0,
+      "y": 8260,
+      "w": 1808,
+      "h": 900,
+      "title": "W1 \u00b7 A standard window: closing it cancels"
+    },
+    "PairWindowGlass.dc.html": {
+      "x": 0,
+      "y": 9280,
+      "w": 1808,
+      "h": 900,
+      "title": "W2 \u00b7 A glass panel, like the code window"
+    },
+    "PairWindowMenu.dc.html": {
+      "x": 1888,
+      "y": 8260,
+      "w": 388,
+      "h": 220,
+      "title": "The menu meanwhile"
+    },
+    "PairScanWindow.dc.html": {
+      "x": 0,
+      "y": 10560,
+      "w": 1360,
+      "h": 1180,
+      "title": "Scanning in a glass window (W2), opened by Scan the QR Code"
+    },
+    "InputsBelow.dc.html": {
+      "x": 0,
+      "y": 12260,
+      "w": 1504,
+      "h": 380,
+      "title": "I1 \u00b7 Source under the speakers, with a play button (chosen)"
+    },
+    "InputsList.dc.html": {
+      "x": 0,
+      "y": 12760,
+      "w": 1504,
+      "h": 440,
+      "title": "I2 \u00b7 \u201cPlay\u201d and \u201cOn\u201d: one list for what plays, one for where"
+    },
+    "InputsPicker.dc.html": {
+      "x": 0,
+      "y": 13320,
+      "w": 1504,
+      "h": 420,
+      "title": "I3 \u00b7 One line says what plays; a menu switches it"
+    },
+    "InputsAllow.dc.html": {
+      "x": 0,
+      "y": 13860,
+      "w": 860,
+      "h": 220,
+      "title": "Taking it back, and a source that needs pairing"
+    },
+    "SourcesPlay.dc.html": {
+      "x": 0,
+      "y": 14560,
+      "w": 1132,
+      "h": 500,
+      "title": "P1 \u00b7 A play button per source (as now)"
+    },
+    "SourcesRadio.dc.html": {
+      "x": 0,
+      "y": 15180,
+      "w": 1132,
+      "h": 540,
+      "title": "P2 \u00b7 Pick one: This Mac is one of the sources"
+    },
+    "SourcesToggle.dc.html": {
+      "x": 0,
+      "y": 15840,
+      "w": 1132,
+      "h": 500,
+      "title": "P3 \u00b7 Click a source to play it, again to go back to the Mac"
+    },
+    "SourcesPopup.dc.html": {
+      "x": 0,
+      "y": 16460,
+      "w": 1504,
+      "h": 420,
+      "title": "P4 \u00b7 One Source row with a popup"
+    },
+    "SourcesBlue.dc.html": {
+      "x": 0,
+      "y": 17360,
+      "w": 1504,
+      "h": 640,
+      "title": "P5 \u00b7 No selectbox, so pick one: the blue icon, as for Music Assistant"
+    },
+    "MacPlayerSources.dc.html": {
+      "x": 0,
+      "y": 18360,
+      "w": 1504,
+      "h": 1080,
+      "title": "A \u00b7 Another server takes the Mac\u2019s speakers (here Music Assistant), with Source (P5)"
+    },
+    "SourcesMA1.dc.html": {
+      "x": 0,
+      "y": 19840,
+      "w": 760,
+      "h": 520,
+      "title": "M1 \u00b7 Greyed out, as a disabled menu item"
+    },
+    "SourcesMA2.dc.html": {
+      "x": 840,
+      "y": 19840,
+      "w": 760,
+      "h": 520,
+      "title": "M2 \u00b7 Greyed out, the heading says why"
+    },
+    "SourcesMA3.dc.html": {
+      "x": 1680,
+      "y": 19840,
+      "w": 760,
+      "h": 520,
+      "title": "M3 \u00b7 Live: choosing a source plays it on the speakers"
+    },
+    "SourcesMA4.dc.html": {
+      "x": 0,
+      "y": 20480,
+      "w": 760,
+      "h": 520,
+      "title": "M4 \u00b7 Live: a source plays through Music Assistant"
+    },
+    "SourcesMA5.dc.html": {
+      "x": 840,
+      "y": 20480,
+      "w": 760,
+      "h": 520,
+      "title": "M5 \u00b7 Listed, each opens it in Music Assistant"
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-22T20:55:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "airplay": {
+      "kind": "title1",
+      "maxW": 2136,
+      "text": "E \u00b7 Grouping as Apple's AirPlay picker does it",
+      "w": 240,
+      "x": 0,
+      "y": 1780
+    },
+    "macasspeaker": {
+      "kind": "title1",
+      "maxW": 2592,
+      "text": "The Mac as a speaker for another server (Music Assistant, another Mac)",
+      "w": 240,
+      "x": 0,
+      "y": 3240
+    },
+    "row": {
+      "kind": "title1",
+      "maxW": 1792,
+      "text": "Sendspin or Direct in the menu",
+      "w": 240,
+      "x": 0,
+      "y": -260
+    },
+    "states": {
+      "kind": "title1",
+      "maxW": 2432,
+      "text": "How a row shows its state",
+      "w": 240,
+      "x": 0,
+      "y": 1040
+    },
+    "pairing": {
+      "kind": "title1",
+      "maxW": 2728,
+      "text": "Pairing a speaker: code and token",
+      "w": 240,
+      "x": 0,
+      "y": 4300
+    },
+    "camera": {
+      "kind": "title1",
+      "maxW": 1820,
+      "text": "Pairing with the camera",
+      "w": 240,
+      "x": 0,
+      "y": 5460
+    },
+    "scan": {
+      "kind": "title1",
+      "maxW": 1220,
+      "text": "Asking for the camera",
+      "w": 240,
+      "x": 0,
+      "y": 6660
+    },
+    "window": {
+      "kind": "title1",
+      "maxW": 2276,
+      "text": "The pairing window",
+      "w": 240,
+      "x": 0,
+      "y": 8000
+    },
+    "scanwindow": {
+      "kind": "title1",
+      "maxW": 1360,
+      "text": "Scanning in a window",
+      "w": 240,
+      "x": 0,
+      "y": 10300
+    },
+    "inputs": {
+      "kind": "title1",
+      "maxW": 1504,
+      "text": "Source: a turntable, a TV or a microphone playing on your speakers",
+      "w": 240,
+      "x": 0,
+      "y": 12000
+    },
+    "sources3": {
+      "kind": "title1",
+      "maxW": 1504,
+      "text": "Three sources: without play buttons",
+      "w": 240,
+      "x": 0,
+      "y": 14300
+    },
+    "sourcesblue": {
+      "kind": "title1",
+      "maxW": 1504,
+      "text": "Source, by the menu\u2019s own rule",
+      "w": 240,
+      "x": 0,
+      "y": 17100
+    },
+    "macplayer": {
+      "kind": "title1",
+      "maxW": 1504,
+      "text": "The Mac as a speaker for another server (Music Assistant, another Mac), with Source",
+      "w": 240,
+      "x": 0,
+      "y": 18100
+    },
+    "sourcesma": {
+      "kind": "title1",
+      "maxW": 2440,
+      "text": "Source while Music Assistant is chosen: there, but not an option now",
+      "w": 240,
+      "x": 0,
+      "y": 19580
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Today.dc.html",
+    "OnSpeakers.dc.html",
+    "OnMusicAssistant.dc.html",
+    "Off.dc.html",
+    "ApproachA.dc.html",
+    "ApproachB.dc.html",
+    "ApproachC.dc.html",
+    "ApproachD.dc.html",
+    "RowStates.dc.html",
+    "Indicator.dc.html",
+    "ApproachE.dc.html",
+    "RowStatesE.dc.html",
+    "OnAirPlayE.dc.html",
+    "UnavailableE.dc.html",
+    "MacInMA.dc.html",
+    "MacInMAStates.dc.html",
+    "MacInMAFlow.dc.html",
+    "MacInMASettings.dc.html",
+    "DotGlow.dc.html",
+    "PairCodeX.dc.html",
+    "PairCodeSpinner.dc.html",
+    "PairCodeLink.dc.html",
+    "PairCodeUntick.dc.html",
+    "PairTokenField.dc.html",
+    "PairTokenPaste.dc.html",
+    "PairTokenA.dc.html",
+    "PairTokenB.dc.html",
+    "PairTokenC.dc.html",
+    "PairTokenD.dc.html",
+    "PairCameraMenu.dc.html",
+    "PairCameraWindow.dc.html",
+    "PairScanButton.dc.html",
+    "PairScanLink.dc.html",
+    "PairWindowTitled.dc.html",
+    "PairWindowGlass.dc.html",
+    "PairWindowMenu.dc.html",
+    "PairScanWindow.dc.html",
+    "InputsBelow.dc.html",
+    "InputsList.dc.html",
+    "InputsPicker.dc.html",
+    "InputsAllow.dc.html",
+    "SourcesPlay.dc.html",
+    "SourcesRadio.dc.html",
+    "SourcesToggle.dc.html",
+    "SourcesPopup.dc.html",
+    "SourcesBlue.dc.html",
+    "MacPlayerSources.dc.html",
+    "SourcesMA1.dc.html",
+    "SourcesMA2.dc.html",
+    "SourcesMA3.dc.html",
+    "SourcesMA4.dc.html",
+    "SourcesMA5.dc.html"
+  ],
+  "pages": [],
+  "title": "Sendspin menu redesign"
+}

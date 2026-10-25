@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Sendspin dot, with a glow</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+@keyframes breathe{0%,100%{opacity:0.3}50%{opacity:1}}
+</style>
+</helmet>
+<div style="width: 860px; height: 330px; box-sizing: border-box; padding: 24px; background: #e3e6ec; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; color: #1d1d1f">
+  <div style="display: grid; grid-template-columns: 130px repeat(4, minmax(0, 1fr)); gap: 12px; align-items: center">
+    <span></span>
+    <span style="font-size: 11px; font-weight: 600; color: #4a4a50">Light · plays</span>
+    <span style="font-size: 11px; font-weight: 600; color: #4a4a50">Light · in use, nothing out</span>
+    <span style="font-size: 11px; font-weight: 600; color: #4a4a50">Dark · plays</span>
+    <span style="font-size: 11px; font-weight: 600; color: #4a4a50">Dark · in use, nothing out</span>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px">
+    <sc-for list="{{ variants }}" as="v" hint-placeholder-count="4">
+      <div style="display: grid; grid-template-columns: 130px repeat(4, minmax(0, 1fr)); gap: 12px; align-items: center">
+        <span style="display: flex; flex-direction: column; gap: 2px">
+          <span style="font-size: 12px; font-weight: 600">{{ v.name }}</span>
+          <span style="font-size: 11px; line-height: 14px; color: #4a4a50">{{ v.means }}</span>
+        </span>
+        <sc-for list="{{ v.cells }}" as="c" hint-placeholder-count="4">
+          <div style="{{ c.headerStyle }}">
+            <span style="font-weight: 600">Sendspin</span>
+            <span role="img" aria-label="{{ c.label }}" style="position: relative; width: 10px; height: 10px; margin-right: 6px; flex: none">
+              <span style="{{ c.haloStyle }}"></span>
+              <span style="{{ c.dotStyle }}"></span>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"glowSize":{"editor":"range","default":6,"min":2,"max":14,"step":1,"unit":"px","section":"Glow"},"glowStrength":{"editor":"range","default":0.45,"min":0.1,"max":0.9,"step":0.05,"section":"Glow"},"breathSeconds":{"editor":"range","default":2.4,"min":1,"max":5,"step":0.2,"unit":"s","section":"Glow"},"glowOnGrey":{"editor":"boolean","default":false,"section":"Glow"},"$preview":{"width":860,"height":330}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const size = this.props.glowSize ?? 6;
+    const strength = this.props.glowStrength ?? 0.45;
+    const seconds = this.props.breathSeconds ?? 2.4;
+    const onGrey = this.props.glowOnGrey ?? false;
+    // The system's colours: blue as the accent, grey as the grey check (secondary at 50%).
+    const themes = {
+      light: { bg: '#f5f5f7', fg: '#1d1d1f', blue: [10, 122, 255], grey: 'rgba(60, 60, 67, 0.3)', greyGlow: [60, 60, 67] },
+      dark: { bg: '#2c2c2e', fg: '#f5f5f7', blue: [10, 132, 255], grey: 'rgba(235, 235, 245, 0.3)', greyGlow: [235, 235, 245] },
+    };
+    const rgba = (rgb, a) => 'rgba(' + rgb.join(', ') + ', ' + a + ')';
+    const halos = {
+      none: () => '',
+      // Tight: a short blur hugging the dot, barely spread.
+      soft: (rgb) => 'box-shadow: 0 0 ' + Math.max(2, Math.round(size * 0.55)) + 'px ' + Math.max(1, Math.round(size / 6)) + 'px ' + rgba(rgb, strength),
+      breathing: (rgb) => 'box-shadow: 0 0 ' + size + 'px ' + Math.round(size / 3) + 'px ' + rgba(rgb, strength) + '; animation: breathe ' + seconds + 's ease-in-out infinite',
+      ring: (rgb) => 'box-shadow: 0 0 0 ' + Math.max(2, Math.round(size / 2)) + 'px ' + rgba(rgb, strength * 0.5),
+    };
+    const cell = (theme, plays, halo) => {
+      const t = themes[theme];
+      const glows = plays || onGrey;
+      return {
+        headerStyle: 'display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 14px; border-radius: 10px; background: ' + t.bg + '; color: ' + t.fg,
+        label: plays ? 'Playing: the Mac’s sound goes through Sendspin' : 'In use: the Mac plays through Sendspin, but nothing goes out now',
+        haloStyle: 'position: absolute; inset: 0; border-radius: 5px; ' + (glows ? halos[halo](plays ? t.blue : t.greyGlow) : ''),
+        dotStyle: 'position: absolute; inset: 0; border-radius: 5px; background: ' + (plays ? rgba(t.blue, 1) : t.grey),
+      };
+    };
+    const variant = (name, means, halo) => ({
+      name, means,
+      cells: [cell('light', true, halo), cell('light', false, halo), cell('dark', true, halo), cell('dark', false, halo)],
+    });
+    return {
+      variants: [
+        variant('None', 'As built today.', 'none'),
+        variant('Soft halo', 'A tight blur hugging the dot while it plays.', 'soft'),
+        variant('Breathing', 'The halo slowly fades in and out while it plays.', 'breathing'),
+        variant('Tight ring', 'A crisp, faint ring instead of a blur.', 'ring'),
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

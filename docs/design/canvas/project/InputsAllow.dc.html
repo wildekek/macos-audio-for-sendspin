@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Taking an approval back</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0a7aff}a:hover{color:#0060d0}
+</style>
+</helmet>
+<div style="width: 860px; height: 220px; box-sizing: border-box; padding: 20px; display: flex; flex-direction: column; gap: 18px; background: #e3e6ec; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; color: #1d1d1f">
+<div style="display: flex; gap: 32px; align-items: flex-start"><div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; font-weight: 600; color: #6e6e73">Settings, where it’s taken back</span><div style="width: 420px; box-sizing: border-box; padding: 14px 18px; border-radius: 12px; background: #ffffff; border: 0.5px solid rgba(0, 0, 0, 0.14); display: flex; flex-direction: column; gap: 8px"><b style="font-size: 13px">Allowed sources</b><div style="display: flex; align-items: center; gap: 10px"><span style="display: flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 13px; background: rgba(0, 0, 0, 0.08); color: #1d1d1f"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.5" width="8" height="11" rx="1.5"></rect><path d="M1.5 8h7M6.2 5.6 8.6 8l-2.4 2.4"></path></svg></span><span style="flex: 1">Turntable</span><a href="#" style="font-size: 13px">Remove…</a></div><span style="font-size: 11px; color: #6e6e73">A paired source needs no permission: pairing it was the permission.</span></div></div><div style="display: flex; flex-direction: column; gap: 6px; width: 348px"><span style="font-size: 11px; font-weight: 600; color: #6e6e73">A source that needs pairing (a microphone should)</span><div style="box-sizing: border-box; padding: 6px 14px; display: flex; flex-direction: column; background: #f5f5f7; border: 0.5px solid rgba(0, 0, 0, 0.16); border-radius: 14px"><div style="display: flex; align-items: center; gap: 10px; height: 38px"><span style="display: flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 13px; background: rgba(0, 0, 0, 0.08); color: #1d1d1f"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.5" width="8" height="11" rx="1.5"></rect><path d="M1.5 8h7M6.2 5.6 8.6 8l-2.4 2.4"></path></svg></span><span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Desk Microphone</span><span style="font-size: 11px; color: #6e6e73">Needs pairing</span></div><div style="display: flex; align-items: flex-start; gap: 8px; padding: 0 0 8px 36px; font-size: 11px; line-height: 15px"><div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px"><span style="color: #6e6e73">Desk Microphone only plays for servers it’s paired with. Click its name to pair it, as for a speaker.</span></div></div></div></div></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":860,"height":220}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

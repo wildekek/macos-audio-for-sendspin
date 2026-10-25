@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Every row state, the AirPlay picker way</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 560px; height: 680px; box-sizing: border-box; padding: 24px; background: #e3e6ec; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; color: #1d1d1f">
+  <div style="box-sizing: border-box; padding: 8px 14px; display: flex; flex-direction: column; background: #f5f5f7; border: 0.5px solid rgba(0, 0, 0, 0.16); border-radius: 14px">
+    <sc-for list="{{ rows }}" as="r" hint-placeholder-count="9">
+      <div style="display: flex; align-items: center; gap: 16px; min-height: 66px; border-bottom: 1px solid rgba(0, 0, 0, 0.06)">
+        <div style="width: 150px; flex: none; display: flex; flex-direction: column; gap: 2px">
+          <span style="font-size: 12px; font-weight: 600">{{ r.state }}</span>
+          <span style="font-size: 11px; line-height: 14px; color: #6e6e73">{{ r.means }}</span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; height: 38px">
+          <span style="{{ r.iconStyle }}">
+            <sc-if value="{{ r.isMac }}" hint-placeholder-val="{{ false }}">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="7.5" rx="1"></rect><path d="M1 12.5h14"></path></svg>
+            </sc-if>
+            <sc-if value="{{ r.isSpeaker }}" hint-placeholder-val="{{ true }}">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="1" width="8" height="12" rx="1.5"></rect><circle cx="7" cy="8.5" r="2"></circle><circle cx="7" cy="4" r="0.6"></circle></svg>
+            </sc-if>
+            <sc-if value="{{ r.isAirPlay }}" hint-placeholder-val="{{ false }}">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 11H2.5V3h11v8h-2"></path><path d="M8 9.5l3 4H5z"></path></svg>
+            </sc-if>
+            <sc-if value="{{ r.isServer }}" hint-placeholder-val="{{ false }}">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.5" y="2" width="11" height="4" rx="1"></rect><rect x="1.5" y="8" width="11" height="4" rx="1"></rect><circle cx="4" cy="4" r="0.6"></circle><circle cx="4" cy="10" r="0.6"></circle></svg>
+            </sc-if>
+          </span>
+          <span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ r.name }}</span>
+          <sc-if value="{{ r.slider }}" hint-placeholder-val="{{ true }}">
+            <span role="img" aria-label="{{ r.volumeLabel }}" style="position: relative; flex: none; width: 80px; height: 16px">
+              <span style="position: absolute; left: 0; right: 0; top: 6px; height: 4px; border-radius: 2px; background: rgba(60, 60, 67, 0.18)"></span>
+              <span style="position: absolute; left: 0; width: 55%; top: 6px; height: 4px; border-radius: 2px; background: rgba(60, 60, 67, 0.7)"></span>
+              <span style="position: absolute; left: calc(55% - 11px); top: 1px; width: 22px; height: 14px; border-radius: 7px; background: #ffffff; box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.35)"></span>
+            </span>
+          </sc-if>
+          <sc-if value="{{ r.hasStatus }}" hint-placeholder-val="{{ false }}">
+            <span style="display: flex; align-items: center; gap: 4px; flex: none">
+              <sc-if value="{{ r.warn }}" hint-placeholder-val="{{ false }}">
+                <svg width="12" height="12" viewBox="0 0 12 12" role="img" aria-label="Warning"><path d="M6 1 L11.2 10.5 H0.8 Z" fill="#c25e00" stroke="#c25e00" stroke-width="1" stroke-linejoin="round"></path><path d="M6 4.3v3" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round"></path><circle cx="6" cy="9" r="0.7" fill="#ffffff"></circle></svg>
+              </sc-if>
+              <span style="font-size: 11px; color: #6e6e73; white-space: nowrap">{{ r.status }}</span>
+            </span>
+          </sc-if>
+          <sc-if value="{{ r.hasCheck }}" hint-placeholder-val="{{ true }}">
+            <span style="{{ r.checkStyle }}">
+              <sc-if value="{{ r.inGroup }}" hint-placeholder-val="{{ true }}">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2.5,6.5 5,9 9.5,3.5"></polyline></svg>
+              </sc-if>
+            </span>
+          </sc-if>
+          <sc-if value="{{ r.spin }}" hint-placeholder-val="{{ false }}">
+            <svg width="22" height="22" viewBox="0 0 22 22" role="img" aria-label="Connecting" style="flex: none"><g stroke="#3c3c43" stroke-width="2" stroke-linecap="round"><path d="M11 4v3.2" opacity="0.9"></path><path d="M15.95 6.05l-2.26 2.26" opacity="0.78"></path><path d="M18 11h-3.2" opacity="0.66"></path><path d="M15.95 15.95l-2.26-2.26" opacity="0.54"></path><path d="M11 18v-3.2" opacity="0.42"></path><path d="M6.05 15.95l2.26-2.26" opacity="0.32"></path><path d="M4 11h3.2" opacity="0.24"></path><path d="M6.05 6.05l2.26 2.26" opacity="0.16"></path></g></svg>
+          </sc-if>
+          <sc-if value="{{ r.noCheck }}" hint-placeholder-val="{{ false }}">
+            <span style="width: 22px; flex: none"></span>
+          </sc-if>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":560,"height":680}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const blue = '#0a7aff';
+    // One indicator per row. A groupable output's glyph stays the same in every state: the
+    // check on the right is the group. One that isn't groupable has no check, so its icon
+    // turns blue while it plays, as the Sound menu does.
+    const row = (r) => ({
+      isMac: r.kind === 'mac', isSpeaker: r.kind === 'speaker', isAirPlay: r.kind === 'airplay', isServer: r.kind === 'server',
+      hasStatus: !!r.status, warn: !!r.warn, slider: !!r.slider, hasCheck: r.check !== 'none' && r.check !== 'spin', noCheck: r.check === 'none', spin: r.check === 'spin',
+      inGroup: r.check === 'in' || r.check === 'idle',
+      iconStyle: 'display: flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 13px; '
+        + (r.active ? 'background: ' + blue + '; color: #ffffff' : 'background: rgba(0, 0, 0, 0.08); color: #1d1d1f'),
+      checkStyle: 'display: flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; border-radius: 11px; box-sizing: border-box; '
+        + (r.check === 'in' ? 'background: ' + blue
+          : r.check === 'idle' ? 'background: rgba(60, 60, 67, 0.4)' : 'border: 1.5px solid rgba(60, 60, 67, 0.35)'),
+      volumeLabel: r.name + ' volume', ...r,
+    });
+    return {
+      rows: [
+        { state: 'Plays', means: 'A filled check, its volume beside it.', kind: 'speaker', name: 'Home Assistant Connect AUX-2', slider: true, check: 'in' },
+        { state: 'Can join', means: 'An empty check: click it to add. The name plays there only.', kind: 'speaker', name: 'Home Assistant Voice PE', check: 'out' },
+        { state: 'Joining', means: 'A spinner in place of the check while it connects; clicking it cancels.', kind: 'speaker', name: 'Home Assistant Voice PE', check: 'spin' },
+        { state: 'Unavailable', means: 'In the group, doing nothing: a grey check, and a warning by the reason.', kind: 'speaker', name: 'Home Assistant Connect AUX-2', status: 'Unavailable', warn: true, check: 'idle' },
+        { state: 'In use elsewhere', means: 'Unchecked; checking it takes it back.', kind: 'speaker', name: 'Home Assistant Voice PE', status: 'In use elsewhere', check: 'out' },
+        { state: 'Mac, alone', means: 'Played directly. Its check stays: it is all that plays.', kind: 'mac', name: 'MacBook Pro Speakers', slider: true, check: 'in' },
+        { state: 'AirPlay', means: 'Not groupable: no check, blue while it plays.', kind: 'airplay', name: 'Living Room', active: true, slider: true, check: 'none' },
+        { state: 'While AirPlay or Music Assistant plays', means: 'What plays isn’t groupable: no checks. The name plays there.', kind: 'speaker', name: 'Home Assistant Connect AUX-2', check: 'none' },
+        { state: 'Music Assistant', means: 'Not groupable, below the divider; blue while it plays.', kind: 'server', name: 'Music Assistant', active: true, check: 'none' },
+      ].map(row),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sendspin in use indicator</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 700px; height: 260px; box-sizing: border-box; padding: 24px; background: #e3e6ec; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; color: #1d1d1f">
+  <div style="display: grid; grid-template-columns: 120px repeat(2, minmax(0, 1fr)); gap: 12px; align-items: center">
+    <span></span>
+    <span style="font-size: 11px; font-weight: 600; color: #6e6e73">Through Sendspin</span>
+    <span style="font-size: 11px; font-weight: 600; color: #6e6e73">Direct</span>
+
+    <span style="font-size: 12px; font-weight: 600">Dot on the right (proposal)</span>
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span style="font-weight: 600">Sendspin</span>
+      <span role="img" aria-label="In use: the Mac plays through Sendspin" style="width: 10px; height: 10px; border-radius: 5px; margin-right: 6px; background: #0a7aff"></span>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span style="font-weight: 600">Sendspin</span>
+      <span role="img" aria-label="Not in use: the Mac plays directly" style="width: 10px; height: 10px; border-radius: 5px; margin-right: 6px; box-sizing: border-box; border: 1.5px solid rgba(60, 60, 67, 0.45)"></span>
+    </div>
+
+    <span style="font-size: 12px; font-weight: 600">Dot before the name</span>
+    <div style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span role="img" aria-label="In use: the Mac plays through Sendspin" style="width: 8px; height: 8px; border-radius: 4px; background: #0a7aff"></span>
+      <span style="font-weight: 600">Sendspin</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span role="img" aria-label="Not in use: the Mac plays directly" style="width: 8px; height: 8px; border-radius: 4px; box-sizing: border-box; border: 1.5px solid rgba(60, 60, 67, 0.45)"></span>
+      <span style="font-weight: 600">Sendspin</span>
+    </div>
+
+    <span style="font-size: 12px; font-weight: 600">Name only</span>
+    <div style="display: flex; align-items: center; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span style="font-weight: 600">Sendspin</span>
+    </div>
+    <div style="display: flex; align-items: center; height: 44px; padding: 0 14px; background: #f5f5f7; border-radius: 10px">
+      <span style="font-weight: 600; color: #6e6e73">Sendspin</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":700,"height":260}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
