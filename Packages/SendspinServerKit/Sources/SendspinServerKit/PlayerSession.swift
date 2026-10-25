@@ -69,6 +69,8 @@ public actor PlayerSession {
     private var hello: ClientHello?
     /// server/activate made the player ours: its role active, in our group.
     private var activated = false
+    /// The group let go of the player (`shutdown()`): its connection ends by our doing.
+    private var shuttingDown = false
     /// The activities last declared: playback only while there's something to play.
     private var declaredActivities: [String] = []
     /// The user just chose the player: declare playback before the sound gets here, as for a
@@ -276,7 +278,9 @@ public actor PlayerSession {
             }
         }
         // A drop without client/goodbye: assume `restart` (messaging.md, client/goodbye).
-        if hello != nil { Log.info("\(status.name ?? url.absoluteString): closed without a goodbye, reconnecting") }
+        if hello != nil, !shuttingDown {
+            Log.info("\(status.name ?? url.absoluteString): closed without a goodbye, reconnecting")
+        }
         if status.connection == .connected { status.connection = .disconnected(reason: nil) }
         return .reconnect
     }
@@ -694,6 +698,7 @@ public actor PlayerSession {
 
     /// End the stream and close the connection.
     func shutdown() {
+        shuttingDown = true
         setPlaying(false)
         socket?.close()
     }
