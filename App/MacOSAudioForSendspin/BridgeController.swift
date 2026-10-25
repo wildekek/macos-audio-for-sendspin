@@ -1062,7 +1062,7 @@ final class BridgeController {
             }
         } else if !isCaptureWanted, capture != nil {
             stopCapture()
-            hasSound = false
+            setHasSound(false)
             Task { await group.setPlaying(false) }
             Log.info("Capture stopped")
         }
@@ -1082,7 +1082,7 @@ final class BridgeController {
         guard capture === ended else { return }
         Log.info("Capture ended; starting again")
         capture = nil
-        hasSound = false
+        setHasSound(false)
         try? await Task.sleep(for: .seconds(1))
         // Read the device again: it may be back under another object ID. That starts capture.
         refreshDevice()
@@ -1104,6 +1104,8 @@ final class BridgeController {
 
     private func setHasSound(_ sound: Bool) {
         hasSound = sound
+        // The streams have ended: a lower lead costs nothing now.
+        if !sound { applyLead() }
     }
 
     /// Forward captured audio; after a few seconds of digital silence the players get
@@ -1403,9 +1405,12 @@ final class BridgeController {
     /// their word is taken; the lead adds only our own sending time.
     private var effectiveLeadMs: Int { max(leadNeed?.ms ?? 0, PlaybackGroup.sendMarginMs) }
 
+    /// A new lead restarts every stream. More is needed at once; less waits until nothing
+    /// plays, as the spec allows (MAY keep the send-ahead when the maximum decreases), so
+    /// unticking a speaker doesn't cut into the music, nor does ticking it again.
     private func applyLead() {
         let ms = effectiveLeadMs
-        guard ms != appliedLeadMs else { return }
+        guard ms > appliedLeadMs || (ms < appliedLeadMs && !hasSound) else { return }
         appliedLeadMs = ms
         Log.info("Lead \(ms) ms" + (leadNeed.map { ": \($0.name) needs the most" } ?? ""))
         applyPresentationLatency()
