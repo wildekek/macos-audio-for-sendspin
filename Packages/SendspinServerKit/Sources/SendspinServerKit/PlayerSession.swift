@@ -216,6 +216,8 @@ public actor PlayerSession {
     private var left = false
     /// It left by `switch`, not by becoming unavailable or `client/leave`.
     private var leftBySwitch = false
+    /// This attempt's WebSocket opened: the player is on the network.
+    private var reached = false
     /// The stopped group of its own a held player, or one that left, is in.
     private var soloGroupID: String?
     private var lastGroupUpdate: GroupUpdate?
@@ -323,6 +325,7 @@ public actor PlayerSession {
             var outcome: SessionEnd
             var unreachable = false
             let started = ContinuousClock.now
+            reached = false
             do {
                 outcome = try await connectAndServe()
                 // Only a connection that lasted resets the backoff: one that closes right after
@@ -335,7 +338,9 @@ public actor PlayerSession {
                     Log.info("\(status.name ?? url.absoluteString): unavailable (\(error)), retrying")
                 }
                 status.connection = .unavailable
-                unreachable = true
+                // Only a player we didn't reach: a network error once connected is a failed
+                // handshake, backed off as one (messaging.md, client/goodbye).
+                unreachable = !reached
                 outcome = .reconnect
             } catch {
                 Log.warning("\(url): \(error)")
@@ -391,6 +396,7 @@ public actor PlayerSession {
         self.socket = socket
         defer { socket.close() }
         try await socket.open()
+        reached = true
         Log.debug("\(url): connected")
 
         var frames = socket.frames.makeAsyncIterator()
