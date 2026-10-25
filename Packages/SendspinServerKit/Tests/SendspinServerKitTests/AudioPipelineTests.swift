@@ -167,6 +167,52 @@ struct PlayerAudioPipelineTests {
         #expect(total - chunks.reduce(0) { $0 + $1.frames } < 720)
     }
 
+    /// Flushed, a FLAC stream gives up every frame it holds, the last one shorter, and ends
+    /// where its input ends: a new format can start right there (player/v1.md, stream/start).
+    @Test func flacFlushEndsWhereTheInputEnds() throws {
+        var pipeline = try #require(PlayerAudioPipeline(
+            format: AudioFormatSpec(codec: .flac, channels: 2, sampleRate: 48_000, bitDepth: 16),
+            sourceRate: 48_000, sourceChannels: 2))
+        let block = pcm([Float](repeating: 0.1, count: 480 * 2))  // 10 ms
+        var chunks: [PlayerAudioPipeline.Chunk] = []
+        for i in 0..<7 { chunks += pipeline.process(block, timestampUs: Int64(i) * 10_000) }  // 70 ms: 3.5 frames
+        chunks += pipeline.flush()
+        #expect(chunks.reduce(0) { $0 + $1.frames } == 7 * 480)
+        #expect(chunks.last?.frames == 480)
+        #expect(pipeline.endUs == 70_000)
+    }
+
+    /// A format change mid-stream: the old pipeline's tail, the resampler's included, goes out
+    /// first, and the new format starts exactly where it ends.
+    @Test func aNewFormatContinuesTheOld() throws {
+        var old = try #require(PlayerAudioPipeline(format: format(rate: 44_100, depth: 16), sourceRate: 48_000,
+                                                   sourceChannels: 2))
+        let block = pcm([Float](repeating: 0.1, count: 960 * 2))
+        var sent = 0
+        for i in 0..<10 { sent += old.process(block, timestampUs: Int64(i) * 20_000).reduce(0) { $0 + $1.frames } }
+        sent += old.flush().reduce(0) { $0 + $1.frames }
+        // 200 ms at 44.1 kHz, the filter's tail included.
+        #expect(abs(sent - 8_820) <= 2)
+        let endUs = try #require(old.endUs)
+        var new = try #require(PlayerAudioPipeline(format: format(depth: 16), sourceRate: 48_000, sourceChannels: 2,
+                                                   continuingAt: endUs))
+        let first = try #require(new.process(block, timestampUs: 200_000).first)
+        #expect(first.timestampUs == endUs)
+        #expect(abs(endUs - 200_000) < 100)
+    }
+
+    /// Never before audio already out, even when the input's timeline went back.
+    @Test func neverStartsBeforeWhatWasSent() throws {
+        var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16), sourceRate: 48_000, sourceChannels: 2,
+                                                        continuingAt: 1_000_000))
+        let block = pcm([Float](repeating: 0.1, count: 960 * 2))
+        let first = try #require(pipeline.process(block, timestampUs: 950_000).first)
+        #expect(first.timestampUs == 1_000_000)
+        // The input runs on from 950 ms without restarting: the next chunk follows the first.
+        let second = try #require(pipeline.process(block, timestampUs: 970_000).first)
+        #expect(second.timestampUs == 1_020_000)
+    }
+
     @Test func resyncsAfterAGap() throws {
         var pipeline = try #require(PlayerAudioPipeline(format: format(depth: 16), sourceRate: 48_000, sourceChannels: 2))
         let chunk = pcm([Float](repeating: 0, count: 960 * 2))

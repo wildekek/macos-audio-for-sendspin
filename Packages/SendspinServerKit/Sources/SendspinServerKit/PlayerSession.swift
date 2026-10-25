@@ -1095,12 +1095,14 @@ public actor PlayerSession {
             }
             return
         }
-        guard let chunks = pipeline?.process(pcm, timestampUs: timestampUs), !chunks.isEmpty,
-              let rate = pipeline.map({ Int64($0.format.sampleRate) })
-        else { return }
+        guard let chunks = pipeline?.process(pcm, timestampUs: timestampUs), let format = pipeline?.format else { return }
+        sendChunks(chunks, sampleRate: format.sampleRate)
+    }
+
+    private func sendChunks(_ chunks: [PlayerAudioPipeline.Chunk], sampleRate: Int) {
         for chunk in chunks {
             guard fitsBuffer(AudioFrame.headerSize + chunk.payload.count, playAtUs: chunk.timestampUs,
-                             durationUs: Int64(chunk.frames) * 1_000_000 / rate)
+                             durationUs: Int64(chunk.frames) * 1_000_000 / Int64(sampleRate))
             else { continue }
             // send_ahead is taken as late as possible: right before encrypting.
             let frame = AudioFrame.pack(timestampUs: chunk.timestampUs,
@@ -1131,9 +1133,23 @@ public actor PlayerSession {
         let bufferMs = Int(max(0, timestampUs - ServerClock.nowMicros() - outputDelayUs) / 1_000)
         guard let format = FormatChoice.best(from: status.supportedFormats, sourceRate: pcm.sampleRate,
                                              sourceChannels: pcm.channels, preferredBitDepth: preferredBitDepth,
-                                             bufferCapacity: hello?.playerSupport?.bufferCapacity, bufferMs: bufferMs),
-              let pipeline = PlayerAudioPipeline(format: format, sourceRate: pcm.sampleRate,
-                                                 sourceChannels: pcm.channels)
+                                             bufferCapacity: hello?.playerSupport?.bufferCapacity, bufferMs: bufferMs)
+        else {
+            if !unsupportedSourceWarned {
+                unsupportedSourceWarned = true
+                Log.error("\(status.name ?? "?"): no usable PCM or FLAC format for \(pcm.sampleRate) Hz audio")
+            }
+            return false
+        }
+        // The stream goes on: what the old pipeline still holds goes out first, in its own format,
+        // and the new one starts where it ended (player/v1.md, stream/start).
+        var continuingAt: Int64?
+        if streaming, var old = self.pipeline {
+            sendChunks(old.flush(), sampleRate: old.format.sampleRate)
+            continuingAt = old.endUs
+        }
+        guard let pipeline = PlayerAudioPipeline(format: format, sourceRate: pcm.sampleRate,
+                                                 sourceChannels: pcm.channels, continuingAt: continuingAt)
         else {
             if !unsupportedSourceWarned {
                 unsupportedSourceWarned = true

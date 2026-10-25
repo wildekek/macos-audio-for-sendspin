@@ -24,6 +24,8 @@ struct PlayerAudioPipeline {
     private var resampler: Resampler?
     private var flac: FLACEncoder?
     private var anchorUs: Int64?
+    /// The input timestamp the anchor came from: later than it when held back by `endUs`.
+    private var anchorInputUs: Int64?
     private var framesOut: Int64 = 0
     /// FLAC frames timestamped so far since the anchor.
     private var flacFramesOut: Int64 = 0
@@ -32,6 +34,9 @@ struct PlayerAudioPipeline {
     private var pendingPCM = Data()
     /// PCM frames sent so far since the anchor.
     private var pcmFramesOut: Int64 = 0
+    /// Where the last chunk out ends: the timeline never starts again before it, also not in a
+    /// pipeline for a new format that continues this one (player/v1.md, stream/start).
+    private(set) var endUs: Int64?
     static let minChunkMs = 15
     static let maxChunkMs = 150
     private var dither = Dither()
@@ -42,9 +47,11 @@ struct PlayerAudioPipeline {
     /// Input that strays this far from the running timeline is treated as a new start.
     static let resyncThresholdUs: Int64 = 10_000
 
-    /// Fails if the needed sample-rate converter can't be created.
-    init?(format: AudioFormatSpec, sourceRate: Int, sourceChannels: Int) {
+    /// Fails if the needed sample-rate converter can't be created. `continuingAt` is where the
+    /// stream's previous format ended, if this one continues it.
+    init?(format: AudioFormatSpec, sourceRate: Int, sourceChannels: Int, continuingAt endUs: Int64? = nil) {
         self.format = format
+        self.endUs = endUs
         self.sourceRate = sourceRate
         self.sourceChannels = sourceChannels
         if sourceRate != format.sampleRate {
@@ -71,8 +78,8 @@ struct PlayerAudioPipeline {
     /// it completed. Empty while the resampler, the encoder or a short PCM chunk is filling up.
     mutating func process(_ pcm: PCMBuffer, timestampUs: Int64) -> [Chunk] {
         let rate = Int64(format.sampleRate)
-        if let anchorUs {
-            let expectedUs = anchorUs + framesOut * 1_000_000 / rate
+        if let anchorInputUs {
+            let expectedUs = anchorInputUs + framesOut * 1_000_000 / rate
             if abs(expectedUs - timestampUs) > Self.resyncThresholdUs { restart(at: timestampUs) }
         } else {
             restart(at: timestampUs)
@@ -86,11 +93,45 @@ struct PlayerAudioPipeline {
         framesOut += Int64(frames)
         let payload = quantize(samples)
         guard let flac else { return pcmChunks(adding: payload, anchorUs: anchorUs) }
-        // The k-th FLAC frame out is the k-th block in, so count frames for their timestamps.
-        return flac.encode(payload).map { frame in
-            defer { flacFramesOut += Int64(flac.blockFrames) }
-            return Chunk(timestampUs: anchorUs + flacFramesOut * 1_000_000 / rate, payload: frame,
-                         frames: flac.blockFrames)
+        return flacChunks(flac.encode(payload), anchorUs: anchorUs)
+    }
+
+    /// The stream goes on in another format: what the resampler, a short PCM chunk or the FLAC
+    /// encoder still holds, as this format's last chunks, which may be shorter (player/v1.md,
+    /// Server Audio Send Constraints). Without it the new format would start after a gap.
+    mutating func flush() -> [Chunk] {
+        guard let anchorUs else { return [] }
+        var chunks: [Chunk] = []
+        if let tail = resampler?.flush(), tail.count >= format.channels {
+            framesOut += Int64(tail.count / format.channels)
+            let payload = quantize(tail)
+            chunks += flac.map { flacChunks($0.encode(payload), anchorUs: anchorUs) } ?? pcmChunks(adding: payload, anchorUs: anchorUs)
+        }
+        if let flac {
+            chunks += flacChunks(flac.flush(), anchorUs: anchorUs)
+        } else if !pendingPCM.isEmpty {
+            let frames = pendingPCM.count / (format.bitDepth / 8 * format.channels)
+            chunks.append(Chunk(timestampUs: anchorUs + pcmFramesOut * 1_000_000 / Int64(format.sampleRate),
+                                payload: pendingPCM, frames: frames))
+            pcmFramesOut += Int64(frames)
+            pendingPCM.removeAll()
+            endUs = anchorUs + pcmFramesOut * 1_000_000 / Int64(format.sampleRate)
+        }
+        return chunks
+    }
+
+    /// The k-th FLAC frame out is the k-th block in, so frames are timestamped by counting; each
+    /// is a full block but a stream's last, which holds what's left.
+    private mutating func flacChunks(_ frames: [Data], anchorUs: Int64) -> [Chunk] {
+        guard let flac else { return [] }
+        let rate = Int64(format.sampleRate)
+        return frames.map { frame in
+            let frames = Int(min(Int64(flac.blockFrames), framesOut - flacFramesOut))
+            defer {
+                flacFramesOut += Int64(frames)
+                endUs = anchorUs + flacFramesOut * 1_000_000 / rate
+            }
+            return Chunk(timestampUs: anchorUs + flacFramesOut * 1_000_000 / rate, payload: frame, frames: frames)
         }
     }
 
@@ -106,12 +147,15 @@ struct PlayerAudioPipeline {
                                 payload: Data(pendingPCM.prefix(frames * bytesPerFrame)), frames: frames))
             pendingPCM.removeFirst(frames * bytesPerFrame)
             pcmFramesOut += Int64(frames)
+            endUs = anchorUs + pcmFramesOut * 1_000_000 / Int64(rate)
         }
         return chunks
     }
 
     private mutating func restart(at timestampUs: Int64) {
-        anchorUs = timestampUs
+        // Never before audio already out: a chunk timestamped earlier would overlap it.
+        anchorUs = max(timestampUs, endUs ?? timestampUs)
+        anchorInputUs = timestampUs
         framesOut = 0
         flacFramesOut = 0
         pcmFramesOut = 0
@@ -206,6 +250,19 @@ public final class Resampler {
 
     public func reset() {
         converter.reset()
+    }
+
+    /// The input ends: what the filter still holds. The converter needs a reset after it.
+    public func flush() -> [Float] {
+        let channels = Int(outputFormat.channelCount)
+        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: 4_096) else { return [] }
+        var error: NSError?
+        converter.convert(to: output, error: &error) { _, status in
+            status.pointee = .endOfStream
+            return nil
+        }
+        if let error { Log.warning("Resampler: \(error)") }
+        return Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength) * channels))
     }
 
     public func process(_ samples: [Float]) -> [Float] {

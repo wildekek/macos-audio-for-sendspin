@@ -94,6 +94,25 @@ final class FLACEncoder {
         return frames
     }
 
+    /// The stream ends here: the frames still to come, the block the encoder holds and a last,
+    /// shorter one from what didn't make a full block. A fixed-block-size stream's last frame
+    /// may be shorter.
+    func flush() -> [Data] {
+        var frames: [Data] = []
+        if !pending.isEmpty {
+            let feed = Feed(pending, frames: pending.count / bytesPerFrame)
+            pending.removeAll()
+            if let frame = encodeBlock(feed) { frames.append(frame) }
+        }
+        // No more input: the encoder gives up what it holds, a frame per call (the held block,
+        // then the short one).
+        for _ in 0..<3 {
+            guard let frame = encodeBlock(Feed(Data(), frames: 0)) else { break }
+            frames.append(frame)
+        }
+        return frames
+    }
+
     /// Drop buffered input that didn't make a full frame yet.
     func reset() {
         pending.removeAll()

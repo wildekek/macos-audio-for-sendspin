@@ -51,6 +51,21 @@ struct FLACEncoderTests {
         #expect(decoded == input.prefix(frames.count * block * channels * bitDepth / 8))
     }
 
+    /// Flushed, nothing is left inside: the held block and a shorter last one come out, and the
+    /// whole input decodes back.
+    @Test func flushesEverything() throws {
+        let rate = 48_000, channels = 2, bitDepth = 16, block = 960
+        let input = Self.pcm(rate: rate, channels: channels, bitDepth: bitDepth).prefix(block * 5 / 2 * channels * 2)
+        let encoder = try #require(FLACEncoder(sampleRate: rate, channels: channels, bitDepth: bitDepth, blockFrames: block))
+        var frames = encoder.encode(Data(input))
+        #expect(frames.count == 1)
+        frames += encoder.flush()
+        #expect(frames.count == 3)
+        let decoded = try Self.decode(frames, header: encoder.codecHeader, rate: rate, channels: channels,
+                                      bitDepth: bitDepth, block: block)
+        #expect(decoded == Data(input))
+    }
+
     @Test func rejectsUnsupportedBitDepths() {
         #expect(FLACEncoder(sampleRate: 48_000, channels: 2, bitDepth: 32, blockFrames: 960) == nil)
     }
