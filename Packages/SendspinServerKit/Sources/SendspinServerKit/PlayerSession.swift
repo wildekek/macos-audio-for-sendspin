@@ -126,6 +126,17 @@ public actor PlayerSession {
     private var buffer = PlayerBufferAccount()
     private var outputDelayUs: Int64 = 0
     private var capacityDrops = 0
+    /// The roles server/activate gives the connection.
+    private var activeRoles: [String] = []
+
+    // The visualizer role (roles/visualizer/v1.md).
+    /// The client/state visualizer object since the role was activated: only then may its
+    /// stream start.
+    private var visualizerRequest: VisualizerConfig?
+    /// The visualizer stream, while one is active.
+    private var visualizer: VisualizerAnalyzer?
+    private var visualizerBuffer = VisualizerBufferAccount()
+    private var visualizerDrops = 0
 
     private var group: (id: String, name: String)?
     private var playing = false
@@ -399,6 +410,8 @@ public actor PlayerSession {
         endOfConnection = nil
         status.paired = false
         declaredActivities = []
+        activeRoles = []
+        visualizerRequest = nil
         sentActivation = false
         available = false
         ready = false
@@ -435,7 +448,7 @@ public actor PlayerSession {
                                                   serverReceived: receivedAtUs,
                                                   serverTransmitted: ServerClock.nowMicros()))
         case "client/state":
-            handleState(try MessageCoding.payload(ClientState.self, from: data))
+            if let end = handleState(try MessageCoding.payload(ClientState.self, from: data)) { return end }
         case "client/leave":
             leaveGroup("left the group")
         case "noise/handshake":
@@ -494,6 +507,12 @@ public actor PlayerSession {
             + "software \(hello.deviceInfo?.softwareVersion ?? "?"))")
 
         status.pairMethods = hello.supportedPairMethods
+        // A role we don't know may be a newer version than ours (overview.md, Detecting
+        // Outdated Servers).
+        let unknown = hello.supportedRoles.filter { !$0.hasPrefix("_") && !Self.implementedRoles.contains($0) }
+        if !unknown.isEmpty {
+            Log.info("\(hello.name): offers roles this server doesn't implement: \(unknown.joined(separator: ", "))")
+        }
 
         guard hello.supportedRoles.contains("player@v1"), hello.playerSupport != nil else {
             sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
@@ -540,10 +559,23 @@ public actor PlayerSession {
         return nil
     }
 
+    static let implementedRoles = ["player@v1", "visualizer@v1"]
+
+    /// The roles we activate: every one the client lists that we implement, each with the
+    /// support object it requires (messaging.md, client/hello). All are v1, so there's no
+    /// version to choose (overview.md, Priority and Activation).
+    private static func roles(for hello: ClientHello) -> [String] {
+        var roles = ["player@v1"]
+        if hello.supportedRoles.contains("visualizer@v1"), hello.visualizerSupport != nil { roles.append("visualizer@v1") }
+        return roles
+    }
+
     private func activatePlayback() {
         activated = true
-        // A held player may have sent client/state already, but not for the role it gets now.
+        activeRoles = hello.map(Self.roles) ?? ["player@v1"]
+        // A held player may have sent client/state already, but not for the roles it gets now.
         ready = false
+        visualizerRequest = nil
         declareActivities(force: true)
         if claiming {
             // Sound normally follows within a moment; without it, the claim lapses.
@@ -565,7 +597,7 @@ public actor PlayerSession {
         let activities = (playing || claiming) && !left ? ["playback"] : []
         guard force || activities != declaredActivities else { return }
         declaredActivities = activities
-        sendMessage("server/activate", ServerActivate(activities: activities, activeRoles: ["player@v1"]))
+        sendMessage("server/activate", ServerActivate(activities: activities, activeRoles: activeRoles))
     }
 
     /// The user allowed a held player (ticked it): activate playback on the same connection.
@@ -602,13 +634,25 @@ public actor PlayerSession {
         left = true
         soloGroupID = UUID().uuidString
         sendGroupUpdate()
-        if streaming { sendMessage("stream/end", StreamEnd(roles: ["player"])) }
-        stopStreaming()
+        endStreams()
         declareActivities()
         status.connection = .left
     }
 
-    private func handleState(_ state: ClientState) {
+    private func handleState(_ state: ClientState) -> SessionEnd? {
+        // Objects for roles that aren't active are ignored (messaging.md, server/activate).
+        if let request = state.visualizer, activated, activeRoles.contains("visualizer@v1") {
+            guard !request.isMalformed else {
+                Log.warning("\(status.name ?? "?"): asks for a spectrum without its configuration")
+                return .stop(.failed("protocol error"))
+            }
+            visualizerRequest = request
+            // A change to an active stream restarts it in place; without one it waits for the next.
+            if let current = visualizer, request.negotiated() != current.config {
+                startVisualizer(request.negotiated(), sampleRate: current.sampleRate, channels: current.channels,
+                                after: current.lastUs)
+            }
+        }
         let wasAvailable = available
         available = state.available
         if let player = state.player {
@@ -626,6 +670,7 @@ public actor PlayerSession {
         if wasAvailable && !available {
             leaveGroup("in use elsewhere")
         }
+        return nil
     }
 
     // MARK: Outbound
@@ -683,13 +728,10 @@ public actor PlayerSession {
         self.playing = playing
         if playing { declareActivities() }
         sendGroupUpdate()
-        if !playing, streaming {
-            sendMessage("stream/end", StreamEnd(roles: ["player"]))
-        }
         if playing {
             claiming = false
         } else {
-            stopStreaming()
+            endStreams()
             // Not at once: a lead change stops and restarts the group in one go.
             Task {
                 try? await Task.sleep(for: .seconds(1))
@@ -704,18 +746,34 @@ public actor PlayerSession {
         declareActivities()
     }
 
+    /// stream/end for every stream that's active.
+    private func endStreams() {
+        let roles = (streaming ? ["player"] : []) + (visualizer != nil ? ["visualizer"] : [])
+        if !roles.isEmpty { sendMessage("stream/end", StreamEnd(roles: roles)) }
+        stopStreaming()
+    }
+
     private func stopStreaming() {
         streaming = false
         pipeline = nil
         status.streamFormat = nil
-        // stream/end empties the player's buffer accounting.
+        // stream/end empties the player's and the visualizer's buffer accounting.
         buffer = PlayerBufferAccount()
+        visualizer = nil
+        visualizerBuffer = VisualizerBufferAccount()
     }
 
-    /// Send one chunk of group audio; `timestampUs` is its play time on the server clock.
-    /// The player gets the format closest to the source (see `FormatChoice`).
+    /// Send one block of group audio, and its visualization; `timestampUs` is its play time
+    /// on the server clock.
     func deliver(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int, leadUs: Int64) {
-        guard let socket, activated, !left, ready, available, rehandshake == nil else { return }
+        guard activated, !left, available, rehandshake == nil else { return }
+        deliverAudio(pcm, timestampUs: timestampUs, preferredBitDepth: preferredBitDepth, leadUs: leadUs)
+        visualize(pcm, timestampUs: timestampUs)
+    }
+
+    /// The player gets the format closest to the source (see `FormatChoice`).
+    private func deliverAudio(_ pcm: PCMBuffer, timestampUs: Int64, preferredBitDepth: Int, leadUs: Int64) {
+        guard let socket, ready else { return }
         // A lead too short for this player's buffer: wait for the group's lead to be raised,
         // which restarts the stream, rather than start it short (player/v1.md, Server Audio
         // Send Constraints).
@@ -797,6 +855,41 @@ public actor PlayerSession {
                 + "\(format.bitDepth)-bit \(format.channels) ch\(conversion)")
         }
         return true
+    }
+
+    /// The block's visualizer frames, in a stream started once the client said what it wants.
+    private func visualize(_ pcm: PCMBuffer, timestampUs: Int64) {
+        guard let request = visualizerRequest, let socket else { return }
+        if visualizer == nil {
+            startVisualizer(request.negotiated(), sampleRate: pcm.sampleRate, channels: pcm.channels, after: nil)
+        } else if let current = visualizer, current.sampleRate != pcm.sampleRate || current.channels != pcm.channels {
+            // The source changed: the same stream, analysed afresh.
+            visualizer = VisualizerAnalyzer(config: current.config, sampleRate: pcm.sampleRate,
+                                            channels: pcm.channels, after: current.lastUs)
+        }
+        guard socket.backlog <= 100, let frames = visualizer?.process(pcm, timestampUs: timestampUs) else { return }
+        let capacity = hello?.visualizerSupport?.bufferCapacity ?? .max
+        for frame in frames {
+            guard visualizerBuffer.admit(bytes: frame.message.count, timestampUs: frame.timestampUs,
+                                         nowUs: ServerClock.nowMicros(), capacity: capacity)
+            else {
+                visualizerDrops += 1
+                if visualizerDrops == 1 || visualizerDrops.isMultiple(of: 100) {
+                    Log.warning("\(status.name ?? "?"): visualizer buffer_capacity \(capacity) bytes full, "
+                        + "dropped \(visualizerDrops) frames")
+                }
+                continue
+            }
+            send(frame.message[frame.message.startIndex], Data(frame.message.dropFirst()))
+        }
+    }
+
+    /// stream/start for the visualizer, new or with a new configuration.
+    private func startVisualizer(_ config: VisualizerConfig, sampleRate: Int, channels: Int, after lastUs: Int64?) {
+        sendMessage("stream/start", StreamStart(serverTransmitted: ServerClock.nowMicros(), visualizer: config))
+        visualizer = VisualizerAnalyzer(config: config, sampleRate: sampleRate, channels: channels, after: lastUs)
+        Log.info("\(status.name ?? "?"): visualizing \(config.types.isEmpty ? "nothing" : config.types.joined(separator: ", ")) "
+            + "at \(config.rateMax) fps")
     }
 
     // MARK: Player control

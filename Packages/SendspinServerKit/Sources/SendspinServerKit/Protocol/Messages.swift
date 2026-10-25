@@ -119,6 +119,15 @@ public struct PlayerSupport: Codable, Sendable {
     }
 }
 
+public struct VisualizerSupport: Codable, Sendable {
+    /// Bytes of visualizer messages it can hold.
+    public var bufferCapacity: Int
+
+    enum CodingKeys: String, CodingKey {
+        case bufferCapacity = "buffer_capacity"
+    }
+}
+
 public struct UnpairedAccess: Codable, Sendable {
     public var enabled: Bool
 }
@@ -128,6 +137,7 @@ public struct ClientHello: Decodable, Sendable {
     public var deviceInfo: DeviceInfo?
     public var supportedRoles: [String]
     public var playerSupport: PlayerSupport?
+    public var visualizerSupport: VisualizerSupport?
     public var unpairedAccess: UnpairedAccess?
     public var supportedPairMethods: PairMethods?
 
@@ -136,6 +146,7 @@ public struct ClientHello: Decodable, Sendable {
         case deviceInfo = "device_info"
         case supportedRoles = "supported_roles"
         case playerSupport = "player@v1_support"
+        case visualizerSupport = "visualizer@v1_support"
         case unpairedAccess = "unpaired_access"
         case supportedPairMethods = "supported_pair_methods"
     }
@@ -229,6 +240,7 @@ public struct ClientState: Decodable, Sendable {
     /// `false` while the player is in use by something else and won't yield.
     public var available: Bool
     public var player: PlayerState?
+    public var visualizer: VisualizerConfig?
 }
 
 public struct ClientGoodbye: Decodable, Sendable {
@@ -306,10 +318,11 @@ public struct StreamStartPlayer: Encodable, Sendable {
 
 public struct StreamStart: Encodable, Sendable {
     public var serverTransmitted: Int64
-    public var player: StreamStartPlayer
+    public var player: StreamStartPlayer?
+    public var visualizer: VisualizerConfig?
 
     enum CodingKeys: String, CodingKey {
-        case player
+        case player, visualizer
         case serverTransmitted = "server_transmitted"
     }
 }
