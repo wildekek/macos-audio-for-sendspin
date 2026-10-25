@@ -73,10 +73,11 @@ public actor SourceClient {
         statusContinuation.yield(initial)
     }
 
-    /// Advertise and accept servers.
-    public func start() {
+    /// Advertise and accept servers; without `advertise`, only servers that know the port
+    /// connect (tests).
+    public func start(advertise: Bool = true) {
         guard listener == nil else { return }
-        let listener = ServiceListener(name: name, kind: .client)
+        let listener = ServiceListener(name: name, kind: .client, advertise: advertise)
         self.listener = listener
         listener.start()
         tasks.append(Task { [weak self] in

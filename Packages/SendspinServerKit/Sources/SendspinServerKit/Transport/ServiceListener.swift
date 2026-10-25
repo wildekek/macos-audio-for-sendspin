@@ -39,6 +39,8 @@ public final class ServiceListener: @unchecked Sendable {
 
     private let name: String
     private let kind: Kind
+    /// Announced over mDNS; without it, only peers that know the port connect (tests).
+    private let advertise: Bool
     /// The instance name is a DNS label: at most 63 bytes. It's also the TXT `name`, which
     /// SHOULD match the hello's, at most 64 bytes (messaging.md, client/hello).
     public static let maxNameBytes = 63
@@ -50,9 +52,10 @@ public final class ServiceListener: @unchecked Sendable {
     private var failures = 0
     private var stopped = false
 
-    public init(name: String, kind: Kind) {
+    public init(name: String, kind: Kind, advertise: Bool = true) {
         self.name = name.truncated(toUTF8Bytes: Self.maxNameBytes)
         self.kind = kind
+        self.advertise = advertise
         (connections, continuation) = AsyncStream.makeStream()
         (registeredNames, registeredContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
@@ -81,8 +84,10 @@ public final class ServiceListener: @unchecked Sendable {
         }
         // The path is a discovery hint for peers; Network.framework doesn't show us the
         // request path, so any path is accepted.
-        listener.service = NWListener.Service(name: name, type: kind.serviceType, domain: nil,
-                                              txtRecord: NWTXTRecord(["path": Self.path, "name": name]))
+        if advertise {
+            listener.service = NWListener.Service(name: name, type: kind.serviceType, domain: nil,
+                                                  txtRecord: NWTXTRecord(["path": Self.path, "name": name]))
+        }
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {

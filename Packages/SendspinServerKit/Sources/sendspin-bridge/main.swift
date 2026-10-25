@@ -44,6 +44,10 @@ let usage = """
       --pair METHOD     pair with the players first: static, dynamic, or a pairing token
                         (SP:0…); codes are read from stdin. Pairings are kept in
                         ~/.config/sendspin-bridge, so a paired player stays paired
+      --config-dir DIR  keep the identity, pairings and source credentials in DIR instead
+                        of ~/.config/sendspin-bridge (a fresh DIR starts unpaired)
+      --no-advertise    with --source: listen without announcing over mDNS, so only a server
+                        that's given the port (the log says it) connects, e.g. a test server
       -v, --verbose     debug logging
     """
 
@@ -67,8 +71,12 @@ struct Options {
     var name = "Sendspin Bridge"
     var pair: String?
     var unpair = false
+    var advertise = true
     var players: [String] = []
 }
+
+/// Where the identity, pairings and source credentials live (`--config-dir`).
+nonisolated(unsafe) var configDirectory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge")
 
 func parseOptions() -> Options {
     var options = Options()
@@ -109,6 +117,8 @@ func parseOptions() -> Options {
         case "--name": options.name = value(for: arg)
         case "--pair": options.pair = value(for: arg)
         case "--unpair": options.unpair = true
+        case "--config-dir": configDirectory = URL(fileURLWithPath: value(for: arg), isDirectory: true)
+        case "--no-advertise": options.advertise = false
         case "-v", "--verbose": Log.minimumLevel = .debug
         case "-h", "--help": print(usage); exit(0)
         default:
@@ -139,7 +149,7 @@ func fail(_ message: String) -> Never {
 
 /// Pairings with players, kept next to the identity.
 func loadPairings() -> PlayerPairings {
-    let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge/pairings.json")
+    let file = configDirectory.appending(path: "pairings.json")
     let records = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: Data].self, from: $0) } ?? [:]
     return PlayerPairings(records: records) { records in
         guard let data = try? JSONEncoder().encode(records) else { return }
@@ -172,7 +182,7 @@ func pairingRequest(_ method: String) -> PairingRequest {
 /// A stable server id, so players see the same server across restarts.
 /// The server's Noise identity, kept across runs so players see the same server.
 func loadIdentity(name: String) -> ServerIdentity {
-    let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge")
+    let dir = configDirectory
     let file = dir.appending(path: "server-key")
     if let text = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
        let key = Data(base64Encoded: text), let identity = try? ServerIdentity(privateKeyData: key, name: name) {
@@ -499,7 +509,7 @@ func stopSignal() -> AsyncStream<Void> {
 
 /// The client credentials, kept across runs so a paired server stays paired.
 func loadSourceCredentials() -> (SourceCredentials, @Sendable (SourceCredentials) -> Void) {
-    let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/sendspin-bridge")
+    let dir = configDirectory
     let file = dir.appending(path: "source-credentials.json")
     let save: @Sendable (SourceCredentials) -> Void = { credentials in
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -520,7 +530,7 @@ func runSource(_ options: Options) async {
     let (credentials, save) = loadSourceCredentials()
     let client = SourceClient(name: options.name, softwareVersion: "sendspin-bridge", credentials: credentials, save: save)
     print("Pairing token: \(client.pairingToken)")
-    await client.start()
+    await client.start(advertise: options.advertise)
     await client.setAvailable(true)
     let statusTask = Task {
         var shownCode: String?
