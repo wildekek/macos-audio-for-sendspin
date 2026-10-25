@@ -457,8 +457,10 @@ final class BridgeController {
 
     /// The browsed speakers and the manual ones, without this Mac: it advertises itself as
     /// a Sendspin client too, for servers.
-    /// One that said goodbye for good (unpaired, unauthorized, its user's request) isn't brought
-    /// back by an mDNS announcement, only by ticking it again (messaging.md, client/goodbye).
+    /// A speaker that's gone and comes back connects anew through `reconcile`, its retrying
+    /// session having been dropped. One that said goodbye for good (unpaired, unauthorized, its
+    /// user's request) doesn't: an mDNS announcement doesn't bring it back either, only ticking
+    /// it again does (messaging.md, client/goodbye).
     private func updateDiscovered() {
         discovered = browsed.filter { $0.instanceName != sourceStatus.advertisedName } + manualPlayers()
         reconcile()
@@ -541,7 +543,8 @@ final class BridgeController {
             // Drop players no longer used, and players that moved to another address.
             let currentURL = discovered.first { $0.instanceName == name }?.url
             let uses = uses(for: name)
-            if uses.isEmpty || (currentURL != nil && currentURL != session.url) {
+            if isRetryingWhileGone(name) { Log.info("\(statuses[name]?.name ?? name) is gone; waiting until it's announced again") }
+            if uses.isEmpty || (currentURL != nil && currentURL != session.url) || isRetryingWhileGone(name) {
                 dropSession(name)
             } else {
                 // Its roles follow on the same connection, as when a ticked speaker becomes the source.
@@ -555,6 +558,17 @@ final class BridgeController {
         chosenPlayers.removeAll()
         reconcileLocal()
         updateCapture()
+    }
+
+    /// Its mDNS service is gone and it isn't connected: retrying stops until it's announced
+    /// again (messaging.md, client/goodbye). A connected one stays; one that ended for good
+    /// keeps its state.
+    private func isRetryingWhileGone(_ name: String) -> Bool {
+        guard !Self.isIncoming(name), !discovered.contains(where: { $0.instanceName == name }) else { return false }
+        switch statuses[name]?.connection {
+        case .connecting, .unavailable: return true
+        default: return false
+        }
     }
 
     private func addSession(for player: DiscoveredPlayer, pairing: PairingRequest? = nil) {
@@ -1527,6 +1541,11 @@ final class BridgeController {
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection
         statuses[name] = status
+        if isRetryingWhileGone(name) {
+            Log.info("\(status.name ?? name) is gone; waiting until it's announced again")
+            dropSession(name)
+            return
+        }
         syncDeviceToPlayers()
         applyLead()
         if pendingSendspinOutput, destination == .speakers, hasReadySpeakers {
