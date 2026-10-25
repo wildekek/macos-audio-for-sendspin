@@ -259,6 +259,8 @@ final class BridgeController {
     private let speakerRoute = SpeakerRoute()
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
+    /// This Mac's own source advertisement, which the browser doesn't connect to.
+    private let ownName = IgnoredNames()
     private var sessions: [String: PlayerSession] = [:]
     /// CoreAudio calls go to coreaudiod, which can be slow to answer (for minutes after many
     /// restarts without a reboot): they run here, off the main thread, so the menu never waits.
@@ -396,8 +398,9 @@ final class BridgeController {
                 self.localNetworkDenied = denied
             }
         }
+        let ownName = ownName
         discoveryTask = Task { [weak self] in
-            for await players in PlayerBrowser.browse(localNetworkDenied: denied) {
+            for await players in PlayerBrowser.browse(ignoring: ownName, localNetworkDenied: denied) {
                 guard let self else { return }
                 Log.debug("Discovered: \(players.map { "\($0.instanceName) \($0.url.absoluteString)" })")
                 browsed = players
@@ -837,6 +840,7 @@ final class BridgeController {
 
     private func sourceStatusChanged(_ status: SourceStatus) {
         let advertisedChanged = status.advertisedName != sourceStatus.advertisedName
+        if advertisedChanged { ownName.set(Set([status.advertisedName].compactMap { $0 })) }
         if status.pairingCode != sourceStatus.pairingCode { onPairingCode?(status.pairingCode) }
         sourceStatus = status
         applyDestination()

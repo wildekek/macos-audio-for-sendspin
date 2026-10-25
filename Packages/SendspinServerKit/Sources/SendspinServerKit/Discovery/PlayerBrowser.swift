@@ -50,9 +50,11 @@ public enum PlayerBrowser {
     /// gets its new address, and mDNSResponder is asked to verify the records of one that
     /// can't be reached. If it doesn't answer, they're flushed and it leaves the list (for
     /// every app on the Mac); when it's back, its announcement adds it again straight away.
-    /// Browsing stops when the consuming task is cancelled. `localNetworkDenied` reports
-    /// whether macOS refuses the app Local Network access.
-    public static func browse(localNetworkDenied: (@Sendable (Bool) -> Void)? = nil) -> AsyncStream<[DiscoveredPlayer]> {
+    /// Browsing stops when the consuming task is cancelled. Services named in `ignoring` are
+    /// left out without connecting to them. `localNetworkDenied` reports whether macOS refuses
+    /// the app Local Network access.
+    public static func browse(ignoring: IgnoredNames = IgnoredNames(),
+                              localNetworkDenied: (@Sendable (Bool) -> Void)? = nil) -> AsyncStream<[DiscoveredPlayer]> {
         AsyncStream { continuation in
             let (events, eventContinuation) = AsyncStream.makeStream(of: BrowseEvent.self)
             let browsing = Browsing(results: { eventContinuation.yield(.results($0)) }, report: localNetworkDenied)
@@ -72,13 +74,16 @@ public enum PlayerBrowser {
                     switch event {
                     case .results(let results):
                         current = Dictionary(results.compactMap { result -> (String, NWBrowser.Result)? in
-                            guard case let .service(name, _, _, _) = result.endpoint else { return nil }
+                            guard case let .service(name, _, _, _) = result.endpoint,
+                                  !ignoring.contains(name) else { return nil }
                             return (name, result)
                         }, uniquingKeysWith: { first, _ in first })
                         resolved = resolved.filter { current[$0.key] != nil }
                         let new = current.filter { resolved[$0.key] == nil }
                         resolved.merge(await resolveAll(Array(new.values))) { _, new in new }
                     case .recheck:
+                        current = current.filter { !ignoring.contains($0.key) }
+                        resolved = resolved.filter { current[$0.key] != nil }
                         let reachable = await resolveAll(Array(current.values))
                         for (name, result) in current where reachable[name] == nil {
                             Log.debug("\(name) isn't reachable; asking mDNS to verify it")
@@ -316,6 +321,23 @@ public enum PlayerBrowser {
         @unknown default:
             return "\(host)"
         }
+    }
+}
+
+/// Service names the browser leaves out, such as this Mac's own advertisement as a client:
+/// checking it every `recheckInterval` would connect to ourselves.
+public final class IgnoredNames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: Set<String> = []
+
+    public init() {}
+
+    public func set(_ names: Set<String>) {
+        lock.withLock { self.names = names }
+    }
+
+    func contains(_ name: String) -> Bool {
+        lock.withLock { names.contains(name) }
     }
 }
 

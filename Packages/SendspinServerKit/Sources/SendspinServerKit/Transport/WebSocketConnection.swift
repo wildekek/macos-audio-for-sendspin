@@ -68,8 +68,10 @@ final class WebSocketConnection: @unchecked Sendable {
     func open(timeout: Duration = .seconds(10)) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { try await self.waitUntilReady() }
-            group.addTask {
+            group.addTask { [connection] in
                 try await Task.sleep(for: timeout)
+                // The group waits for the other task too: cancelling ends its wait.
+                connection.cancel()
                 throw NWError.posix(.ETIMEDOUT)
             }
             defer { group.cancelAll() }
@@ -185,6 +187,9 @@ final class WebSocketConnection: @unchecked Sendable {
         let context = NWConnection.ContentContext(identifier: "close", metadata: [metadata])
         connection.send(content: nil, contentContext: context, isComplete: true,
                         completion: .contentProcessed { [weak self] _ in self?.connection.cancel() })
+        // A connection that failed doesn't complete the send, and until it's cancelled it
+        // keeps its socket.
+        queue.asyncAfter(deadline: .now() + 1) { [connection] in connection.cancel() }
         finish(nil)
     }
 

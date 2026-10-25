@@ -43,6 +43,8 @@ actor SourceSession {
     /// Between Noise message 1 of a re-handshake and the server/activate under the new keys,
     /// nothing but the handshake may be sent (connection.md, Re-handshake).
     private var rehandshaking = false
+    /// We're closing the connection (`close(goodbye:)`), so its end isn't the server's doing.
+    private var closing = false
 
     // Pairing.
     private var pairingIndex = 0
@@ -172,6 +174,8 @@ actor SourceSession {
                 timeout = nil
             }
         }
+        // The server closed the WebSocket without a goodbye.
+        if !closing { throw WebSocketConnection.Failure.closed }
     }
 
     /// The PSK named in Noise message 1. A miss in the first handshake falls back to the
@@ -659,6 +663,7 @@ actor SourceSession {
 
     /// Another server took over (`another_server`), or the app quits (`shutdown`).
     func close(goodbye reason: String) {
+        closing = true
         if state.activities.contains("pairing"), reason == "another_server" {
             sendMessage("pair/abort", PairAbortMessage(reason: "concurrent_attempt"))
         } else {
