@@ -1466,9 +1466,11 @@ extension PlayerSession {
         }
     }
 
+    /// Cancelled by the activation alone: `user_cancelled` is for an operator's own cancel
+    /// (pairing.md, Entering and leaving pairing).
     private func pairingInitTimedOut(_ index: Int) {
         guard let attempt, attempt.index == index, !attempt.started else { return }
-        failPairing("The speaker didn't start pairing.", abort: "user_cancelled")
+        failPairing("The speaker didn't start pairing.", abort: nil)
     }
 
     /// A lower index is a leftover from a superseded pairing, discarded; a higher one is an error.
