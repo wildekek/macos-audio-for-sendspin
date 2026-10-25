@@ -22,6 +22,9 @@ jobs:
           swift build --package-path Packages/SendspinServerKit --product sendspin-bridge
           uv run Tests/interop/test_server.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
 
+      - name: The server side, against scripted players
+        run: uv run Tests/interop/test_client.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
+
       - name: Driver ring buffer test
         run: |
           cmake -S Driver -B Driver/build
