@@ -88,6 +88,7 @@ actor SourceSession {
     private var startAuthorized = false
     private var pipeline: PlayerAudioPipeline?
     private var droppedChunks = 0
+    private var warnedNoCodec = false
 
     init(client: SourceClient, connection: IncomingConnection, credentials: SourceCredentials,
          name: String, softwareVersion: String, available: Bool, sending: Bool) {
@@ -682,7 +683,13 @@ actor SourceSession {
         }
 
         guard startAuthorized || state.streaming, converged, !rehandshaking else { return }
-        let codec: AudioCodec = serverCodecs.contains("flac") || serverCodecs.isEmpty ? .flac : .pcm
+        // Only a codec the server listed (roles/source/v1.md): none listed, nothing to send.
+        guard let codec: AudioCodec = serverCodecs.contains("flac") ? .flac : serverCodecs.contains("pcm") ? .pcm : nil
+        else {
+            if !warnedNoCodec { Log.warning("Source: \(state.serverName ?? "the server") lists no codec we can send") }
+            warnedNoCodec = true
+            return
+        }
         let format = AudioFormatSpec(codec: codec, channels: pcm.channels, sampleRate: pcm.sampleRate,
                                      bitDepth: bitDepth)
         if pipeline?.format != format || pipeline?.accepts(pcm) == false {
