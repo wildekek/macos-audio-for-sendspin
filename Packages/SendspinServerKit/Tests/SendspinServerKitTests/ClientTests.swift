@@ -144,8 +144,13 @@ struct SourceCredentialsTests {
     @Test func theRoundLimitIsKeptUntilPairingIsAllowedAgain() async throws {
         let saved = Saved()
         let client = SourceClient(name: "Mac", softwareVersion: "test", credentials: .generate(), save: saved.set)
-        for _ in 0..<19 { #expect(await !client.codeRoundFailed()) }
-        #expect(await client.codeRoundFailed())
+        // Every round begun counts, an abandoned one too; the 20th reaches the limit.
+        for _ in 0..<19 {
+            await client.codeRoundBegan()
+            #expect(await !client.codeRoundLimitReached)
+        }
+        await client.codeRoundBegan()
+        #expect(await client.codeRoundLimitReached)
         let stored = try #require(saved.value)
         // An older save, without the counter, still decodes.
         var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stored)) as! [String: Any]

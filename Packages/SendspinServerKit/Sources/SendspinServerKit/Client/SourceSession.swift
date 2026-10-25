@@ -56,6 +56,8 @@ actor SourceSession {
     private var pendingPSK: Data?
     private var pairingTimeout: Task<Void, Never>?
     private var codeAttempt: CodeAttempt?
+    /// The current pairing activation's attempt waits at the round limit (client/pair-pending).
+    private var heldAtLimit = false
 
     /// One Dynamic Pairing Code attempt (pairing.md): its code stays the same across rounds,
     /// each round a fresh CPace run.
@@ -405,17 +407,26 @@ actor SourceSession {
     /// user allows pairing again in Settings (pairing.md, Rounds).
     private func startPairingCode() async {
         if await client.codeRoundLimitReached {
+            heldAtLimit = true
             sendMessage("client/pair-pending", ClientPairPendingMessage(
                 pairingIndex: pairingIndex,
                 message: "Too many wrong codes. To try again, choose Allow Pairing in macOS Audio for Sendspin's Settings on the Mac."))
             return
         }
+        heldAtLimit = false
         let attempt = CodeAttempt(pairingIndex: pairingIndex)
         codeAttempt = attempt
         sendMessage("client/pair-init", ClientPairInitMessage(
             pairingIndex: pairingIndex, commitB: Base64URL.encode(DynamicPairingCode.commitment(to: attempt.nonceB))))
         startPairingTimeout()
         Log.info("Source: pairing with \(state.serverName ?? "server") (code)")
+    }
+
+    /// Pairing was allowed again: an attempt held back at the round limit starts, in the same
+    /// pairing activation (client/pair-init follows its client/pair-pending).
+    func releaseHeldPairing() async {
+        guard heldAtLimit, state.activities.contains("pairing"), codeAttempt == nil, !rehandshaking else { return }
+        await startPairingCode()
     }
 
     /// server/pair-init: a round begins. The first carries nonce_A, which fixes the code; each
@@ -434,6 +445,7 @@ actor SourceSession {
             throw SessionError.pairing("nonce_A after the first round")
         }
         guard let code = attempt.code else { throw SessionError.pairing("no pairing code") }
+        await client.codeRoundBegan()
         attempt.sid = DynamicPairingCode.sessionID(handshakeHash: h, pairingIndex: attempt.pairingIndex,
                                                    round: attempt.round)
         attempt.cpace = try CPace(role: .responder, prs: Data(code.utf8), sid: attempt.sid, ad: Data("client".utf8))
@@ -470,7 +482,7 @@ actor SourceSession {
         guard let ta = Base64URL.decode(message.serverKC), ta.count == 64 else { throw SessionError.pairing("bad server_kc") }
         attempt.cpace = nil
         guard cpace.verify(peerTag: ta), let tb = cpace.tag() else {
-            if await client.codeRoundFailed() {
+            if await client.codeRoundLimitReached {
                 Log.info("Source: wrong pairing code, and the round limit is reached")
                 sendMessage("pair/abort", PairAbortMessage(reason: "pairing_code_mismatch"))
                 await endPairingAttempt()
@@ -521,6 +533,7 @@ actor SourceSession {
     private func endPairingAttempt() async {
         pendingPSK = nil
         codeAttempt = nil
+        heldAtLimit = false
         pairingTimeout?.cancel()
         pairingTimeout = nil
         if state.pairingCode != nil {

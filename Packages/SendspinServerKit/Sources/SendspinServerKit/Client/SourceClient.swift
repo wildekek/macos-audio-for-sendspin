@@ -146,12 +146,12 @@ public actor SourceClient {
 
     var codeRoundLimitReached: Bool { (credentials.failedCodeRounds ?? 0) >= Self.codeRoundLimit }
 
-    /// Count a round whose code didn't match; true once that reaches the limit.
-    func codeRoundFailed() -> Bool {
+    /// Count a round as it begins: every round since the last verified `server_kc` counts,
+    /// a mismatched one and an abandoned one alike (pairing.md, Rounds).
+    func codeRoundBegan() {
         credentials.failedCodeRounds = (credentials.failedCodeRounds ?? 0) + 1
         save(credentials)
         refreshStatus()
-        return codeRoundLimitReached
     }
 
     func codeRoundVerified() {
@@ -162,9 +162,10 @@ public actor SourceClient {
     }
 
     /// The deliberate action that lifts the round limit (pairing.md, Rounds): the user allows
-    /// pairing again, in Settings.
-    public func allowPairingAgain() {
+    /// pairing again, in Settings. An attempt held back meanwhile starts now.
+    public func allowPairingAgain() async {
         codeRoundVerified()
+        for session in sessions.values { await session.releaseHeldPairing() }
     }
 
     private func setAdvertisedName(_ name: String) {
