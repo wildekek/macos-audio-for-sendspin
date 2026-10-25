@@ -119,6 +119,8 @@ final class BridgeController {
         var names = Set(discovered.map(\.instanceName)).union(selected)
         names.formUnion(statuses.keys)
         names.remove(Self.localKey)
+        // A source that's no speaker is under Source only.
+        names = names.filter { !isSourceOnly($0) || selected.contains($0) }
         return names.sorted().map { name in
             let discovery = discovered.first { $0.instanceName == name }
             // A speaker that left shows unticked, as AirPlay does: ticking takes it back.
@@ -137,7 +139,7 @@ final class BridgeController {
     /// A ticked Sendspin speaker is connected: the Mac's own speakers don't count, as there's
     /// nothing to play along with without one.
     private var hasConnectedSpeakers: Bool {
-        statuses.contains { $0.key != Self.localKey && $0.value.connection == .connected }
+        statuses.contains { $0.key != Self.localKey && selected.contains($0.key) && $0.value.connection == .connected }
     }
 
     /// The Mac plays on its own speakers directly, without Sendspin and its delay: chosen here
@@ -164,8 +166,11 @@ final class BridgeController {
     /// Sendspin plays the Mac's sound, on a connected speaker or through the server's open
     /// stream: the filled menu bar icon (`SpeakerMenu.sendspinPlays`).
     var isPlaying: Bool {
-        SpeakerMenu.sendspinPlays(hasSound: hasSound, route: destination == .server ? .server : .speakers,
-                                  speakerConnected: hasConnectedSpeakers, serverStreaming: sourceStatus.streaming)
+        // A source plays instead of the Mac's sound, while it streams.
+        let hasSound = activeSource == nil ? hasSound : statuses[activeSource!]?.inputStreaming == true
+        return SpeakerMenu.sendspinPlays(hasSound: hasSound, route: destination == .server ? .server : .speakers,
+                                         speakerConnected: hasConnectedSpeakers || localPlayer != nil && activeSource != nil,
+                                         serverStreaming: sourceStatus.streaming)
     }
 
     /// The dot at the top of the menu (`SpeakerMenu.dot`).
@@ -258,6 +263,8 @@ final class BridgeController {
     private let source: SourceClient
     /// Whether captured audio goes to the speakers; the capture pump reads it per block.
     private let speakerRoute = SpeakerRoute()
+    /// A source plays on the speakers: the Mac's sound is held back, and the source's goes in.
+    private let sourcePlays = SpeakerRoute(false)
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
     /// This Mac's pairings with speakers, kept in the Keychain.
@@ -437,6 +444,7 @@ final class BridgeController {
             }
         }
         reconcile()
+        probeNewDevices()
     }
 
     /// Players configured by address (`manualPlayers`: ws:// URLs), for networks
@@ -512,13 +520,17 @@ final class BridgeController {
     /// Bring sessions in line with the selection and what's discoverable.
     private func reconcile() {
         for (name, session) in sessions where !Self.isIncoming(name) {
-            // Drop deselected players, and players that moved to another address.
+            // Drop players no longer used, and players that moved to another address.
             let currentURL = discovered.first { $0.instanceName == name }?.url
-            if !selected.contains(name) || (currentURL != nil && currentURL != session.url) {
+            let uses = uses(for: name)
+            if uses.isEmpty || (currentURL != nil && currentURL != session.url) {
                 dropSession(name)
+            } else {
+                // Its roles follow on the same connection, as when a ticked speaker becomes the source.
+                Task { await session.use(uses) }
             }
         }
-        for player in discovered where selected.contains(player.instanceName) && sessions[player.instanceName] == nil {
+        for player in discovered where !uses(for: player.instanceName).isEmpty && sessions[player.instanceName] == nil {
             addSession(for: player)
         }
         // A choice counts for the connection it makes now, not for one much later.
@@ -529,11 +541,16 @@ final class BridgeController {
 
     private func addSession(for player: DiscoveredPlayer, pairing: PairingRequest? = nil) {
         let name = player.instanceName
+        let uses = uses(for: name)
         let session = PlayerSession(url: player.url, identity: identity, pairings: playerPairings,
-                                    chosen: chosenPlayers.remove(name) != nil,
-                                    pairing: pairing) { [weak self] clientID, paired in
-            await self?.approve(name, clientID: clientID, paired: paired) ?? false
-        }
+                                    uses: uses.isEmpty ? .speaker : uses,
+                                    chosen: chosenPlayers.remove(name) != nil, pairing: pairing,
+                                    approve: { [weak self] clientID, paired in
+                                        await self?.approve(name, clientID: clientID, paired: paired) ?? false
+                                    },
+                                    approveInput: { [weak self] clientID, paired in
+                                        await self?.approveSource(name, clientID: clientID, paired: paired) ?? false
+                                    })
         sessions[name] = session
         statuses[name] = PlayerStatus()
         Task { [weak self] in
@@ -541,7 +558,22 @@ final class BridgeController {
                 self?.playerStatusChanged(name, status)
             }
         }
+        // Its input, while it's the source: only then does the group take it.
+        Task.detached { [group, sourcePlays] in
+            for await block in session.inputAudio where sourcePlays.isOn {
+                await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
+            }
+        }
+        if uses.contains(.input) { Task { await session.playInput(true) } }
         Task { await group.add(session) }
+    }
+
+    /// What a device is used for now: a speaker while it's ticked, an input while it's the source.
+    private func uses(for name: String) -> PlayerSession.Uses {
+        var uses: PlayerSession.Uses = []
+        if selected.contains(name) && !isSourceOnly(name) { uses.insert(.speaker) }
+        if activeSource == name { uses.insert(.input) }
+        return uses
     }
 
     private func dropSession(_ name: String) {
@@ -894,6 +926,8 @@ final class BridgeController {
     }
 
     private func routeToServer() {
+        // The server decides what plays: a source stops.
+        if activeSource != nil { chooseSource(nil) }
         pendingSendspinOutput = false
         setDestination(.server)
         if !isMacOutput { Task { await setMacOutput(true) } }
@@ -969,6 +1003,10 @@ final class BridgeController {
     private func pairingWay(_ status: PlayerStatus) -> PairingWay? {
         guard [.pairingRequired, .notRecognized].contains(status.connection),
               let methods = status.pairMethods else { return nil }
+        return Self.pairingWay(methods)
+    }
+
+    private static func pairingWay(_ methods: PairMethods) -> PairingWay? {
         if methods.dynamicCode != nil { return .code(.dynamicCode) }
         if methods.staticCode != nil { return .code(.staticCode) }
         if methods.pairingPSK != nil { return .token }
@@ -989,6 +1027,16 @@ final class BridgeController {
     /// Ticking a speaker that needs pairing goes straight to pairing it; true when it did.
     private func startPairingIfTicked(_ name: String, _ status: PlayerStatus) -> Bool {
         guard pairWhenNeeded.contains(name), speakerPairing == nil, tokenEntry == nil else { return false }
+        // A source paired instead of allowed: it admits unpaired access, so it's held, not refused.
+        if sourcePairing == name, status.connection == .awaitingApproval, let methods = status.pairMethods {
+            pairWhenNeeded.remove(name)
+            switch Self.pairingWay(methods) {
+            case .code(let method): Task { self.startPairing(name, method: method) }
+            case .token: askForToken(name)
+            case nil: return false
+            }
+            return true
+        }
         switch status.connection {
         case .connected, .notApproved, .awaitingApproval, .taken, .left, .disconnected:
             pairWhenNeeded.remove(name)
@@ -1046,7 +1094,8 @@ final class BridgeController {
         guard let player = discovered.first(where: { $0.instanceName == name }) else { return }
         endSpeakerPairing()
         dropSession(name)
-        if !selected.contains(name) {
+        // A source is paired from its row under Source: it isn't ticked as a speaker.
+        if sourcePairing != name, !selected.contains(name) {
             selected.insert(name)
             defaults.set(Array(selected), forKey: "selectedPlayers")
         }
@@ -1112,6 +1161,11 @@ final class BridgeController {
             if approved.removeValue(forKey: name) != nil { defaults.set(approved, forKey: "approvedPlayers") }
             if let clientID = status.clientID, pairedSpeakers[clientID] != name { pairedSpeakers[clientID] = name }
         }
+        if progress == .paired, sourcePairing == name {
+            // A source plays once paired, as chosen.
+            sourcePairing = nil
+            playSource(name)
+        }
         if progress == .paired, status.connection == .connected {
             // "Paired" stays a moment, then the row is just a speaker that plays.
             speakerPairing?.progress = .paired
@@ -1129,6 +1183,235 @@ final class BridgeController {
         } else {
             speakerPairing?.progress = progress
         }
+    }
+
+    // MARK: Sources (roles/source)
+
+    /// What a device offers, from its hello or a probe, kept so a device is connected to once
+    /// to learn it: whether it's a speaker, an input, or both, and whether it admits unpaired
+    /// access, which says whether it needs pairing before it plays.
+    struct KnownDevice: Codable, Equatable {
+        var roles: [String]
+        var clientID: String
+        var unpairedAccess: Bool?
+    }
+
+    private var devices: [String: KnownDevice] = (UserDefaults.standard.data(forKey: "knownDevices"))
+        .flatMap { try? JSONDecoder().decode([String: KnownDevice].self, from: $0) } ?? [:] {
+        didSet { defaults.set(try? JSONEncoder().encode(devices), forKey: "knownDevices") }
+    }
+    private var probing: Set<String> = []
+
+    /// A source under Source, in the menu.
+    struct Source: Identifiable {
+        var id: String { instanceName }
+        var instanceName: String
+        var name: String
+        var isChosen: Bool
+        var connection: PlayerStatus.Connection?
+        var isDiscovered: Bool
+    }
+
+    /// The source playing on the speakers instead of the Mac's sound; nil: the Mac's sound.
+    private(set) var activeSource: String?
+    /// The source whose row asks whether it may play: an unpaired one, chosen the first time.
+    private(set) var sourceQuestion: String?
+    /// A source being paired from its row: it isn't ticked as a speaker meanwhile.
+    private var sourcePairing: String?
+
+    private func isSource(_ name: String) -> Bool { devices[name]?.roles.contains("source@v1") == true }
+
+    private func isSourceOnly(_ name: String) -> Bool {
+        guard let roles = devices[name]?.roles else { return false }
+        return roles.contains("source@v1") && !roles.contains("player@v1")
+    }
+
+    /// The sources found, and the chosen one while it's away.
+    var sources: [Source] {
+        let found = Set(discovered.map(\.instanceName))
+        return devices.keys.filter { isSource($0) && (found.contains($0) || $0 == activeSource) }
+            .map { name in
+                Source(instanceName: name, name: playerNames[name] ?? name, isChosen: activeSource == name,
+                       connection: statuses[name]?.connection ?? (needsPairing(name) ? .pairingRequired : nil),
+                       isDiscovered: found.contains(name))
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Under Source: while sources are found, and the speakers play (a server picks what it plays).
+    var showsSources: Bool { !sources.isEmpty && destination == .speakers }
+
+    /// Only paired servers may use it, and this Mac isn't one.
+    private func needsPairing(_ name: String) -> Bool {
+        guard let device = devices[name], device.unpairedAccess == false else { return false }
+        return !playerPairings.isPaired(device.clientID)
+    }
+
+    /// Learn each new device's roles once, by a connection that only reads its hello.
+    private func probeNewDevices() {
+        for player in discovered where devices[player.instanceName] == nil && sessions[player.instanceName] == nil
+            && !probing.contains(player.instanceName) && !Self.isIncoming(player.instanceName) {
+            let name = player.instanceName
+            probing.insert(name)
+            Task {
+                defer { probing.remove(name) }
+                guard let probe = try? await PlayerSession.probe(url: player.url, identity: identity, pairings: playerPairings)
+                else { return }
+                Log.info("\(probe.hello.name): offers \(probe.roles.joined(separator: ", "))")
+                if playerNames[name] != probe.hello.name { playerNames[name] = probe.hello.name }
+                if let methods = probe.hello.supportedPairMethods { offeredPairMethods[name] = methods }
+                learn(name, roles: probe.roles, clientID: probe.clientID, unpairedAccess: probe.hello.unpairedAccess?.enabled ?? false)
+            }
+        }
+    }
+
+    private func learn(_ name: String, roles: [String], clientID: String, unpairedAccess: Bool? = nil) {
+        let known = KnownDevice(roles: roles, clientID: clientID, unpairedAccess: unpairedAccess ?? devices[name]?.unpairedAccess)
+        if devices[name] != known { devices[name] = known }
+    }
+
+    /// Sources allowed to play unpaired: instance name → the `client_id` allowed, empty until it
+    /// first connects after being allowed.
+    /// Stored, not read from the defaults each time: Settings follows it.
+    private var approvedSources: [String: String] = UserDefaults.standard.dictionary(forKey: "approvedSources")
+        as? [String: String] ?? [:] {
+        didSet { defaults.set(approvedSources, forKey: "approvedSources") }
+    }
+
+    /// A source plays unpaired only with the user's explicit approval, never implied by anything
+    /// else they did with it (roles/source/v1.md, Unpaired access), bound to the identity it
+    /// presents. Paired, the pairing is the approval. Only the chosen source is let in.
+    private func approveSource(_ name: String, clientID: String, paired: Bool) -> Bool {
+        guard activeSource == name else { return false }
+        if paired { return true }
+        guard let known = approvedSources[name] else { return false }
+        if known.isEmpty {
+            approvedSources[name] = clientID
+            Log.info("\(name): allowed as a source (\(clientID))")
+            return true
+        }
+        return known == clientID
+    }
+
+    /// Choose what plays on the speakers: a source, or the Mac's own sound (nil). An unpaired
+    /// source asks first; one that needs pairing is paired.
+    func chooseSource(_ name: String?) {
+        sourceQuestion = nil
+        if name == activeSource {
+            // The chosen one again: whatever it's waiting for, start over.
+            guard let name, sourcePairing == nil, speakerPairing?.name != name, tokenEntry?.name != name else { return }
+            if needsPairing(name) || statuses[name]?.connection == .pairingRequired { pairSource(name) }
+            return
+        }
+        if let old = activeSource { stopSource(old) }
+        guard let name else { return }
+        if needsPairing(name) {
+            pairSource(name)
+        } else if devices[name].map({ playerPairings.isPaired($0.clientID) }) == true || approvedSources[name] != nil {
+            playSource(name)
+        } else {
+            sourceQuestion = name
+        }
+    }
+
+    /// The question's Allow: its approval, bound to the identity it showed (or the next one it shows).
+    func allowSource(_ name: String) {
+        sourceQuestion = nil
+        approvedSources[name] = statuses[name]?.clientID ?? devices[name]?.clientID ?? ""
+        // One held for another identity is let in on the same connection.
+        if let session = sessions[name] { Task { await session.reevaluateApproval() } }
+        playSource(name)
+    }
+
+    func denySource(_ name: String) {
+        sourceQuestion = nil
+        if activeSource == name { chooseSource(nil) }
+    }
+
+    /// The question's Pair Instead.
+    func pairSourceInstead(_ name: String) {
+        sourceQuestion = nil
+        if activeSource != nil, activeSource != name, let old = activeSource { stopSource(old) }
+        pairSource(name)
+    }
+
+    /// Pair it by what it offers, as a speaker's row does; if that isn't known yet, connect to it
+    /// as an input, and pair it once it says.
+    private func pairSource(_ name: String) {
+        activeSource = name
+        sourcePairing = name
+        switch pairMethods(for: name).flatMap(Self.pairingWay) {
+        case .code(let method):
+            startPairing(name, method: method)
+        case .token:
+            askForToken(name)
+        case nil:
+            pairWhenNeeded.insert(name)
+            reconcile()
+        }
+    }
+
+    /// Play it on the speakers: the Mac's sound is held back from now on.
+    private func playSource(_ name: String) {
+        activeSource = name
+        Log.info("\(name): plays as the source")
+        sourcePlays.set(true)
+        // The Mac's own sound is held back meanwhile, also when it played directly.
+        chooseSpeakers()
+        if !isMacOutput { Task { await setMacOutput(true) } }
+        reconcile()
+        if let session = sessions[name] { Task { await session.playInput(true) } }
+    }
+
+    private func stopSource(_ name: String) {
+        Log.info("\(name): no longer the source")
+        if let session = sessions[name] { Task { await session.playInput(false) } }
+        if sourcePairing == name {
+            sourcePairing = nil
+            pairWhenNeeded.remove(name)
+            if speakerPairing?.name == name { endSpeakerPairing() }
+            if tokenEntry?.name == name { tokenEntry = nil }
+            if scanning == name { scanning = nil }
+        }
+        activeSource = nil
+        sourcePlays.set(false)
+        // The source's stream ends; the Mac's sound starts it anew with its next sound.
+        Task { await group.setPlaying(false) }
+        reconcile()
+    }
+
+    /// The chosen source's session changed.
+    private func sourceStatusChanged(_ name: String, _ status: PlayerStatus) {
+        // Its stream ended (it stopped, or the connection did): the speakers' stream ends with it.
+        if statuses[name]?.inputStreaming == true, !status.inputStreaming {
+            Task { await group.setPlaying(false) }
+        }
+        // It shows another identity than the one allowed: asked again.
+        if status.connection == .awaitingApproval, sourcePairing != name, approvedSources[name] != nil, !status.paired {
+            sourceQuestion = name
+        }
+    }
+
+    /// Allowed sources for Settings, by name.
+    var approvedSourceList: [(instanceName: String, name: String)] {
+        approvedSources.keys.map { (instanceName: $0, name: playerNames[$0] ?? $0) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Take an approval back: the source asks again the next time it's chosen.
+    func removeSourceApproval(_ name: String) {
+        approvedSources[name] = nil
+        Log.info("\(name): no longer allowed as a source")
+        if activeSource == name, devices[name].map({ !playerPairings.isPaired($0.clientID) }) ?? true { chooseSource(nil) }
+    }
+
+    /// The Mac itself, under Source.
+    var macIcon: String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        var model = [CChar](repeating: 0, count: max(size, 1))
+        sysctlbyname("hw.model", &model, &size, nil, 0)
+        return String(cString: model).contains("Book") ? "laptopcomputer" : "desktopcomputer"
     }
 
     // MARK: Players that connect to us
@@ -1203,6 +1486,8 @@ final class BridgeController {
 
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
+        if !status.supportedRoles.isEmpty, let clientID = status.clientID { learn(name, roles: status.supportedRoles, clientID: clientID) }
+        if name == activeSource { sourceStatusChanged(name, status) }
         if let methods = status.pairMethods, offeredPairMethods[name] != methods { offeredPairMethods[name] = methods }
         if speakerPairing?.name == name { pairingProgressed(name, status) }
         if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
@@ -1292,8 +1577,9 @@ final class BridgeController {
                         return
                     }
                     self.capture = capture
-                    pumpTask = Task.detached { [self, group, source, speakerRoute] in
+                    pumpTask = Task.detached { [self, group, source, speakerRoute, sourcePlays] in
                         await Self.pump(capture.blocks, into: group, source: source, route: speakerRoute,
+                                        sourcePlays: sourcePlays,
                                         soundChanged: soundChanged)
                         await captureEnded(capture)
                     }
@@ -1356,7 +1642,7 @@ final class BridgeController {
     /// streams while it's the destination). `soundChanged` reports whether there's sound,
     /// wherever it goes.
     nonisolated private static func pump(_ blocks: AsyncStream<CapturedBlock>, into group: PlaybackGroup,
-                                         source: SourceClient, route: SpeakerRoute,
+                                         source: SourceClient, route: SpeakerRoute, sourcePlays: SpeakerRoute,
                                          soundChanged: @Sendable (Bool) async -> Void) async {
         let idleAfterUs: Int64 = 3_000_000
         var lastSoundUs: Int64?
@@ -1367,7 +1653,7 @@ final class BridgeController {
             await source.deliver(block.pcm, captureTimeUs: block.captureTimeUs, bitDepth: 16)
             if !block.pcm.isSilent { lastSoundUs = block.captureTimeUs }
             let hasSound = lastSoundUs.map { block.captureTimeUs - $0 < idleAfterUs } ?? false
-            let active = route.isOn && hasSound
+            let active = route.isOn && !sourcePlays.isOn && hasSound
             if active {
                 await group.push(block.pcm, captureTimeUs: block.captureTimeUs)
             } else if streaming {
@@ -1784,7 +2070,11 @@ final class CoreAudioQueue: Sendable {
 
 /// A flag the capture pump reads for every block, off the main actor.
 final class SpeakerRoute: Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: true)
+    private let state: OSAllocatedUnfairLock<Bool>
+
+    init(_ on: Bool = true) {
+        state = OSAllocatedUnfairLock(initialState: on)
+    }
 
     var isOn: Bool { state.withLock { $0 } }
 

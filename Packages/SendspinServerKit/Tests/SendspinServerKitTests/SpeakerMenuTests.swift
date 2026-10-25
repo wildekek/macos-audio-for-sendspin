@@ -162,6 +162,33 @@ struct SpeakerMenuTests {
     }
 
     @Suite("Servers")
+    struct Sources {
+        @Test("A source has no check; its icon is blue while it's the one chosen") func aSourceHasNoCheckAndABlueIconWhileChosen() {
+            let chosen = SpeakerMenu.sourceRow(chosen: true, connection: .connected)
+            #expect(chosen.check == .none && chosen.click == nil)
+            #expect(chosen.iconIsBlue)
+            #expect(chosen.status == nil)
+            let other = SpeakerMenu.sourceRow(chosen: false, connection: nil)
+            #expect(!other.iconIsBlue && other.status == nil && !other.showsWarning)
+        }
+
+        /// Choosing it is what pairs it: that's said before.
+        @Test("A source that needs pairing says so before it's chosen") func aSourceThatNeedsPairingSaysSoBeforeItsChosen() {
+            let row = SpeakerMenu.sourceRow(chosen: false, connection: .pairingRequired)
+            #expect(row.status == "Needs pairing")
+            #expect(!row.showsWarning)
+            #expect(!row.iconIsBlue)
+        }
+
+        @Test("What's wrong with the chosen source gets a warning") func whatsWrongWithTheChosenSourceGetsAWarning() {
+            let row = SpeakerMenu.sourceRow(chosen: true, connection: .failed("refused"))
+            #expect(row.status == "Can't connect" && row.showsWarning && !row.iconIsBlue)
+            #expect(SpeakerMenu.sourceRow(chosen: true, connection: .connecting).status == "Connecting…")
+            #expect(SpeakerMenu.sourceRow(chosen: false, connection: .failed("refused")).status == nil)
+            #expect(SpeakerMenu.sourceRow(chosen: false, connection: nil, isDiscovered: false).status == "Unavailable")
+        }
+    }
+
     struct Servers {
         @Test("A server follows the same rules as a speaker") func aServerFollowsTheSameRulesAsASpeaker() {
             let context = SpeakerMenu.Context(groupCount: 0)

@@ -168,6 +168,97 @@ struct MenuView: View {
                     .padding(.vertical, 4)
                 ServerRows(bridge: bridge)
             }
+            if bridge.showsSources {
+                Divider()
+                    .padding(.vertical, 4)
+                SourceSection(bridge: bridge)
+            }
+        }
+    }
+}
+
+/// What plays on the speakers: the Mac's own sound, or a Sendspin source (a turntable, a TV).
+/// One at a time, so no checks: the one playing has the blue icon, as a server has, and its
+/// name chooses it. An unpaired source asks once before it plays (roles/source/v1.md,
+/// Unpaired access); one that needs pairing is paired under its row, as a speaker is.
+private struct SourceSection: View {
+    let bridge: BridgeController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Source")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 2)
+            OutputRow(name: "This Mac", glyph: .symbol(bridge.macIcon),
+                      row: SpeakerMenu.sourceRow(chosen: bridge.activeSource == nil, connection: .connected),
+                      nameLabel: "Play this Mac's sound", onName: { bridge.chooseSource(nil) })
+            ForEach(bridge.sources) { source in
+                SourceRow(source: source, bridge: bridge)
+            }
+        }
+    }
+}
+
+private struct SourceRow: View {
+    let source: BridgeController.Source
+    let bridge: BridgeController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            OutputRow(name: source.name, glyph: .symbol("cable.connector"),
+                      row: SpeakerMenu.sourceRow(chosen: source.isChosen, connection: source.connection,
+                                                 isDiscovered: source.isDiscovered),
+                      statusHelp: statusHelp, nameLabel: "Play \(source.name)",
+                      onName: { bridge.chooseSource(source.instanceName) })
+            if bridge.sourceQuestion == source.instanceName {
+                question
+            } else if let phase = tokenPhase {
+                TokenCaption(speaker: source.name, locations: bridge.pairMethods(for: source.instanceName)?.pairingPSK ?? [],
+                             phase: phase, scanning: bridge.scanning == source.instanceName,
+                             onScan: { bridge.startScanning(source.instanceName) }) { token in
+                    bridge.pairWithToken(source.instanceName, token: token)
+                }
+            } else if let pairing = bridge.speakerPairing, pairing.name == source.instanceName {
+                PairingCaption(pairing: pairing, speaker: source.name,
+                               methods: bridge.pairMethods(for: source.instanceName), bridge: bridge)
+            }
+        }
+    }
+
+    /// Asked the first time it's chosen, unpaired: its sound reaches the speakers only once
+    /// it's allowed, and a microphone is better paired.
+    private var question: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Let \(source.name) send its audio to this Mac? Your speakers then play whatever it picks up. "
+                 + "For a microphone, pair it instead.")
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Don't Allow") { bridge.denySource(source.instanceName) }
+                Button("Pair Instead") { bridge.pairSourceInstead(source.instanceName) }
+                Button("Allow") { bridge.allowSource(source.instanceName) }
+                    .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.caption)
+        .padding(.leading, destinationIndent)
+        .padding(.bottom, 6)
+    }
+
+    private var tokenPhase: TokenCaption.Phase? {
+        if let entry = bridge.tokenEntry, entry.name == source.instanceName { return .looking(again: entry.again) }
+        guard let pairing = bridge.speakerPairing, pairing.name == source.instanceName,
+              case .token = pairing.method else { return nil }
+        return pairing.progress == .paired ? .paired : .pairing
+    }
+
+    private var statusHelp: String {
+        switch source.connection {
+        case .pairingRequired: "\(source.name) only plays for paired servers. Click its name to pair it."
+        case .notRecognized: "\(source.name) no longer recognizes this Mac. Click its name to pair it again."
+        default: source.isDiscovered ? "" : "\(source.name) can't be reached. It plays again by itself once it's back."
         }
     }
 }

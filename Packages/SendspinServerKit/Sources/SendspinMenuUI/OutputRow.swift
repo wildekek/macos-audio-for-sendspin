@@ -41,6 +41,7 @@ public struct OutputRow: View {
     let statusHelp: String
     let onName: () -> Void
     let onCheck: () -> Void
+    let nameLabel: String?
     @State private var hovering = false
 
     /// - Parameters:
@@ -49,9 +50,11 @@ public struct OutputRow: View {
     ///     hovering it.
     ///   - onName: clicking the icon or name, or the status beside it: play there only.
     ///   - onCheck: clicking the check (`row.click` says what it does).
+    ///   - nameLabel: what clicking the name does, for VoiceOver; "Play on <name> only" by default.
     public init(name: String, glyph: OutputGlyph, row: SpeakerMenu.Row, volume: Binding<Double>? = nil,
-                format: String? = nil, statusHelp: String = "", onName: @escaping () -> Void = {},
-                onCheck: @escaping () -> Void = {}) {
+                format: String? = nil, statusHelp: String = "", nameLabel: String? = nil,
+                onName: @escaping () -> Void = {}, onCheck: @escaping () -> Void = {}) {
+        self.nameLabel = nameLabel
         self.name = name
         self.glyph = glyph
         self.row = row
@@ -88,7 +91,7 @@ public struct OutputRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Play on \(name) only")
+            .accessibilityLabel(nameLabel ?? "Play on \(name) only")
 
             if let volume {
                 Slider(value: volume, in: 0...100)

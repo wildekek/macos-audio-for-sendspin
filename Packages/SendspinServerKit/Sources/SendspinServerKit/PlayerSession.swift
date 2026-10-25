@@ -228,19 +228,33 @@ public actor PlayerSession {
         (inputAudio, inputContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(64))
     }
 
+    /// What a probe learned of a device.
+    public struct Probe: Sendable {
+        public var clientID: String
+        /// Its roles, as `PlayerStatus.supportedRoles` has them.
+        public var roles: [String]
+        /// We're paired with it: the handshake ran on our long-term PSK.
+        public var paired: Bool
+        public var hello: ClientHello
+    }
+
     /// Connect once, read the device's hello and close: which roles it has, before the user
     /// chooses it. Nothing is activated, and a connection without activities ranks lowest, so
     /// it takes the device from no other server (connection.md, Multiple servers).
-    public static func probe(url: URL, identity: ServerIdentity, pairings: PlayerPairings) async throws -> ClientHello? {
+    public static func probe(url: URL, identity: ServerIdentity, pairings: PlayerPairings) async throws -> Probe? {
         let session = PlayerSession(url: url, identity: identity, pairings: pairings) { _, _ in false }
         return try await session.probeOnce()
     }
 
-    private func probeOnce() async throws -> ClientHello? {
+    private func probeOnce() async throws -> Probe? {
         probing = true
-        defer { updatesContinuation.finish() }
+        defer {
+            socket?.close()
+            updatesContinuation.finish()
+        }
         _ = try await connectAndServe()
-        return probedHello
+        guard let probedHello, let clientID = status.clientID else { return nil }
+        return Probe(clientID: clientID, roles: status.supportedRoles, paired: status.paired, hello: probedHello)
     }
 
     /// A player that connected to us. It's served once: we can't reconnect to it.

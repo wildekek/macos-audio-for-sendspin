@@ -41,6 +41,7 @@ struct SettingsView: View {
             }
 
             pairings
+            allowedSources
             pairingHeldBack
 
             Section {
@@ -138,6 +139,29 @@ struct SettingsView: View {
                         Text(speaker.name)
                     }
                 }
+            }
+        }
+    }
+
+    /// Sources allowed to play unpaired, each with a way to take that back. Allowing happens in
+    /// the menu, the first time a source is chosen.
+    @ViewBuilder private var allowedSources: some View {
+        let sources = bridge.approvedSourceList
+        if !sources.isEmpty {
+            Section {
+                ForEach(sources, id: \.instanceName) { source in
+                    LabeledContent {
+                        Button("Remove") { bridge.removeSourceApproval(source.instanceName) }
+                    } label: {
+                        Text(source.name)
+                    }
+                }
+            } header: {
+                Text("Allowed sources")
+            } footer: {
+                Text("A removed source asks again before it plays. A paired source needs no permission.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

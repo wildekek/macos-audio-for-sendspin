@@ -122,6 +122,24 @@ public enum SpeakerMenu {
     /// It can play now, or will once connected: not gone, taken or refused.
     public static func canPlay(_ output: Output) -> Bool { Problem(output) == nil }
 
+    /// A source's row (roles/source): one plays at a time, so it has no check, and its icon is
+    /// blue while it's the one chosen, as a server's is. A source that needs pairing says so
+    /// before it's chosen too, as choosing it is what pairs it; anything else wrong shows once
+    /// it's chosen.
+    public static func sourceRow(chosen: Bool, connection: PlayerStatus.Connection?, isDiscovered: Bool = true) -> Row {
+        let output = Output(isGroupable: false, inGroup: chosen, plays: chosen, isDiscovered: isDiscovered,
+                            connection: connection)
+        let problem = Problem(output)
+        var status: String?
+        if let problem, chosen || [.needsPairing, .notRecognized, .gone].contains(problem) {
+            status = problem.text
+        } else if chosen, connection == .connecting {
+            status = "Connecting…"
+        }
+        return Row(check: .none, click: nil, iconIsBlue: chosen && problem == nil,
+                   showsWarning: chosen && problem?.isWarning == true || problem == .gone, status: status)
+    }
+
     /// Why an output in the menu can't play now.
     private enum Problem {
         case gone, inUseElsewhere, disconnected, cantConnect, needsPairing, notRecognized, identityChanged

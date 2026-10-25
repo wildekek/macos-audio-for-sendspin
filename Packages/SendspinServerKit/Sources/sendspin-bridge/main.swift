@@ -260,10 +260,10 @@ func run() async {
     if options.probe {
         for url in urls {
             do {
-                guard let hello = try await PlayerSession.probe(url: url, identity: loadIdentity(name: options.name),
+                guard let probe = try await PlayerSession.probe(url: url, identity: loadIdentity(name: options.name),
                                                                 pairings: loadPairings())
                 else { fail("\(url.absoluteString): no hello") }
-                print("\(hello.name): \(hello.supportedRoles.joined(separator: ", "))")
+                print("\(probe.hello.name): \(probe.roles.joined(separator: ", "))" + (probe.paired ? ", paired" : ""))
             } catch {
                 print("\(url.absoluteString): \(error)")
             }
