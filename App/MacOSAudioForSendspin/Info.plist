@@ -30,6 +30,8 @@
 		<string>_sendspin-server._tcp</string>
 		<string>_mass._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>macOS Audio for Sendspin reads the pairing QR code printed on a speaker or its leaflet.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Licensed under the Apache License, Version 2.0</string>
 	<key>NSLocalNetworkUsageDescription</key>

@@ -62,10 +62,17 @@ targets:
         NSHumanReadableCopyright: Licensed under the Apache License, Version 2.0
         NSLocalNetworkUsageDescription: >-
           macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.
+        NSCameraUsageDescription: >-
+          macOS Audio for Sendspin reads the pairing QR code printed on a speaker or its leaflet.
         NSBonjourServices:
           - _sendspin._tcp
           - _sendspin-server._tcp
           - _mass._tcp
+    entitlements:
+      path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
+      properties:
+        # The hardened runtime allows the camera only with this: for a speaker's pairing QR code.
+        com.apple.security.device.camera: true
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

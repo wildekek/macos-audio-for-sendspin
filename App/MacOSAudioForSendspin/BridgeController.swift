@@ -974,6 +974,14 @@ final class BridgeController {
         return nil
     }
 
+    /// The pairing methods each speaker offered in its last hello. They outlive its session:
+    /// pairing replaces the session, and what's under the row mustn't change meanwhile.
+    private var offeredPairMethods: [String: PairMethods] = [:]
+
+    func pairMethods(for name: String) -> PairMethods? {
+        statuses[name]?.pairMethods ?? offeredPairMethods[name]
+    }
+
     /// Speakers the user just ticked: should one turn out to need pairing, pairing starts.
     private var pairWhenNeeded: Set<String> = []
 
@@ -1081,7 +1089,12 @@ final class BridgeController {
             if let clientID = status.clientID, pairedSpeakers[clientID] != name { pairedSpeakers[clientID] = name }
         }
         if progress == .paired, status.connection == .connected {
-            speakerPairing = nil
+            // "Paired" stays a moment, then the row is just a speaker that plays.
+            speakerPairing?.progress = .paired
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                if speakerPairing?.name == name, speakerPairing?.progress == .paired { speakerPairing = nil }
+            }
         } else if case .failed = progress, case .token = speakerPairing?.method {
             // A wrong token reads as a wrong code does: asked again, under the row. The speaker
             // only finds out at the re-handshake, and hangs up; that's all we learn.
@@ -1163,6 +1176,7 @@ final class BridgeController {
 
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
+        if let methods = status.pairMethods, offeredPairMethods[name] != methods { offeredPairMethods[name] = methods }
         if speakerPairing?.name == name { pairingProgressed(name, status) }
         if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
