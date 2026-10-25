@@ -1662,7 +1662,15 @@ extension PlayerSession {
     /// which replaces it.
     public func unpair() {
         guard let clientID = status.clientID else { return }
-        if status.paired, channel != nil { sendMessage("server/unpair", EmptyPayload()) }
+        if status.paired, channel != nil, hello != nil {
+            // Nothing but server/activate may go first (messaging.md, Communication): while the
+            // hello still waits on approval, an idle one.
+            if !sentActivation {
+                sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+                sentActivation = true
+            }
+            sendMessage("server/unpair", EmptyPayload())
+        }
         pairings.remove(clientID)
         Log.info("\(status.name ?? clientID): pairing forgotten")
     }
