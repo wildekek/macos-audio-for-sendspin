@@ -86,6 +86,13 @@ final class BridgeController {
     private var deviceMuted = false
     /// The lead the group and the device latency currently use (see `effectiveLeadMs`).
     private var appliedLeadMs = PlaybackGroup.sendMarginMs
+    /// When the lead last went up, and a raise waiting for `leadRaiseInterval` to pass.
+    private var leadRaisedAt: ContinuousClock.Instant?
+    private var pendingLeadRaise: Task<Void, Never>?
+    /// A streaming speaker whose need keeps creeping up restarts the group at most this often:
+    /// timing updates are debounced, as the implementation guide advises. One that's joining
+    /// isn't kept waiting: its stream starts once the lead is enough.
+    private static let leadRaiseInterval: Duration = .seconds(5)
     /// The format chosen in the menu; `activeFormat` is what's applied.
     private(set) var selectedFormat: StreamFormat
     private(set) var deviceSampleRate = 48_000
@@ -1383,7 +1390,7 @@ final class BridgeController {
 
     /// The ticked speaker that needs the most buffer. One that's reconnecting keeps what it
     /// needed: a lower lead and back would restart every stream twice, a gap on all speakers.
-    private var leadNeed: (name: String, ms: Int)? {
+    private var leadNeed: (key: String, name: String, ms: Int)? {
         // A speaker gets its audio up to `sendMarginMs` after capture; the Mac's own output
         // plays it right here.
         let needs = statuses.filter { key, status in
@@ -1393,7 +1400,7 @@ final class BridgeController {
             default: false
             }
         }.map { key, status in
-            (name: status.name ?? "A speaker",
+            (key: key, name: status.name ?? "A speaker",
              ms: status.requiredBufferMs + (key == Self.localKey ? 0 : PlaybackGroup.sendMarginMs))
         }
         return needs.max(by: { $0.ms < $1.ms })
@@ -1411,6 +1418,19 @@ final class BridgeController {
     private func applyLead() {
         let ms = effectiveLeadMs
         guard ms > appliedLeadMs || (ms < appliedLeadMs && !hasSound) else { return }
+        if ms > appliedLeadMs {
+            let joining = leadNeed.map { statuses[$0.key]?.streamFormat == nil } ?? true
+            if !joining, let raisedAt = leadRaisedAt, ContinuousClock.now < raisedAt + Self.leadRaiseInterval {
+                guard pendingLeadRaise == nil else { return }
+                pendingLeadRaise = Task { [weak self] in
+                    try? await Task.sleep(until: raisedAt + Self.leadRaiseInterval, clock: .continuous)
+                    self?.pendingLeadRaise = nil
+                    self?.applyLead()
+                }
+                return
+            }
+            leadRaisedAt = .now
+        }
         appliedLeadMs = ms
         Log.info("Lead \(ms) ms" + (leadNeed.map { ": \($0.name) needs the most" } ?? ""))
         applyPresentationLatency()
