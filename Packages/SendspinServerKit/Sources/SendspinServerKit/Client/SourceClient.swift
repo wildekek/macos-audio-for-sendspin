@@ -211,8 +211,10 @@ public actor SourceClient {
         refreshStatus()
     }
 
-    func storePairing(serverID: String, psk: Data) {
-        let inUse = Set(sessionsServerIDs())
+    func storePairing(serverID: String, psk: Data) async {
+        // Never evict a record an open connection uses, provisional or admitted (pairing.md,
+        // Pairing Records).
+        let inUse = await recordsInUse()
         credentials.store(serverID: serverID, psk: psk, keeping: inUse)
         save(credentials)
         refreshStatus()
@@ -234,8 +236,23 @@ public actor SourceClient {
         save(credentials)
     }
 
-    private func sessionsServerIDs() -> [String] {
-        [admittedState.serverID].compactMap { $0 }
+    private func recordsInUse() async -> Set<String> {
+        var inUse = Set<String>()
+        for session in sessions.values {
+            if let serverID = await session.pairedServerID { inUse.insert(serverID) }
+        }
+        return inUse
+    }
+
+    /// Paired connections stay below the record capacity, so a pairing always finds a record
+    /// it may evict (pairing.md, Pairing Records). Further ones are turned away as if lower in
+    /// priority (connection.md, Multiple servers).
+    func admitsPairedConnection(_ session: SourceSession) async -> Bool {
+        var open = 0
+        for other in sessions.values where other.id != session.id {
+            if await other.pairedServerID != nil { open += 1 }
+        }
+        return open < SourceCredentials.recordCapacity - 1
     }
 
     private func refreshStatus() {

@@ -158,6 +158,11 @@ actor SourceSession {
         channel = SecureChannel(transport: transport)
         handshakeCompleted(category)
         Log.debug("Source: Noise handshake done (\(category.rawValue))")
+        if category == .longTerm, !(await client.admitsPairedConnection(self)) {
+            Log.info("Source: \(state.serverName ?? "a server") turned away: too many paired connections")
+            sendMessage("client/goodbye", ClientGoodbyeMessage(reason: "concurrent_attempt"))
+            return
+        }
         timeout?.cancel()
         // The server must declare its purpose within 30 s (connection.md, Multiple servers).
         timeout = closeAfterTimeout()
@@ -201,6 +206,9 @@ actor SourceSession {
         Log.info("Source: server's credential unknown here; continuing unpaired")
         return (SendspinPSK.sentinel, .sentinel)
     }
+
+    /// The server whose pairing record this connection uses, while it uses one.
+    var pairedServerID: String? { matched == .longTerm ? state.serverID : nil }
 
     private func handshakeCompleted(_ category: PSKCategory) {
         matched = category
