@@ -275,8 +275,9 @@ public actor PlayerSession {
                 timeout = nil
             }
         }
-        if status.connection == .connected { status.connection = .disconnected(reason: nil) }
         // A drop without client/goodbye: assume `restart` (messaging.md, client/goodbye).
+        if hello != nil { Log.info("\(status.name ?? url.absoluteString): closed without a goodbye, reconnecting") }
+        if status.connection == .connected { status.connection = .disconnected(reason: nil) }
         return .reconnect
     }
 
