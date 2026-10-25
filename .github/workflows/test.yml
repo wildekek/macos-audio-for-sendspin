@@ -15,7 +15,7 @@ jobs:
       - name: Swift package tests
         run: swift test --package-path Packages/SendspinServerKit
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
 
       - name: The Mac as a source, against scripted servers
         run: |
