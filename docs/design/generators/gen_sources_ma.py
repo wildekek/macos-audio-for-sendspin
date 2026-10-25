@@ -35,9 +35,9 @@ OPTIONS = [
      {'Music Assistant chosen': speakers_ma() + divider() + dim(label('Source') + src_rows(blue_mac=False)),
       'Hovering a source: a tooltip says why': speakers_ma() + divider() + dim(label('Source') + src_rows(blue_mac=False))
          + f'<div style="margin: -40px 0 0 120px; align-self: flex-start; padding: 4px 8px; border-radius: 5px; background: #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.2); font-size: 11px">Music Assistant picks what plays</div>'}),
-    ('M2 · Greyed out, the heading says why',
+    ('M2 · Greyed out, the heading says why; This Mac stays filled, as it’s what goes to Music Assistant (chosen)',
      {'Music Assistant chosen': speakers_ma() + divider() + header('Source', hint('· Music Assistant picks what plays'))
-         + dim(src_rows(blue_mac=False))}),
+         + dim(src_rows(blue_mac=True))}),
     ('M3 · Live: choosing a source plays it on the speakers',
      {'Music Assistant chosen: sources as usual, none blue': speakers_ma() + divider() + label('Source') + src_rows(blue_mac=False),
       'After clicking Turntable: back to the speakers': speakers_on() + divider() + label('Source')

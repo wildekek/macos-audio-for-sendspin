@@ -180,22 +180,35 @@ struct MenuView: View {
 /// What plays on the speakers: the Mac's own sound, or a Sendspin source (a turntable, a TV).
 /// One at a time, so no checks: the one playing has the blue icon, as a server has, and its
 /// name chooses it. An unpaired source asks once before it plays (roles/source/v1.md,
-/// Unpaired access); one that needs pairing is paired under its row, as a speaker is.
+/// Unpaired access); one that needs pairing is paired under its row, as a speaker is. While a
+/// server is chosen it picks what it plays: the sources show, dimmed, with the Mac's sound,
+/// which goes to the server, still blue.
 private struct SourceSection: View {
     let bridge: BridgeController
 
     var body: some View {
+        let available = bridge.sourcesAvailable
         VStack(alignment: .leading, spacing: 2) {
-            Text("Source")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 2)
-            OutputRow(name: "This Mac", glyph: .symbol(bridge.macIcon),
-                      row: SpeakerMenu.sourceRow(chosen: bridge.activeSource == nil, connection: .connected),
-                      nameLabel: "Play this Mac's sound", onName: { bridge.chooseSource(nil) })
-            ForEach(bridge.sources) { source in
-                SourceRow(source: source, bridge: bridge)
+            HStack(spacing: 4) {
+                Text("Source")
+                    .fontWeight(.semibold)
+                if !available {
+                    Text("· \(bridge.sourceServerName) picks what plays")
+                }
             }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.bottom, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                OutputRow(name: "This Mac", glyph: .symbol(bridge.macIcon),
+                          row: SpeakerMenu.sourceRow(chosen: bridge.activeSource == nil, connection: .connected),
+                          nameLabel: "Play this Mac's sound", onName: { bridge.chooseSource(nil) })
+                ForEach(bridge.sources) { source in
+                    SourceRow(source: source, bridge: bridge)
+                }
+            }
+            .disabled(!available)
+            .opacity(available ? 1 : 0.45)
         }
     }
 }

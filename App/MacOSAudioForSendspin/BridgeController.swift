@@ -1238,8 +1238,12 @@ final class BridgeController {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// Under Source: while sources are found, and the speakers play (a server picks what it plays).
-    var showsSources: Bool { !sources.isEmpty && destination == .speakers }
+    /// Under Source, while sources are found.
+    var showsSources: Bool { !sources.isEmpty }
+
+    /// A source can be chosen: the speakers play. A server picks what it plays itself, so meanwhile
+    /// they're shown but can't be chosen, the Mac's sound (what goes to the server) as playing.
+    var sourcesAvailable: Bool { destination == .speakers }
 
     /// Only paired servers may use it, and this Mac isn't one.
     private func needsPairing(_ name: String) -> Bool {
