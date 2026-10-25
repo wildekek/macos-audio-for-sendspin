@@ -284,6 +284,9 @@ actor SourceSession {
 
     /// Validate and apply server/activate (messaging.md, server/activate).
     private func handleActivate(_ activate: ServerActivateReceived) async throws -> Bool {
+        // Any server/activate ends a re-handshake's hold on our messages, an inadmissible one too:
+        // its answer must go out (connection.md, Re-handshake).
+        rehandshaking = false
         let activities = Set(activate.activities)
         let unpaired = matched != .longTerm
 
@@ -340,7 +343,6 @@ actor SourceSession {
             }
         }
         activated = true
-        rehandshaking = false
         state.activities = activate.activities
 
         // Roles: only `source@v1` is ours; anything else listed is ignored.
