@@ -453,6 +453,8 @@ final class BridgeController {
 
     func setSelected(_ instanceName: String, _ isSelected: Bool) {
         if isSelected { chosenPlayers.insert(instanceName) } else { chosenPlayers.remove(instanceName) }
+        if isSelected { pairWhenNeeded.insert(instanceName) } else { pairWhenNeeded.remove(instanceName) }
+        if !isSelected, tokenEntry?.name == instanceName { tokenEntry = nil }
         if isSelected {
             selected.insert(instanceName)
             // Choosing a player that shows "Identity changed" accepts its new identity: the
@@ -955,12 +957,37 @@ final class BridgeController {
     /// implementation guide advises (a client offers only one anyway). The pairing token is for
     /// automation, so it's only asked for when there's no code.
     func pairingWay(for player: Player) -> PairingWay? {
-        guard let status = player.status, [.pairingRequired, .notRecognized].contains(status.connection),
+        player.status.flatMap(pairingWay)
+    }
+
+    private func pairingWay(_ status: PlayerStatus) -> PairingWay? {
+        guard [.pairingRequired, .notRecognized].contains(status.connection),
               let methods = status.pairMethods else { return nil }
         if methods.dynamicCode != nil { return .code(.dynamicCode) }
         if methods.staticCode != nil { return .code(.staticCode) }
         if methods.pairingPSK != nil { return .token }
         return nil
+    }
+
+    /// Speakers the user just ticked: should one turn out to need pairing, pairing starts.
+    private var pairWhenNeeded: Set<String> = []
+
+    /// Ticking a speaker that needs pairing goes straight to pairing it.
+    private func startPairingIfTicked(_ name: String, _ status: PlayerStatus) {
+        guard pairWhenNeeded.contains(name), speakerPairing == nil, tokenEntry == nil else { return }
+        switch status.connection {
+        case .connected, .notApproved, .awaitingApproval, .taken, .left, .disconnected:
+            pairWhenNeeded.remove(name)
+        case .pairingRequired, .notRecognized:
+            pairWhenNeeded.remove(name)
+            switch pairingWay(status) {
+            case .code(let method): Task { self.startPairing(name, method: method) }
+            case .token: askForToken(name)
+            case nil: break
+            }
+        default:
+            break
+        }
     }
 
     /// The speaker whose row asks for its pairing token, and whether the last one didn't match.
@@ -1142,6 +1169,7 @@ final class BridgeController {
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
         if speakerPairing?.name == name { pairingProgressed(name, status) }
+        startPairingIfTicked(name, status)
         if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection

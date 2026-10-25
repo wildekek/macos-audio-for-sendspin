@@ -9,8 +9,8 @@ struct SettingsView: View {
     @State private var uninstallError: String?
     @State private var openAtLogin = LoginItem.isEnabled
     @State private var loginItemNeedsApproval = LoginItem.needsApproval
-    @State private var confirmingForget = false
-    @State private var forgettingSpeaker: String?
+    /// A pairing to forget, once confirmed: the server's (no `client_id`), or a speaker's.
+    @State private var forgetting: (clientID: String?, name: String)?
 
     private static let repository = URL(string: "https://github.com/wildekek/macos-audio-for-sendspin")!
     private var version: String {
@@ -40,9 +40,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            pairedServer
+            pairings
             pairingHeldBack
-            pairedSpeakers
 
             Section {
                 Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
@@ -94,11 +93,19 @@ struct SettingsView: View {
         } message: {
             Text("The Sendspin audio device and the app are removed, and you're asked for an administrator password. Mac audio stops for a moment; there's no need to restart.")
         }
-        .alert("Forget the pairing with \(bridge.sourceServerName)?", isPresented: $confirmingForget) {
-            Button("Forget", role: .destructive) { bridge.forgetServerPairings() }
+        .alert("Forget \(forgetting?.name ?? "the pairing")?",
+               isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button("Forget", role: .destructive) {
+                guard let forgetting else { return }
+                if let clientID = forgetting.clientID {
+                    bridge.forgetPairing(clientID: clientID)
+                } else {
+                    bridge.forgetServerPairings()
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\(bridge.sourceServerName) can't play the Mac's audio until you pair it again.")
+            Text("\(forgetting?.name ?? "It") and this Mac can't play together until you pair them again.")
         }
         .alert("Couldn't uninstall", isPresented: Binding(get: { uninstallError != nil },
                                                           set: { if !$0 { uninstallError = nil } })) {
@@ -108,49 +115,29 @@ struct SettingsView: View {
         }
     }
 
-    /// Once paired: which server, and a way to forget it. Pairing itself happens in the menu.
-    @ViewBuilder private var pairedServer: some View {
+    /// What this Mac is paired with: the server it's a source for, and speakers it plays to,
+    /// each with a way to forget it. Pairing itself happens in the menu.
+    @ViewBuilder private var pairings: some View {
         let status = bridge.sourceStatus
-        if status.hasPairing || status.paired {
-            Section {
-                LabeledContent {
-                    Button("Forget…") { confirmingForget = true }
-                } label: {
-                    Text(bridge.sourceServerName)
-                    Text(status.connected ? "Paired" : "Paired, not connected right now")
+        let serverPaired = status.hasPairing || status.paired
+        let speakers = bridge.pairedSpeakerList
+        if serverPaired || !speakers.isEmpty {
+            Section("Paired") {
+                if serverPaired {
+                    LabeledContent {
+                        Button("Forget…") { forgetting = (nil, bridge.sourceServerName) }
+                    } label: {
+                        Text(bridge.sourceServerName)
+                    }
+                }
+                ForEach(speakers, id: \.clientID) { speaker in
+                    LabeledContent {
+                        Button("Forget…") { forgetting = (speaker.clientID, speaker.name) }
+                    } label: {
+                        Text(speaker.name)
+                    }
                 }
             }
-        }
-    }
-
-    /// Speakers this Mac is paired with, to forget one.
-    @ViewBuilder private var pairedSpeakers: some View {
-        if !bridge.pairedSpeakerList.isEmpty {
-        Section {
-            ForEach(bridge.pairedSpeakerList, id: \.clientID) { speaker in
-                LabeledContent {
-                    Button("Forget…") { forgettingSpeaker = speaker.clientID }
-                } label: {
-                    Text(speaker.name)
-                    Text("Paired")
-                }
-            }
-        } header: {
-            Text("Paired speakers")
-        } footer: {
-            Text("A paired speaker knows this Mac by a key of its own. Pair a speaker from its row in the menu.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .alert("Forget the pairing?", isPresented: Binding(get: { forgettingSpeaker != nil },
-                                                          set: { if !$0 { forgettingSpeaker = nil } })) {
-            Button("Forget", role: .destructive) {
-                if let clientID = forgettingSpeaker { bridge.forgetPairing(clientID: clientID) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The speaker forgets this Mac too, if it's on. To play on it again, it may need pairing again.")
-        }
         }
     }
 

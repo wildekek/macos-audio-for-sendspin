@@ -304,8 +304,18 @@ private struct PlayerRow: View {
     let player: BridgeController.Player
     let bridge: BridgeController
 
+    /// While it's being paired, what's under the row says it all: no warning on it.
+    private var row: SpeakerMenu.Row {
+        var row = bridge.row(for: player)
+        if bridge.speakerPairing?.name == player.instanceName || bridge.tokenEntry?.name == player.instanceName {
+            row.status = nil
+            row.showsWarning = false
+        }
+        return row
+    }
+
     var body: some View {
-        let row = bridge.row(for: player)
+        let row = row
         VStack(alignment: .leading, spacing: 2) {
             OutputRow(name: player.name, glyph: .symbol(player.isLocal ? bridge.localIcon : "hifispeaker.fill"),
                       row: row, volume: volume, format: formatLabel, statusHelp: statusHelp,
@@ -389,11 +399,26 @@ private struct PairingCaption: View {
     let bridge: BridgeController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                content
+            }
+            Spacer(minLength: 0)
+            switch pairing.progress {
+            case .checking, .paired: EmptyView()
+            case .failed: CloseButton(help: "Close") { bridge.endSpeakerPairing() }
+            default: CloseButton(help: "Cancel pairing") { bridge.cancelSpeakerPairing() }
+            }
+        }
+        .font(.caption)
+        .padding(.leading, destinationIndent)
+        .padding(.bottom, 6)
+    }
+
+    @ViewBuilder private var content: some View {
             switch pairing.progress {
             case .starting:
                 busy("Pairing with \(speaker)…")
-                cancel
             case .checking:
                 busy("Checking the code…")
             case .waiting(let message?):
@@ -402,45 +427,30 @@ private struct PairingCaption: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("— \(speaker)")
                     .foregroundStyle(.secondary)
-                cancel
             case .waiting(nil):
                 // A static code is only taken while the speaker's pairing window is open, which
                 // a button on it usually opens (pairing.md, Pairing Window).
                 busy(methodToRetry == .staticCode
                      ? "Waiting for \(speaker). Press its pairing button, if it has one."
                      : "Waiting for \(speaker)…")
-                cancel
             case .enteringCode(let prompt):
                 Text(promptText(prompt))
                     .fixedSize(horizontal: false, vertical: true)
                 CodeEntry(length: prompt.length) { bridge.submitPairingCode($0) }
-                cancel
             case .paired:
                 Label("Paired", systemImage: "checkmark")
             case .failed(let text):
                 Text(text)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button("Try Again") {
-                        if let method = methodToRetry {
-                            bridge.startPairing(pairing.name, method: method)
-                        } else {
-                            bridge.askForToken(pairing.name)
-                        }
+                Button("Try Again") {
+                    if let method = methodToRetry {
+                        bridge.startPairing(pairing.name, method: method)
+                    } else {
+                        bridge.askForToken(pairing.name)
                     }
-                    Button("Close") { bridge.endSpeakerPairing() }
                 }
                 .controlSize(.small)
             }
-        }
-        .font(.caption)
-        .padding(.leading, destinationIndent)
-        .padding(.bottom, 6)
-    }
-
-    private var cancel: some View {
-        Button("Cancel") { bridge.cancelSpeakerPairing() }
-            .controlSize(.small)
     }
 
     private func busy(_ text: String) -> some View {
@@ -466,8 +476,7 @@ private struct PairingCaption: View {
                 : onDevice && !leaflet ? "on \(speaker)" : "on \(speaker) or its leaflet"
             return start + "Enter the 8-digit code \(place):"
         case .dynamicCode(let again):
-            if again { return "That code didn't match. Enter the code \(speaker) \(shows) now:" }
-            return "Enter the code \(speaker) \(shows):"
+            return (again ? "That code didn't match. " : "") + "Enter the code that \(speaker) \(shows) now:"
         }
     }
 
@@ -490,20 +499,20 @@ private struct TokenCaption: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(again || unreadable ? "That token didn't match. Paste the pairing token of \(speaker) again:"
-                 : "Paste the pairing token of \(speaker):")
-                .fixedSize(horizontal: false, vertical: true)
-            TextField("SP:0…", text: $text)
-                .font(.system(.caption, design: .monospaced))
-                .focused($focused)
-                .onSubmit(pair)
-            HStack {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(again || unreadable ? "That token didn't match. Paste the pairing token of \(speaker) again:"
+                     : "Paste the pairing token of \(speaker):")
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField("SP:0…", text: $text)
+                    .font(.system(.caption, design: .monospaced))
+                    .focused($focused)
+                    .onSubmit(pair)
                 Button("Pair", action: pair)
+                    .controlSize(.small)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Cancel", action: onCancel)
             }
-            .controlSize(.small)
+            CloseButton(help: "Cancel pairing", action: onCancel)
         }
         .font(.caption)
         .padding(.leading, destinationIndent)
@@ -518,6 +527,22 @@ private struct TokenCaption: View {
             return
         }
         onPair(token)
+    }
+}
+
+/// A small ⓧ: cancel or close what's under a row.
+private struct CloseButton: View {
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
