@@ -202,6 +202,9 @@ public actor PlayerSession {
     /// The open input stream, from client-stream/start to client-stream/end. Without a decoder
     /// its audio is discarded: it came after a stop, or in a format we can't decode.
     private var inputStream: (decoder: SourceDecoder?, timeline: InputTimeline)?
+    /// Its input came in a format we can't decode: stopped, and not started again until it's
+    /// chosen anew or connects again.
+    private var inputUndecodable = false
     private var undecodableChunks = 0
 
     private var group: (id: String, name: String)?
@@ -529,6 +532,7 @@ public actor PlayerSession {
         startPending = false
         startsUnanswered = 0
         inputStream = nil
+        inputUndecodable = false
         status.inputStreaming = false
         status.inputSignal = nil
         sentActivation = false
@@ -1206,6 +1210,7 @@ public actor PlayerSession {
     public func playInput(_ play: Bool) {
         guard play != inputWanted else { return }
         inputWanted = play
+        inputUndecodable = false
         // Playback is declared before the start, so the connection ranks as it streams.
         declareActivities()
         sendInputCommand()
@@ -1216,7 +1221,7 @@ public actor PlayerSession {
     private func sendInputCommand() {
         guard activated, activeRoles.contains("source@v1"), rehandshake == nil else { return }
         if inputWanted {
-            guard sourceReady, available, !startPending, inputStream == nil else { return }
+            guard sourceReady, available, !startPending, inputStream == nil, !inputUndecodable else { return }
             startPending = true
             startsUnanswered += 1
             Log.info("\(status.name ?? "?"): starting its input")
@@ -1251,15 +1256,20 @@ public actor PlayerSession {
                                   codecHeader: start.source.codecHeader.flatMap { Data(base64Encoded: $0) })
         let wanted = inputWanted && activeRoles.contains("source@v1")
         let decoder = wanted ? SourceDecoder(format: format) : nil
-        if wanted && decoder == nil {
-            Log.error("\(name): can't decode its input (\(format.codec) \(format.sampleRate) Hz \(format.bitDepth)-bit "
-                + "\(format.channels) ch)")
-        } else if decoder != nil {
+        if decoder != nil {
             Log.info("\(name): input streaming \(format.codec) \(format.sampleRate) Hz \(format.bitDepth)-bit \(format.channels) ch")
         }
         // A new format replaces the stream's in place, on a new timeline.
         inputStream = (decoder, InputTimeline(sampleRate: format.sampleRate, channels: format.channels))
         status.inputStreaming = decoder != nil
+        if wanted && decoder == nil {
+            // It won't play: stop it rather than take audio we discard, and don't start it again by itself.
+            Log.error("\(name): can't decode its input (\(format.codec) \(format.sampleRate) Hz \(format.bitDepth)-bit "
+                + "\(format.channels) ch); stopping it")
+            inputUndecodable = true
+            startPending = false
+            sendMessage("server/command", ServerCommand(source: SourceCommand(command: "stop")))
+        }
         return nil
     }
 
