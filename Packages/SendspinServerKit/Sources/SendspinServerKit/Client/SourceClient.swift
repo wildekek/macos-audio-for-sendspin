@@ -255,6 +255,8 @@ public actor SourceClient {
 
     func touchPairing(serverID: String) {
         credentials.touch(serverID: serverID)
+        // Least recently used goes first when the records are full: the order must last.
+        save(credentials)
     }
 
     func removePairing(serverID: String) {
