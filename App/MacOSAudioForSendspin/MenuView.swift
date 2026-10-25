@@ -306,16 +306,35 @@ private struct PlayerRow: View {
 
     var body: some View {
         let row = bridge.row(for: player)
-        OutputRow(name: player.name, glyph: .symbol(player.isLocal ? bridge.localIcon : "hifispeaker.fill"),
-                  row: row, volume: volume, format: formatLabel, statusHelp: statusHelp,
-                  onName: { bridge.perform(.playOnly(player.instanceName)) },
-                  onCheck: {
-                      switch row.click {
-                      case .add: bridge.perform(.add(player.instanceName))
-                      case .remove: bridge.perform(.remove(player.instanceName))
-                      case nil: break
-                      }
-                  })
+        VStack(alignment: .leading, spacing: 2) {
+            OutputRow(name: player.name, glyph: .symbol(player.isLocal ? bridge.localIcon : "hifispeaker.fill"),
+                      row: row, volume: volume, format: formatLabel, statusHelp: statusHelp,
+                      onName: {
+                          // A speaker that needs pairing: its name pairs it, by what it offers.
+                          switch bridge.pairingWay(for: player) {
+                          case .code(let method): bridge.startPairing(player.instanceName, method: method)
+                          case .token: bridge.askForToken(player.instanceName)
+                          case nil: bridge.perform(.playOnly(player.instanceName))
+                          }
+                      },
+                      onCheck: {
+                          switch row.click {
+                          case .add: bridge.perform(.add(player.instanceName))
+                          case .remove: bridge.perform(.remove(player.instanceName))
+                          case nil: break
+                          }
+                      })
+            if let entry = bridge.tokenEntry, entry.name == player.instanceName {
+                TokenCaption(speaker: player.name, again: entry.again) { token in
+                    bridge.pairWithToken(player.instanceName, token: token)
+                } onCancel: {
+                    bridge.cancelTokenEntry()
+                }
+            } else if let pairing = bridge.speakerPairing, pairing.name == player.instanceName {
+                PairingCaption(pairing: pairing, speaker: player.name, methods: player.status?.pairMethods,
+                               bridge: bridge)
+            }
+        }
     }
 
     /// The slider, while it plays and its volume can be set.
@@ -343,13 +362,212 @@ private struct PlayerRow: View {
         case .left:
             "This speaker is playing something else. Add it to play your Mac's sound on it again."
         case .pairingRequired:
-            "This speaker only plays for paired servers, and pairing isn't supported yet."
+            switch bridge.pairingWay(for: player) {
+            case .code: "This speaker only plays for paired servers. Click its name to pair it."
+            case .token: "This speaker only plays for paired servers. Click its name, then paste its pairing token."
+            case nil: "This speaker only plays for paired servers, and offers no way to pair that this Mac knows."
+            }
+        case .notRecognized:
+            "This speaker no longer recognizes this Mac: it was reset, or made room for another server. "
+                + (bridge.pairingWay(for: player) == .token
+                   ? "Click its name, then paste its pairing token, to pair it again."
+                   : "Click its name to pair it again.")
         case .notApproved:
             "This speaker presents a different identity than the one you allowed. "
                 + "If you trust it, click its name."
         default:
             ""
         }
+    }
+}
+
+/// A pairing in progress, under the speaker's row: what it waits for, and the code entry.
+private struct PairingCaption: View {
+    let pairing: BridgeController.SpeakerPairing
+    let speaker: String
+    let methods: PairMethods?
+    let bridge: BridgeController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch pairing.progress {
+            case .starting:
+                busy("Pairing with \(speaker)…")
+                cancel
+            case .checking:
+                busy("Checking the code…")
+            case .waiting(let message?):
+                // From a device that isn't authenticated yet: plain text, said to be its.
+                Text(verbatim: "\u{201C}\(message)\u{201D}")
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("— \(speaker)")
+                    .foregroundStyle(.secondary)
+                cancel
+            case .waiting(nil):
+                // A static code is only taken while the speaker's pairing window is open, which
+                // a button on it usually opens (pairing.md, Pairing Window).
+                busy(methodToRetry == .staticCode
+                     ? "Waiting for \(speaker). Press its pairing button, if it has one."
+                     : "Waiting for \(speaker)…")
+                cancel
+            case .enteringCode(let prompt):
+                Text(promptText(prompt))
+                    .fixedSize(horizontal: false, vertical: true)
+                CodeEntry(length: prompt.length) { bridge.submitPairingCode($0) }
+                cancel
+            case .paired:
+                Label("Paired", systemImage: "checkmark")
+            case .failed(let text):
+                Text(text)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Try Again") {
+                        if let method = methodToRetry {
+                            bridge.startPairing(pairing.name, method: method)
+                        } else {
+                            bridge.askForToken(pairing.name)
+                        }
+                    }
+                    Button("Close") { bridge.endSpeakerPairing() }
+                }
+                .controlSize(.small)
+            }
+        }
+        .font(.caption)
+        .padding(.leading, destinationIndent)
+        .padding(.bottom, 6)
+    }
+
+    private var cancel: some View {
+        Button("Cancel") { bridge.cancelSpeakerPairing() }
+            .controlSize(.small)
+    }
+
+    private func busy(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(text)
+        }
+    }
+
+    private var methodToRetry: PairingMethod? {
+        if methods?.dynamicCode != nil { return .dynamicCode }
+        if methods?.staticCode != nil { return .staticCode }
+        return nil
+    }
+
+    private func promptText(_ prompt: PairingPrompt) -> String {
+        switch prompt {
+        case .staticCode(let again):
+            let start = again ? "That code didn't match. " : ""
+            let leaflet = methods?.staticCode?.contains(.leaflet) == true
+            let onDevice = methods?.staticCode?.contains(.device) == true
+            let place = leaflet && !onDevice ? "on the leaflet that came with \(speaker)"
+                : onDevice && !leaflet ? "on \(speaker)" : "on \(speaker) or its leaflet"
+            return start + "Enter the 8-digit code \(place):"
+        case .dynamicCode(let again):
+            if again { return "That code didn't match. Enter the code \(speaker) \(shows) now:" }
+            return "Enter the code \(speaker) \(shows):"
+        }
+    }
+
+    /// A speaker says its code when it has no display.
+    private var shows: String {
+        methods?.dynamicCode?.contains(.display) == false ? "says" : "shows"
+    }
+}
+
+/// A speaker that offers no code: paste its pairing token. Pasted tokens are read leniently
+/// (whitespace, case, the `SP:` prefix), as the spec asks.
+private struct TokenCaption: View {
+    let speaker: String
+    /// The last token didn't match: as with a wrong code, it's asked for again.
+    let again: Bool
+    let onPair: (PairingToken.PairingPSK) -> Void
+    let onCancel: () -> Void
+    @State private var text = ""
+    @State private var unreadable = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(again || unreadable ? "That token didn't match. Paste the pairing token of \(speaker) again:"
+                 : "Paste the pairing token of \(speaker):")
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("SP:0…", text: $text)
+                .font(.system(.caption, design: .monospaced))
+                .focused($focused)
+                .onSubmit(pair)
+            HStack {
+                Button("Pair", action: pair)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", action: onCancel)
+            }
+            .controlSize(.small)
+        }
+        .font(.caption)
+        .padding(.leading, destinationIndent)
+        .padding(.bottom, 6)
+        .onAppear { focused = true }
+    }
+
+    private func pair() {
+        guard let token = PairingToken.decodePairingPSK(text) else {
+            unreadable = true
+            text = ""
+            return
+        }
+        onPair(token)
+    }
+}
+
+/// Entering a pairing code: one slot per digit, grouped as the speaker groups them (`123-456`,
+/// `1234-5678`). Typing and pasting go to a text field behind the slots; anything but digits
+/// is left out.
+private struct CodeEntry: View {
+    let length: Int
+    let onComplete: (String) -> Void
+    @State private var digits = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let split = length / 2
+        ZStack {
+            TextField("Pairing code", text: $digits)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .opacity(0.02)
+                .onChange(of: digits) { _, typed in
+                    let clean = String(typed.filter { $0.isASCII && $0.isNumber }.prefix(length))
+                    if clean != typed { digits = clean }
+                    if clean.count == length { onComplete(clean) }
+                }
+            HStack(spacing: 4) {
+                ForEach(0..<length, id: \.self) { index in
+                    if index == split {
+                        Text("–").foregroundStyle(.secondary)
+                    }
+                    slot(index)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .fixedSize()
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+        .onAppear { focused = true }
+    }
+
+    private func slot(_ index: Int) -> some View {
+        let characters = Array(digits)
+        let current = index == characters.count && focused
+        return Text(index < characters.count ? String(characters[index]) : " ")
+            .font(.system(.body, design: .monospaced).weight(.medium))
+            .frame(width: 20, height: 26)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(current ? Color.accentColor : .clear, lineWidth: 1.5))
     }
 }
 

@@ -524,10 +524,11 @@ final class BridgeController {
         updateCapture()
     }
 
-    private func addSession(for player: DiscoveredPlayer) {
+    private func addSession(for player: DiscoveredPlayer, pairing: PairingRequest? = nil) {
         let name = player.instanceName
         let session = PlayerSession(url: player.url, identity: identity, pairings: playerPairings,
-                                    chosen: chosenPlayers.remove(name) != nil) { [weak self] clientID, paired in
+                                    chosen: chosenPlayers.remove(name) != nil,
+                                    pairing: pairing) { [weak self] clientID, paired in
             await self?.approve(name, clientID: clientID, paired: paired) ?? false
         }
         sessions[name] = session
@@ -541,6 +542,7 @@ final class BridgeController {
     }
 
     private func dropSession(_ name: String) {
+        if speakerPairing?.name == name { endSpeakerPairing() }
         guard let session = sessions.removeValue(forKey: name) else { return }
         statuses[name] = nil
         Task { await group.remove(url: session.url) }
@@ -922,6 +924,151 @@ final class BridgeController {
         Task { await source.allowPairingAgain() }
     }
 
+    // MARK: Pairing with speakers
+
+    /// A pairing the user started from a speaker's row, one at a time: the menu shows where it
+    /// stands under the row, and asks for the code there.
+    struct SpeakerPairing: Equatable {
+        var name: String
+        var method: PairingMethod
+        var progress: PairingProgress
+    }
+
+    private(set) var speakerPairing: SpeakerPairing?
+    /// Paired speakers by `client_id`, with the speaker's name at pairing, for Settings. The
+    /// keys themselves are in the Keychain (`PlayerPairingsStore`).
+    private(set) var pairedSpeakers: [String: String] = UserDefaults.standard.dictionary(forKey: "pairedSpeakers")
+        as? [String: String] ?? [:] {
+        didSet { defaults.set(pairedSpeakers, forKey: "pairedSpeakers") }
+    }
+    /// The menu's answer to the code prompt, awaited by the session.
+    private var codeContinuation: CheckedContinuation<String?, Never>?
+
+    /// How a speaker that needs pairing is paired from its row.
+    enum PairingWay: Equatable {
+        case code(PairingMethod)
+        /// It offers no code: its pairing token, pasted under the row.
+        case token
+    }
+
+    /// By the code it offers, where it needs pairing: the dynamic code where it has one, as the
+    /// implementation guide advises (a client offers only one anyway). The pairing token is for
+    /// automation, so it's only asked for when there's no code.
+    func pairingWay(for player: Player) -> PairingWay? {
+        guard let status = player.status, [.pairingRequired, .notRecognized].contains(status.connection),
+              let methods = status.pairMethods else { return nil }
+        if methods.dynamicCode != nil { return .code(.dynamicCode) }
+        if methods.staticCode != nil { return .code(.staticCode) }
+        if methods.pairingPSK != nil { return .token }
+        return nil
+    }
+
+    /// The speaker whose row asks for its pairing token, and whether the last one didn't match.
+    private(set) var tokenEntry: (name: String, again: Bool)?
+
+    func askForToken(_ name: String, again: Bool = false) {
+        endSpeakerPairing()
+        tokenEntry = (name, again)
+    }
+
+    func cancelTokenEntry() {
+        tokenEntry = nil
+    }
+
+    func pairWithToken(_ name: String, token: PairingToken.PairingPSK) {
+        tokenEntry = nil
+        startPairing(name, method: .token(token))
+    }
+
+    /// Start pairing: the speaker is ticked, and connected to again for the attempt.
+    func startPairing(_ name: String, method: PairingMethod) {
+        guard let player = discovered.first(where: { $0.instanceName == name }) else { return }
+        endSpeakerPairing()
+        dropSession(name)
+        if !selected.contains(name) {
+            selected.insert(name)
+            defaults.set(Array(selected), forKey: "selectedPlayers")
+        }
+        speakerPairing = SpeakerPairing(name: name, method: method, progress: .starting)
+        let request = PairingRequest(method: method) { [weak self] _ in
+            await self?.awaitCode() ?? nil
+        }
+        addSession(for: player, pairing: request)
+        updateCapture()
+    }
+
+    private func awaitCode() async -> String? {
+        codeContinuation?.resume(returning: nil)
+        return await withCheckedContinuation { codeContinuation = $0 }
+    }
+
+    func submitPairingCode(_ code: String) {
+        codeContinuation?.resume(returning: code)
+        codeContinuation = nil
+    }
+
+    /// Cancel from the menu: the speaker is told why (pair/abort `user_cancelled`).
+    func cancelSpeakerPairing() {
+        guard let pairing = speakerPairing else { return }
+        if let codeContinuation {
+            self.codeContinuation = nil
+            codeContinuation.resume(returning: nil)
+        } else if let session = sessions[pairing.name] {
+            Task { await session.cancelPairing() }
+        }
+        speakerPairing = nil
+    }
+
+    /// Paired speakers for Settings: their names, as last seen.
+    var pairedSpeakerList: [(clientID: String, name: String)] {
+        pairedSpeakers.filter { playerPairings.isPaired($0.key) }
+            .map { (clientID: $0.key, name: playerNames[$0.value] ?? $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Forget a pairing. A connected speaker forgets it too (server/unpair); it then connects
+    /// anew, unpaired, as any speaker that isn't.
+    func forgetPairing(clientID: String) {
+        let name = pairedSpeakers.removeValue(forKey: clientID)
+        if let (key, session) = sessions.first(where: { statuses[$0.key]?.clientID == clientID }) {
+            Task {
+                await session.unpair()
+                dropSession(key)
+                reconcile()
+            }
+        } else {
+            playerPairings.remove(clientID)
+        }
+        Log.info("Forgot the pairing with \(name ?? clientID)")
+    }
+
+    /// Done with what the menu shows, as when a failed attempt is dismissed.
+    func endSpeakerPairing() {
+        codeContinuation?.resume(returning: nil)
+        codeContinuation = nil
+        speakerPairing = nil
+    }
+
+    private func pairingProgressed(_ name: String, _ status: PlayerStatus) {
+        guard let progress = status.pairing else { return }
+        if progress == .paired {
+            // Pairing supersedes approval for unpaired access, which MUST then be discarded
+            // (pairing.md, Unpaired Access).
+            var approved = approvedPlayers
+            if approved.removeValue(forKey: name) != nil { defaults.set(approved, forKey: "approvedPlayers") }
+            if let clientID = status.clientID, pairedSpeakers[clientID] != name { pairedSpeakers[clientID] = name }
+        }
+        if progress == .paired, status.connection == .connected {
+            speakerPairing = nil
+        } else if case .failed = progress, case .token = speakerPairing?.method {
+            // A wrong token reads as a wrong code does: asked again, under the row. The speaker
+            // only finds out at the re-handshake, and hangs up; that's all we learn.
+            askForToken(name, again: true)
+        } else {
+            speakerPairing?.progress = progress
+        }
+    }
+
     // MARK: Players that connect to us
 
     /// Players that look for a server themselves (client-initiated connections) find this
@@ -994,6 +1141,7 @@ final class BridgeController {
 
     private func playerStatusChanged(_ name: String, _ status: PlayerStatus) {
         guard sessions[name] != nil else { return }
+        if speakerPairing?.name == name { pairingProgressed(name, status) }
         if let playerName = status.name, playerNames[name] != playerName { playerNames[name] = playerName }
         let formatsChanged = statuses[name]?.supportedFormats != status.supportedFormats
             || statuses[name]?.connection != status.connection

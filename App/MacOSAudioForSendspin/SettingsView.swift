@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var openAtLogin = LoginItem.isEnabled
     @State private var loginItemNeedsApproval = LoginItem.needsApproval
     @State private var confirmingForget = false
+    @State private var forgettingSpeaker: String?
 
     private static let repository = URL(string: "https://github.com/wildekek/macos-audio-for-sendspin")!
     private var version: String {
@@ -41,6 +42,7 @@ struct SettingsView: View {
 
             pairedServer
             pairingHeldBack
+            pairedSpeakers
 
             Section {
                 Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
@@ -118,6 +120,37 @@ struct SettingsView: View {
                     Text(status.connected ? "Paired" : "Paired, not connected right now")
                 }
             }
+        }
+    }
+
+    /// Speakers this Mac is paired with, to forget one.
+    @ViewBuilder private var pairedSpeakers: some View {
+        if !bridge.pairedSpeakerList.isEmpty {
+        Section {
+            ForEach(bridge.pairedSpeakerList, id: \.clientID) { speaker in
+                LabeledContent {
+                    Button("Forget…") { forgettingSpeaker = speaker.clientID }
+                } label: {
+                    Text(speaker.name)
+                    Text("Paired")
+                }
+            }
+        } header: {
+            Text("Paired speakers")
+        } footer: {
+            Text("A paired speaker knows this Mac by a key of its own. Pair a speaker from its row in the menu.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .alert("Forget the pairing?", isPresented: Binding(get: { forgettingSpeaker != nil },
+                                                          set: { if !$0 { forgettingSpeaker = nil } })) {
+            Button("Forget", role: .destructive) {
+                if let clientID = forgettingSpeaker { bridge.forgetPairing(clientID: clientID) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The speaker forgets this Mac too, if it's on. To play on it again, it may need pairing again.")
+        }
         }
     }
 
