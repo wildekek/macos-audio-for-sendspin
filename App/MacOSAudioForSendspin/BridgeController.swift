@@ -86,6 +86,11 @@ final class BridgeController {
     private var deviceMuted = false
     /// The lead the group and the device latency currently use (see `effectiveLeadMs`).
     private var appliedLeadMs = PlaybackGroup.sendMarginMs
+    /// The first device reading was used: its latency became the lead (see `adoptOrApplyLead`).
+    private var adoptedDeviceLead = false
+    /// Until a few seconds after launch, no sound found yet doesn't mean nothing plays: it takes
+    /// 3 s of silence to say so (`pump`), so the lead isn't lowered before then.
+    private let launchedAt = ContinuousClock.now
     /// When the lead last went up, and a raise waiting for `leadRaiseInterval` to pass.
     private var leadRaisedAt: ContinuousClock.Instant?
     private var pendingLeadRaise: Task<Void, Never>?
@@ -1753,6 +1758,7 @@ final class BridgeController {
         var muted: Bool?
         var sampleRate: Int
         var sampleRates: Set<Int>
+        var presentationLatencyUs: Int?
         var observations: [PropertyObservation]
     }
 
@@ -1774,6 +1780,7 @@ final class BridgeController {
                     device: device, volume: device.volume, muted: device.isMuted,
                     sampleRate: Int(device.nominalSampleRate),
                     sampleRates: Set(device.availableSampleRates.map { Int($0) }),
+                    presentationLatencyUs: device.presentationLatencyMicroseconds,
                     observations: [
                         device.observe(kAudioDevicePropertyVolumeScalar, scope: kAudioObjectPropertyScopeOutput,
                                        volumeChanged),
@@ -1802,7 +1809,7 @@ final class BridgeController {
         deviceMuted = reading.muted ?? false
         deviceSampleRate = reading.sampleRate
         deviceSampleRates = reading.sampleRates
-        applyPresentationLatency()
+        adoptOrApplyLead(reading.presentationLatencyUs)
         applyFormat()
         updateCapture()
     }
@@ -2000,8 +2007,11 @@ final class BridgeController {
     /// plays, as the spec allows (MAY keep the send-ahead when the maximum decreases), so
     /// unticking a speaker doesn't cut into the music, nor does ticking it again.
     private func applyLead() {
+        // Not before the device's latency is known: it may be the lead already.
+        guard adoptedDeviceLead else { return }
         let ms = effectiveLeadMs
-        guard ms > appliedLeadMs || (ms < appliedLeadMs && !hasSound) else { return }
+        let silenceKnown = !hasSound && ContinuousClock.now > launchedAt + .seconds(5)
+        guard ms > appliedLeadMs || (ms < appliedLeadMs && silenceKnown) else { return }
         if ms > appliedLeadMs {
             let joining = leadNeed.map { statuses[$0.key]?.streamFormat == nil } ?? true
             if !joining, let raisedAt = leadRaisedAt, ContinuousClock.now < raisedAt + Self.leadRaiseInterval {
@@ -2019,6 +2029,24 @@ final class BridgeController {
         Log.info("Lead \(ms) ms" + (leadNeed.map { ": \($0.name) needs the most" } ?? ""))
         applyPresentationLatency()
         Task { await group.setLead(ms: ms) }
+    }
+
+    /// The driver keeps its latency across the app's launches. The first time, it's taken as the
+    /// lead: the speakers that played last time need no change, so the device doesn't restart
+    /// under the music already playing into it (a latency change is a configuration change),
+    /// and a lower lead follows once nothing plays, as always. After that, ours is set.
+    private func adoptOrApplyLead(_ deviceLatencyUs: Int?) {
+        if !adoptedDeviceLead, let deviceLatencyUs, deviceLatencyUs >= PlaybackGroup.sendMarginMs * 1000 {
+            adoptedDeviceLead = true
+            appliedLeadMs = deviceLatencyUs / 1000
+            Log.info("Lead \(appliedLeadMs) ms, as the device had it")
+            Task { [group, appliedLeadMs] in await group.setLead(ms: appliedLeadMs) }
+        } else {
+            adoptedDeviceLead = true
+            applyPresentationLatency()
+        }
+        // What speakers asked for before the device was read.
+        applyLead()
     }
 
     /// Report the lead as the device's output latency, so video players keep lip sync.
