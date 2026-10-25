@@ -321,8 +321,8 @@ public actor PlayerSession {
         sentActivation = false
         available = false
         ready = false
-        left = false
-        soloGroupID = nil
+        // A player that left stays out across reconnects: the server MUST NOT auto-rejoin it
+        // (messaging.md, External Source Handling).
         lastGroupUpdate = nil
         stopStreaming()
     }
@@ -426,7 +426,7 @@ public actor PlayerSession {
         }
         sentActivation = true
         sendGroupUpdate()
-        status.connection = .connected
+        status.connection = left ? .left : .connected
     }
 
     /// Declare playback only while there's something to play, as the spec asks: a server that
@@ -492,6 +492,8 @@ public actor PlayerSession {
             status.requiredBufferMs = (player.minBufferMs ?? 0) + (player.outputDelayMs ?? 0)
             outputDelayUs = Int64(player.outputDelayMs ?? 0) * 1_000
         }
+        // Only a change counts: a player says `available: false` until its clock is in sync
+        // (messaging.md, Clock Synchronization), so its first state often does.
         if wasAvailable && !available && ready {
             leaveGroup("in use elsewhere")
         }
