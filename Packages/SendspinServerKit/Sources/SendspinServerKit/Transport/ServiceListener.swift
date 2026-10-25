@@ -66,7 +66,7 @@ public final class ServiceListener: @unchecked Sendable {
     private func listen(on port: NWEndpoint.Port) {
         let listener: NWListener
         do {
-            listener = try NWListener(using: WebSocketConnection.parameters(), on: port)
+            listener = try NWListener(using: WebSocketConnection.parameters(listening: true), on: port)
         } catch {
             Log.error("Can't listen for \(kind.peers): \(error)")
             return

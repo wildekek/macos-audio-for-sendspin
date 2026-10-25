@@ -46,14 +46,22 @@ final class WebSocketConnection: @unchecked Sendable {
         (frames, continuation) = AsyncThrowingStream.makeStream()
     }
 
-    /// WebSocket over TCP without Nagle's delay, for both dialing and listening.
-    static func parameters() -> NWParameters {
+    /// WebSocket over TCP without Nagle's delay, for both dialing and listening. A listener
+    /// refuses an upgrade request with an `Origin` header, which a browser adds (connection.md,
+    /// Server Initiated Connections): a web page can't reach a Sendspin endpoint.
+    static func parameters(listening: Bool = false) -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         let parameters = NWParameters(tls: nil, tcp: tcp)
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
         websocket.maximumMessageSize = 4 * 1024 * 1024
+        if listening {
+            websocket.setClientRequestHandler(DispatchQueue(label: "sendspin.ws.upgrade")) { _, headers in
+                let hasOrigin = headers.contains { $0.name.caseInsensitiveCompare("Origin") == .orderedSame }
+                return NWProtocolWebSocket.Response(status: hasOrigin ? .reject : .accept, subprotocol: nil)
+            }
+        }
         parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
         return parameters
     }
