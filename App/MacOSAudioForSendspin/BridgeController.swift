@@ -1187,6 +1187,7 @@ final class BridgeController {
             // (pairing.md, Unpaired Access).
             var approved = approvedPlayers
             if approved.removeValue(forKey: name) != nil { defaults.set(approved, forKey: "approvedPlayers") }
+            if approvedSources[name] != nil { approvedSources[name] = nil }
             if let clientID = status.clientID, pairedSpeakers[clientID] != name { pairedSpeakers[clientID] = name }
         }
         if progress == .paired, sourcePairing == name {
