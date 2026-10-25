@@ -40,6 +40,23 @@ struct NoiseResponderTests {
         let (message2, _) = try responder.writeMessage2(payload: Data("{}".utf8), psk: Data(repeating: 1, count: 32))
         #expect(throws: NoiseError.self) { try initiator.readMessage2(message2) }
     }
+
+    /// A client that lost our record answers a long-term PSK on the Sentinel: that fails, and
+    /// the same message 2 then verifies under the Sentinel, as the credential-mismatch signal.
+    @Test func aLostRecordVerifiesUnderTheSentinel() throws {
+        let server = Curve25519.KeyAgreement.PrivateKey()
+        let client = Curve25519.KeyAgreement.PrivateKey()
+        var initiator = NoiseInitiatorHandshake(suite: .chaChaPoly, prologue: Data(), localStatic: server,
+                                                remoteStatic: client.publicKey, psk: Data(repeating: 3, count: 32))
+        var responder = NoiseResponderHandshake(suite: .chaChaPoly, prologue: Data(), localStatic: client,
+                                                remoteStatic: server.publicKey)
+        _ = try responder.readMessage1(try initiator.writeMessage1(payload: Data()))
+        let (message2, clientTransport) = try responder.writeMessage2(payload: Data("{}".utf8), psk: SendspinPSK.sentinel)
+        var first = initiator
+        #expect(throws: NoiseError.self) { try first.readMessage2(message2) }
+        let (_, serverTransport) = try initiator.readMessage2(message2, psk: SendspinPSK.sentinel)
+        #expect(serverTransport.handshakeHash == clientTransport.handshakeHash)
+    }
 }
 
 struct PairingTokenTests {

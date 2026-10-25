@@ -260,6 +260,8 @@ final class BridgeController {
     private let speakerRoute = SpeakerRoute()
     /// Speakers found over mDNS, before leaving out this Mac's own source advertisement.
     private var browsed: [DiscoveredPlayer] = []
+    /// This Mac's pairings with speakers, kept in the Keychain.
+    private let playerPairings = PlayerPairings(records: PlayerPairingsStore.load(), save: PlayerPairingsStore.save)
     /// Players the user just ticked, not yet connected: they're claimed for playback.
     private var chosenPlayers: Set<String> = []
     /// This Mac's own source advertisement, which the browser doesn't connect to.
@@ -492,8 +494,10 @@ final class BridgeController {
     /// Ticking a player is the user's approval for unpaired playback (pairing.md, Unpaired
     /// Access), bound to the identity the player first presents. A different identity under
     /// the same name isn't approved: a new device can't pass for a known one by its name.
-    private func approve(_ instanceName: String, clientID: String) -> Bool {
+    /// A paired speaker needs no approval: the pairing authenticates it, so ticking it is enough.
+    private func approve(_ instanceName: String, clientID: String, paired: Bool) -> Bool {
         guard selected.contains(instanceName) else { return false }
+        if paired { return true }
         var approved = approvedPlayers
         if let known = approved[instanceName] { return known == clientID }
         approved[instanceName] = clientID
@@ -522,9 +526,9 @@ final class BridgeController {
 
     private func addSession(for player: DiscoveredPlayer) {
         let name = player.instanceName
-        let session = PlayerSession(url: player.url, identity: identity,
-                                    chosen: chosenPlayers.remove(name) != nil) { [weak self] clientID in
-            await self?.approve(name, clientID: clientID) ?? false
+        let session = PlayerSession(url: player.url, identity: identity, pairings: playerPairings,
+                                    chosen: chosenPlayers.remove(name) != nil) { [weak self] clientID, paired in
+            await self?.approve(name, clientID: clientID, paired: paired) ?? false
         }
         sessions[name] = session
         statuses[name] = PlayerStatus()
@@ -939,7 +943,8 @@ final class BridgeController {
     static func isIncoming(_ name: String) -> Bool { name.hasPrefix("client:") }
 
     private func accept(_ connection: IncomingConnection) {
-        let session = PlayerSession(incoming: connection, identity: identity) { [weak self] clientID in
+        let session = PlayerSession(incoming: connection, identity: identity,
+                                    pairings: playerPairings) { [weak self] clientID, _ in
             await self?.approveIncoming(clientID) ?? false
         }
         Task { await group.add(session) }
@@ -1560,7 +1565,7 @@ extension PlayerStatus.Connection {
     /// The session stopped by itself and won't reconnect.
     var isFinal: Bool {
         switch self {
-        case .taken, .disconnected, .pairingRequired, .notApproved: true
+        case .taken, .disconnected, .pairingRequired, .notRecognized, .notApproved: true
         default: false
         }
     }

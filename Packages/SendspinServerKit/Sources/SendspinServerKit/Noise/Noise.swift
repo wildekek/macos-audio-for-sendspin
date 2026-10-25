@@ -203,8 +203,10 @@ struct NoiseInitiatorHandshake {
         return e + (try state.encryptAndHash(payload))
     }
 
-    /// `<- e, ee, se, psk`; returns the payload and the transport cipher states.
-    mutating func readMessage2(_ message: Data) throws -> (payload: Data, transport: NoiseTransport) {
+    /// `<- e, ee, se, psk`; returns the payload and the transport cipher states. `psk` replaces
+    /// the one message 1 named, for checking a reply against the Sentinel PSK instead
+    /// (connection.md, Sentinel Fallback): try it on a copy, as reading changes the state.
+    mutating func readMessage2(_ message: Data, psk: Data? = nil) throws -> (payload: Data, transport: NoiseTransport) {
         guard message.count >= 32 + NoiseSuite.tagSize else { throw NoiseError.invalidMessage }
         let re = Data(message.prefix(32))
         let remoteEphemeral = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: re)
@@ -212,7 +214,7 @@ struct NoiseInitiatorHandshake {
         state.mixKey(re)
         state.mixKey(try dh(ephemeral, remoteEphemeral))
         state.mixKey(try dh(localStatic, remoteEphemeral))
-        state.mixKeyAndHash(psk)
+        state.mixKeyAndHash(psk ?? self.psk)
         let payload = try state.decryptAndHash(Data(message.dropFirst(32)))
         let (send, receive) = state.split()
         return (payload, NoiseTransport(send: send, receive: receive, handshakeHash: state.h))

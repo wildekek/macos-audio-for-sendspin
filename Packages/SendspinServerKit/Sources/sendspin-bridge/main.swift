@@ -220,7 +220,7 @@ func run() async {
     let group = PlaybackGroup(name: options.name, leadMs: options.leadMs)
     for url in urls {
         // Players named on the command line are the user's explicit choice: approved.
-        let session = PlayerSession(url: url, identity: identity, approve: { _ in true })
+        let session = PlayerSession(url: url, identity: identity, approve: { _, _ in true })
         Task {
             var bufferWarned = false
             for await status in session.updates {
@@ -331,7 +331,7 @@ func cycleFormats(_ formats: [(sampleRate: Int, bitDepth: Int)], urls: [URL], op
     await apply(formats[0], device: device, group: group, formatSwitch: &formatSwitch)
     let identity = loadIdentity(name: options.name)
     for url in urls {
-        await group.add(PlayerSession(url: url, identity: identity, approve: { _ in true }))
+        await group.add(PlayerSession(url: url, identity: identity, approve: { _, _ in true }))
     }
     try? await Task.sleep(for: .seconds(options.everySeconds))
     for format in formats.dropFirst() {

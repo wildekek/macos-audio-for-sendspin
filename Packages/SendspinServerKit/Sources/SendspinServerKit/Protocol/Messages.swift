@@ -129,6 +129,7 @@ public struct ClientHello: Decodable, Sendable {
     public var supportedRoles: [String]
     public var playerSupport: PlayerSupport?
     public var unpairedAccess: UnpairedAccess?
+    public var supportedPairMethods: PairMethods?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -136,6 +137,64 @@ public struct ClientHello: Decodable, Sendable {
         case supportedRoles = "supported_roles"
         case playerSupport = "player@v1_support"
         case unpairedAccess = "unpaired_access"
+        case supportedPairMethods = "supported_pair_methods"
+    }
+}
+
+/// The pairing methods a client offers (pairing.md, client/hello pair-method descriptor).
+/// Unknown methods, formats and channels are ignored; a dynamic code with no format or
+/// channel we know counts as not offered.
+public struct PairMethods: Decodable, Sendable, Equatable {
+    public enum Location: String, Sendable { case device, leaflet, `operator` }
+    public enum OutChannel: String, Sendable { case display, speaker }
+
+    /// Where the operator finds the pairing token, if offered (every client must).
+    public var pairingPSK: [Location]?
+    /// Where the 8-digit static code is: on the device, a leaflet, or set by the operator.
+    public var staticCode: [Location]?
+    /// How the device conveys its dynamic code, if it offers one in the digits format.
+    public var dynamicCode: [OutChannel]?
+
+    public init(pairingPSK: [Location]? = nil, staticCode: [Location]? = nil, dynamicCode: [OutChannel]? = nil) {
+        self.pairingPSK = pairingPSK
+        self.staticCode = staticCode
+        self.dynamicCode = dynamicCode
+    }
+
+    private struct Descriptor: Decodable {
+        var locations: [String]?
+        var outChannels: [String]?
+        var formats: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case locations
+            case outChannels = "out_channels"
+            case formats
+        }
+    }
+
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Key.self)
+        func descriptor(_ key: String) -> Descriptor? {
+            try? container.decodeIfPresent(Descriptor.self, forKey: Key(stringValue: key))
+        }
+        func locations(_ descriptor: Descriptor) -> [Location] {
+            (descriptor.locations ?? []).compactMap(Location.init(rawValue:))
+        }
+        if let psk = descriptor("pairing_psk") { pairingPSK = locations(psk) }
+        if let code = descriptor("static_pairing_code") { staticCode = locations(code) }
+        // QR codes need a camera; a desktop app asks for digits (the implementation guide).
+        if let code = descriptor("dynamic_pairing_code"), (code.formats ?? []).contains("digits") {
+            let channels = (code.outChannels ?? []).compactMap(OutChannel.init(rawValue:))
+            if !channels.isEmpty { dynamicCode = channels }
+        }
     }
 }
 

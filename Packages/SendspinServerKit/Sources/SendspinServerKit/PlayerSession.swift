@@ -9,8 +9,12 @@ public struct PlayerStatus: Sendable, Equatable {
         /// Another server took the player over (goodbye `another_server`), or held it when we
         /// came with nothing to play (`concurrent_attempt`).
         case taken
-        /// The player only admits paired servers, and pairing isn't implemented.
+        /// The player only admits paired servers, and this Mac isn't paired with it.
         case pairingRequired
+        /// We're paired, but the player no longer recognizes this Mac (reset, or it dropped the
+        /// record to make room): it can't play until paired again (connection.md, Sentinel
+        /// Fallback).
+        case notRecognized
         /// The player presents a different identity than the one approved for it.
         case notApproved
         /// A player that connected to us, held until the user allows it (ticks it).
@@ -30,6 +34,10 @@ public struct PlayerStatus: Sendable, Equatable {
     public var name: String?
     /// The player's `client_id`: its Curve25519 public key, base64url.
     public var clientID: String?
+    /// The connection runs on our pairing's long-term PSK.
+    public var paired = false
+    /// The pairing methods it offers, from its hello.
+    public var pairMethods: PairMethods?
     public var volume: Int?
     public var muted: Bool?
     public var canSetVolume = false
@@ -48,13 +56,15 @@ public struct PlayerStatus: Sendable, Equatable {
 /// One dialed player: runs the Noise handshake, answers time sync, tracks player state
 /// and delivers the group's audio in the negotiated format (Sendspin 1, server-initiated).
 public actor PlayerSession {
-    /// Asked once per connection with the player's `client_id`: may it play unpaired?
-    public typealias Approval = @Sendable (_ clientID: String) async -> Bool
+    /// Asked once per connection with the player's `client_id`: may it play? Unpaired, that's
+    /// the operator's approval; paired, whether it's wanted at all.
+    public typealias Approval = @Sendable (_ clientID: String, _ paired: Bool) async -> Bool
 
     public nonisolated let url: URL
     public nonisolated let updates: AsyncStream<PlayerStatus>
 
     private let identity: ServerIdentity
+    private let pairings: PlayerPairings
     private let approve: Approval
     /// The player connected to us (client-initiated); otherwise we dial `url`.
     private let incoming: WebSocketConnection?
@@ -69,6 +79,8 @@ public actor PlayerSession {
     private var hello: ClientHello?
     /// server/activate made the player ours: its role active, in our group.
     private var activated = false
+    /// It answered our long-term PSK on the Sentinel: it lost our pairing.
+    private var notRecognized = false
     /// The group let go of the player (`shutdown()`): its connection ends by our doing.
     private var shuttingDown = false
     /// The activities last declared: playback only while there's something to play.
@@ -103,9 +115,11 @@ public actor PlayerSession {
 
     /// A player we dial and keep connected. One the user just `chosen` is claimed for playback
     /// when it connects.
-    public init(url: URL, identity: ServerIdentity, chosen: Bool = false, approve: @escaping Approval) {
+    public init(url: URL, identity: ServerIdentity, pairings: PlayerPairings = PlayerPairings(),
+                chosen: Bool = false, approve: @escaping Approval) {
         self.url = url
         self.identity = identity
+        self.pairings = pairings
         self.approve = approve
         claiming = chosen
         incoming = nil
@@ -114,9 +128,11 @@ public actor PlayerSession {
     }
 
     /// A player that connected to us. It's served once: we can't reconnect to it.
-    public init(incoming connection: IncomingConnection, identity: ServerIdentity, approve: @escaping Approval) {
+    public init(incoming connection: IncomingConnection, identity: ServerIdentity,
+                pairings: PlayerPairings = PlayerPairings(), approve: @escaping Approval) {
         url = URL(string: "ws://\(connection.remoteDescription)") ?? URL(string: "ws://incoming")!
         self.identity = identity
+        self.pairings = pairings
         self.approve = approve
         incoming = connection.socket
         isIncoming = true
@@ -230,12 +246,16 @@ public actor PlayerSession {
         }
         let (clientInit, suite, clientKey) = try parseClientInit(clientInitData, socket: socket)
         let serverInitData = try MessageCoding.encode(type: "server/init", payload: ServerInit(serverID: identity.id))
-        var handshake = NoiseInitiatorHandshake(
+        // A paired player gets our pairing's long-term PSK, any other the Sentinel.
+        let longTerm = pairings.psk(for: clientInit.clientID)
+        var attempt = NoiseInitiatorHandshake(
             suite: suite, prologue: clientInitData + serverInitData, localStatic: identity.privateKey,
-            remoteStatic: clientKey, psk: SendspinPSK.sentinel)
+            remoteStatic: clientKey, psk: longTerm ?? SendspinPSK.sentinel)
         let message1Payload = try JSONEncoder().encode(
-            NoiseMessage1Payload(pskID: SendspinPSK.id(for: SendspinPSK.sentinel), pskCategory: "sn"))
-        let message1 = try handshake.writeMessage1(payload: message1Payload)
+            NoiseMessage1Payload(pskID: SendspinPSK.id(for: longTerm ?? SendspinPSK.sentinel),
+                                 pskCategory: longTerm == nil ? "sn" : "lt"))
+        let message1 = try attempt.writeMessage1(payload: message1Payload)
+        var sentMessage1 = attempt
         socket.send(text: serverInitData)
         socket.send(text: try MessageCoding.encode(type: "noise/handshake",
                                                    payload: NoiseHandshakeMessage(data: Base64URL.encode(message1))))
@@ -248,7 +268,18 @@ public actor PlayerSession {
               let message2 = Base64URL.decode(try MessageCoding.payload(NoiseHandshakeMessage.self,
                                                                          from: message2Data).data)
         else { throw SessionError.handshake("expected Noise message 2") }
-        let (payload, transport) = try handshake.readMessage2(message2)
+        let payload: Data, transport: NoiseTransport
+        if let result = try? attempt.readMessage2(message2) {
+            (payload, transport) = result
+            status.paired = longTerm != nil
+        } else if longTerm != nil, let result = try? sentMessage1.readMessage2(message2, psk: SendspinPSK.sentinel) {
+            // It answered on the Sentinel: it lost our pairing. Authenticated, but it
+            // removes nothing by itself (connection.md, Sentinel Fallback).
+            (payload, transport) = result
+            notRecognized = true
+        } else {
+            throw SessionError.handshake("Noise message 2 doesn't verify")
+        }
         guard (try? JSONSerialization.jsonObject(with: payload)) is [String: Any] else {
             throw SessionError.handshake("Noise message 2 payload isn't a JSON object")
         }
@@ -323,6 +354,8 @@ public actor PlayerSession {
         channel = nil
         hello = nil
         activated = false
+        notRecognized = false
+        status.paired = false
         declaredActivities = []
         sentActivation = false
         available = false
@@ -400,9 +433,24 @@ public actor PlayerSession {
         Log.info("\(hello.name): hello (\(hello.deviceInfo?.productName ?? "unknown device"), "
             + "software \(hello.deviceInfo?.softwareVersion ?? "?"))")
 
+        status.pairMethods = hello.supportedPairMethods
+
         guard hello.supportedRoles.contains("player@v1"), hello.playerSupport != nil else {
             sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
             return .stop(.failed("not a player"))
+        }
+        // While our record exists, a player on the Sentinel MUST NOT play: pairing again fixes it.
+        if notRecognized {
+            Log.info("\(hello.name): doesn't recognize this Mac any more; it needs pairing again")
+            return .stop(.notRecognized)
+        }
+        if status.paired {
+            guard let clientID = status.clientID, await approve(clientID, true) else {
+                if isIncoming { return holdIncoming() }
+                return .stop(.disconnected(reason: nil))
+            }
+            activatePlayback()
+            return nil
         }
         // There's no pairing record, so this is an unpaired session on the Sentinel PSK:
         // the player must admit unpaired access and the user must have approved it.
@@ -410,19 +458,22 @@ public actor PlayerSession {
             Log.info("\(hello.name): doesn't admit unpaired access; it needs pairing")
             return .stop(.pairingRequired)
         }
-        guard let clientID = status.clientID, await approve(clientID) else {
-            if isIncoming {
-                // Hold it with no activities, as the spec allows, until the user allows it.
-                sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
-                sentActivation = true
-                sendGroupUpdate()
-                status.connection = .awaitingApproval
-                return nil
-            }
+        guard let clientID = status.clientID, await approve(clientID, false) else {
+            if isIncoming { return holdIncoming() }
             Log.warning("\(hello.name): identity \(status.clientID ?? "?") isn't the approved one")
             return .stop(.notApproved)
         }
         activatePlayback()
+        return nil
+    }
+
+    /// Hold a player that connected to us with no activities, as the spec allows, until the
+    /// user allows it.
+    private func holdIncoming() -> SessionEnd? {
+        sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
+        sentActivation = true
+        sendGroupUpdate()
+        status.connection = .awaitingApproval
         return nil
     }
 
@@ -456,7 +507,7 @@ public actor PlayerSession {
 
     /// The user allowed a held player (ticked it): activate playback on the same connection.
     public func reevaluateApproval() async {
-        guard status.connection == .awaitingApproval, let clientID = status.clientID, await approve(clientID)
+        guard status.connection == .awaitingApproval, let clientID = status.clientID, await approve(clientID, status.paired)
         else { return }
         Log.info("\(status.name ?? "?"): allowed")
         activatePlayback()

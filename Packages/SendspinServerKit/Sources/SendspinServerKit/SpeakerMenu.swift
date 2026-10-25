@@ -124,7 +124,7 @@ public enum SpeakerMenu {
 
     /// Why an output in the menu can't play now.
     private enum Problem {
-        case gone, inUseElsewhere, disconnected, cantConnect, needsPairing, identityChanged
+        case gone, inUseElsewhere, disconnected, cantConnect, needsPairing, notRecognized, identityChanged
 
         init?(_ output: Output) {
             guard output.isDiscovered else {
@@ -137,6 +137,7 @@ public enum SpeakerMenu {
             case .disconnected: self = .disconnected
             case .failed: self = .cantConnect
             case .pairingRequired: self = .needsPairing
+            case .notRecognized: self = .notRecognized
             case .notApproved: self = .identityChanged
             case .connecting, .connected, .awaitingApproval, nil: return nil
             }
@@ -152,6 +153,8 @@ public enum SpeakerMenu {
             case .disconnected: "Disconnected"
             case .cantConnect: "Can't connect"
             case .needsPairing: "Needs pairing"
+            // It lost our pairing: reset, or it made room for another server.
+            case .notRecognized: "Needs pairing again"
             case .identityChanged: "Identity changed"
             }
         }
