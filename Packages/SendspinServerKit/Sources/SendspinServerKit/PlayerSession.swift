@@ -537,14 +537,9 @@ public actor PlayerSession {
         status.inputSignal = nil
         sentActivation = false
         available = false
-        ready = false
         // Its volume and mute may have changed meanwhile: they come with its first client/state
         // (player/v1.md, Volume and mute).
-        status.volume = nil
-        status.muted = nil
-        status.reportedPlayerState = false
-        status.canSetVolume = false
-        status.canMute = false
+        forgetPlayerState()
         // A player that left stays out across reconnects: the server MUST NOT auto-rejoin it
         // (messaging.md, External Source Handling).
         lastGroupUpdate = nil
@@ -768,8 +763,12 @@ public actor PlayerSession {
         let wanted = wantedRoles()
         guard wanted != activeRoles else { return }
         let added = wanted.filter { !activeRoles.contains($0) }
-        // A removed stream role's stream ends first; the speaker's roles go together.
-        if activeRoles.contains("player@v1") && !wanted.contains("player@v1") { endStreams() }
+        // A removed stream role's stream ends first; the speaker's roles go together, and its
+        // player state with them (messaging.md, server/activate).
+        if activeRoles.contains("player@v1") && !wanted.contains("player@v1") {
+            endStreams()
+            forgetPlayerState()
+        }
         if added.contains("player@v1") {
             ready = false
             visualizerRequest = nil
@@ -889,7 +888,8 @@ public actor PlayerSession {
         }
         let wasAvailable = available
         available = state.available
-        if let player = state.player {
+        // Only for an active player role: an inactive role's object is ignored.
+        if let player = state.player, activeRoles.contains("player@v1") {
             if let volume = player.volume { status.volume = volume }
             if let muted = player.muted { status.muted = muted }
             let commands = player.supportedCommands ?? []
@@ -1308,6 +1308,19 @@ public actor PlayerSession {
     // MARK: Player control
 
     /// Only sent when the player offers the command, and after its first client/state.
+    /// What the player told about itself in client/state, until it says it again: after a
+    /// reconnect, or once the player role is active anew.
+    private func forgetPlayerState() {
+        ready = false
+        status.volume = nil
+        status.muted = nil
+        status.canSetVolume = false
+        status.canMute = false
+        status.requiredBufferMs = 0
+        status.reportedPlayerState = false
+        outputDelayUs = 0
+    }
+
     public func setVolume(_ volume: Int) {
         guard ready, status.canSetVolume else { return }
         sendMessage("server/command", ServerCommand(player: .volume(max(0, min(100, volume)))))
