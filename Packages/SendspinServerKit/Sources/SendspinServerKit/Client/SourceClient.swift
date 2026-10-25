@@ -174,9 +174,14 @@ public actor SourceClient {
 
     /// Admission of a connection's first server/activate. The incoming connection wins when
     /// its activities rank at least as high as the admitted one's (playback over pairing over
-    /// none), with the spec's exceptions.
+    /// none), with the spec's exceptions. Once the incoming state is read, it's decided and
+    /// claimed without suspending, so an activation meanwhile ranks against the new holder:
+    /// one admitted at a time.
     func admit(_ session: SourceSession, activities: Set<String>) async -> Bool {
-        let incoming = await session.state
+        // The session applies this activation only once admitted: until it syncs, the holder
+        // ranks by the activities it's admitted with, not by the idle state it had before.
+        var incoming = await session.state
+        incoming.activities = activities.sorted()
         defer { refreshStatus() }
         guard let current = admitted, current.id != session.id else {
             admitted = session
@@ -199,15 +204,18 @@ public actor SourceClient {
         }
         guard accept else { return false }
         Log.info("Source: \(incoming.serverName ?? "a server") takes over from \(admittedState.serverName ?? "another server")")
-        await current.close(goodbye: "another_server")
         admitted = session
         admittedState = incoming
+        await current.close(goodbye: "another_server")
         return true
     }
 
     func sessionChanged(_ session: SourceSession) async {
         guard session.id == admitted?.id else { return }
-        admittedState = await session.state
+        let state = await session.state
+        // Another may have taken over meanwhile.
+        guard session.id == admitted?.id else { return }
+        admittedState = state
         if let serverID = admittedState.serverID, let serverName = admittedState.serverName,
            let index = credentials.records.firstIndex(where: { $0.serverID == serverID }),
            credentials.records[index].serverName != serverName {
