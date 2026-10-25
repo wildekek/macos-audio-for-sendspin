@@ -186,11 +186,12 @@ public actor SourceClient {
     /// none), with the spec's exceptions. Once the incoming state is read, it's decided and
     /// claimed without suspending, so an activation meanwhile ranks against the new holder:
     /// one admitted at a time.
-    func admit(_ session: SourceSession, activities: Set<String>) async -> Bool {
+    func admit(_ session: SourceSession, activities: Set<String>, startsAttempt: Bool) async -> Bool {
         // The session applies this activation only once admitted: until it syncs, the holder
         // ranks by the activities it's admitted with, not by the idle state it had before.
         var incoming = await session.state
         incoming.activities = activities.sorted()
+        incoming.pairingAttempt = startsAttempt
         defer { refreshStatus() }
         guard let current = admitted, current.id != session.id else {
             admitted = session
@@ -202,8 +203,8 @@ public actor SourceClient {
             activities.contains("playback") ? 2 : activities.contains("pairing") ? 1 : 0
         }
         let accept: Bool
-        if held.contains("pairing") {
-            accept = false  // a pairing attempt isn't displaced
+        if admittedState.pairingAttempt {
+            accept = false  // a pairing attempt isn't displaced; a held-back one may be
         } else if held.isEmpty && activities.isEmpty {
             // Two idle servers: only the last one we played for may take over.
             let last = credentials.lastPlaybackServerID

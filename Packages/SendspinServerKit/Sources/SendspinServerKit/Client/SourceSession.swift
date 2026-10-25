@@ -21,6 +21,9 @@ actor SourceSession {
         var streaming = false
         /// The server's `start` is held, waiting for audio to open the stream with.
         var startAuthorized = false
+        /// A pairing attempt runs, from client/pair-init until success or abort: it's never
+        /// displaced (connection.md, Multiple servers).
+        var pairingAttempt = false
         /// The pairing code to show while a server pairs with this Mac (six digits).
         var pairingCode: String?
     }
@@ -347,7 +350,10 @@ actor SourceSession {
 
         let first = !activated
         if first {
-            guard await client.admit(self, activities: activities) else {
+            let held = await client.codeRoundLimitReached
+            let startsAttempt = method == .token || (method == .code && !held)
+            guard await client.admit(self, activities: activities, startsAttempt: activities.contains("pairing") && startsAttempt)
+            else {
                 if activities.contains("pairing") {
                     sendMessage("pair/abort", PairAbortMessage(reason: "concurrent_attempt"))
                 } else {
@@ -396,6 +402,7 @@ actor SourceSession {
     private func startPairingPSK() {
         let psk = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         pendingPSK = psk
+        setPairingAttempt(true)
         sendMessage("client/pair-init", ClientPairInitMessage(pairingIndex: pairingIndex))
         sendMessage("client/pair-finalize", ClientPairFinalizeMessage(longTermPSK: Base64URL.encode(psk)))
         startPairingTimeout()
@@ -416,6 +423,7 @@ actor SourceSession {
         heldAtLimit = false
         let attempt = CodeAttempt(pairingIndex: pairingIndex)
         codeAttempt = attempt
+        setPairingAttempt(true)
         sendMessage("client/pair-init", ClientPairInitMessage(
             pairingIndex: pairingIndex, commitB: Base64URL.encode(DynamicPairingCode.commitment(to: attempt.nonceB))))
         startPairingTimeout()
@@ -427,6 +435,12 @@ actor SourceSession {
     func releaseHeldPairing() async {
         guard heldAtLimit, state.activities.contains("pairing"), codeAttempt == nil, !rehandshaking else { return }
         await startPairingCode()
+    }
+
+    private func setPairingAttempt(_ running: Bool) {
+        guard state.pairingAttempt != running else { return }
+        state.pairingAttempt = running
+        Task { await client.sessionChanged(self) }
     }
 
     /// server/pair-init: a round begins. The first carries nonce_A, which fixes the code; each
@@ -534,6 +548,7 @@ actor SourceSession {
         pendingPSK = nil
         codeAttempt = nil
         heldAtLimit = false
+        setPairingAttempt(false)
         pairingTimeout?.cancel()
         pairingTimeout = nil
         if state.pairingCode != nil {
