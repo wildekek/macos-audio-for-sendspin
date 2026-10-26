@@ -25,6 +25,19 @@ jobs:
       - name: The server side, against scripted players
         run: uv run Tests/interop/test_client.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
 
+      # The reference player, on the library ESPHome speakers run; pinned, and checked.
+      - name: The server side, against sendspin-cpp-cli
+        env:
+          VERSION: 0.4.0
+          SHA256: f18a1c3dc80193c1475fead90a0e7f82e3ae00103a0544e2d3a6b6914366c48e
+        run: |
+          tarball="$RUNNER_TEMP/sendspin-cli.tar.gz"
+          curl -fsSL -o "$tarball" "https://github.com/Sendspin/sendspin-cpp-cli/releases/download/v$VERSION/sendspin-cli-$VERSION-macos-arm64.tar.gz"
+          echo "$SHA256  $tarball" | shasum -a 256 -c -
+          tar -xzf "$tarball" -C "$RUNNER_TEMP"
+          uv run Tests/interop/test_cpp.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge \
+            --sendspin-cli "$RUNNER_TEMP/sendspin-cli-$VERSION-macos-arm64/usr/local/bin/sendspin-cli"
+
       - name: Driver ring buffer test
         run: |
           cmake -S Driver -B Driver/build

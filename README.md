@@ -99,6 +99,8 @@ swift build --package-path Packages/SendspinServerKit --product sendspin-bridge 
                                                        # the Mac as a source, against scripted servers; also run by CI
 uv run Tests/interop/test_client.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
                                                        # the server side, against scripted players; also run by CI
+uv run Tests/interop/test_cpp.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge \
+  --sendspin-cli PATH                                  # the server side, against sendspin-cpp-cli; also run by CI
 ```
 
 The device tests check that the driver hands back its audio sample-exact, at the output timestamps apps see, that a sample-rate switch restarts the device's timeline once, that other programs are refused the audio, and that a format switch gives aiosendspin's player exactly one new stream. They switch the device's rate and put it back.
@@ -106,6 +108,8 @@ The device tests check that the driver hands back its audio sample-exact, at the
 `Tests/interop/test_player.py play` is a player to listen with: it plays on the Mac's speakers at any rate, and announces itself on this Mac only, so the app lists it at once and drops it when it exits (add it to play). It needs [uv](https://docs.astral.sh/uv/).
 
 `Tests/interop/test_server.py` tests the Mac as a source (the client side of the protocol) against scripted servers: aiosendspin's handshakes, then exactly the messages a scenario calls for, including the wrong ones no real server sends, such as an activation the client must refuse after a re-handshake, or two servers activating at the same moment. It runs `sendspin-bridge --source` with a fresh `--config-dir` and `--no-advertise`, so nothing shows up on the network and the app is left alone. `Tests/interop/test_client.py` does the same for the server side, with scripted players that `sendspin-bridge` dials by URL: a malformed handshake, a goodbye to reconnect after, connections that close at once, a re-handshake that's never answered.
+
+`Tests/interop/test_cpp.py` tests the server side against [sendspin-cpp-cli](https://github.com/Sendspin/sendspin-cpp-cli), the reference player, which runs the library ESPHome speakers run: pairing by its dynamic code (after a wrong one), its static code and its token, staying paired and unpairing, refusing to play unpaired unless it allows that, its controller's group volume and mute, its input as a source, and a second server taking it over. `PATH` is its `sendspin-cli` binary, from a release's macOS tarball; CI uses 0.4.0.
 
 ## Release
 
