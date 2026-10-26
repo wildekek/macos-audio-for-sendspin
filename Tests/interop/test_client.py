@@ -30,6 +30,9 @@ Scenarios:
                             A client/pair-pending in the Pairing PSK Flow, which has no
                             holding back, is out of sequence: a protocol error, so the server
                             closes (pairing.md, Messages).
+    unpair-after-pairing    Unpairing right after pairing still sends server/activate first
+                            under the new keys, then server/unpair (connection.md,
+                            Re-handshake; messaging.md, server/unpair).
 """
 
 import argparse
@@ -79,6 +82,8 @@ class Player:
         self.identity = Identity.generate()
         self.pairing_psk = os.urandom(32)
         self.long_term: bytes | None = None
+        # The server a long-term PSK belongs to: its record is bound to that identity.
+        self.server_id: str | None = None
         self.port = free_port()
         self.connections: asyncio.Queue[tuple[web.WebSocketResponse, asyncio.Event]] = asyncio.Queue()
         self.connected_at: list[float] = []
@@ -123,7 +128,7 @@ class Player:
         if category is PskCategory.PAIRING and psk_id == psk_id_for(self.pairing_psk):
             return ResolvedPsk(psk_id, self.pairing_psk, PskCategory.PAIRING)
         if category is PskCategory.LONG_TERM and self.long_term and psk_id == psk_id_for(self.long_term):
-            return ResolvedPsk(psk_id, self.long_term, PskCategory.LONG_TERM)
+            return ResolvedPsk(psk_id, self.long_term, PskCategory.LONG_TERM, self.server_id)
         if category is PskCategory.SENTINEL:
             return SENTINEL
         return None
@@ -322,9 +327,35 @@ async def rehandshake_timeout(bridge: Bridge, player: Player):
     done.set()
 
 
+async def unpair_after_pairing(bridge: Bridge, player: Player):
+    await bridge.start("--pair", player.token, "--unpair", player.url)
+    ws, done = await player.next_connection(10)
+    session = Session(await player.handshake(ws))
+    await session.hello()
+    await session.expect("server/activate", 5)
+    await session.rehandshake(player)
+    await session.expect("server/activate", 5)
+    long_term = os.urandom(32)
+    await session.send("client/pair-init", {"pairing_index": 1})
+    await session.send("client/pair-finalize", {"long_term_psk": b64url_encode(long_term)})
+    await session.expect("server/pair-finalize", 5)
+    player.long_term, player.server_id = long_term, session.result.peer_id
+    # Only what comes under the long-term keys counts: set the rest aside.
+    message1 = await asyncio.wait_for(session.handshakes.get(), 5)
+    while not session.inbox.empty():
+        session.inbox.get_nowait()
+    session.handshakes.put_nowait(message1)
+    await session.rehandshake(player)
+    first = await asyncio.wait_for(session.inbox.get(), 5)
+    if first["type"] != "server/activate":
+        raise Failure(f"the first message under the new keys is {first['type']}, not server/activate")
+    await session.expect("server/unpair", 5)
+    done.set()
+
+
 SCENARIOS = {"message2-payload": message2_payload, "shutdown-reconnects": shutdown_reconnects,
              "silent-close-backoff": silent_close_backoff, "rehandshake-timeout": rehandshake_timeout,
-             "pair-pending-in-psk-flow": pair_pending_in_psk_flow}
+             "pair-pending-in-psk-flow": pair_pending_in_psk_flow, "unpair-after-pairing": unpair_after_pairing}
 
 
 async def main() -> int:

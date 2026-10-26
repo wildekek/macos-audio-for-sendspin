@@ -155,6 +155,9 @@ public actor PlayerSession {
     private var claiming: Bool
     /// Any server/activate went out, so the player may send its other messages.
     private var sentActivation = false
+    /// Re-handshaken, and no server/activate under the new keys yet: it goes first
+    /// (connection.md, Re-handshake).
+    private var activationOwed = false
     private var available = false
     /// The client/state with the `player` object arrived since the role was activated: only then
     /// may its stream start and commands go out (messaging.md, stream/start).
@@ -535,6 +538,7 @@ public actor PlayerSession {
         pairingIndex = 0
         pairingInitTimeout?.cancel()
         rehandshake = nil
+        activationOwed = false
         endOfConnection = nil
         status.paired = false
         declaredActivities = []
@@ -953,6 +957,7 @@ public actor PlayerSession {
     private func sendMessage<P: Encodable>(_ type: String, _ payload: P) {
         // After our Noise message 1, only the handshake until the new keys are in place.
         guard rehandshake == nil || type == "noise/handshake" else { return }
+        if type == "server/activate" { activationOwed = false }
         do {
             send(SecureChannel.jsonType, try MessageCoding.encode(type: type, payload: payload))
         } catch {
@@ -1743,9 +1748,9 @@ extension PlayerSession {
     public func unpair() {
         guard let clientID = status.clientID else { return }
         if status.paired, channel != nil, hello != nil {
-            // Nothing but server/activate may go first (messaging.md, Communication): while the
-            // hello still waits on approval, an idle one.
-            if !sentActivation {
+            // Nothing but server/activate may go first (messaging.md, Communication), also under
+            // new keys: while the hello, or a re-handshake, still waits on approval, an idle one.
+            if !sentActivation || activationOwed {
                 sendMessage("server/activate", ServerActivate(activities: [], activeRoles: []))
                 sentActivation = true
             }
@@ -1796,6 +1801,7 @@ extension PlayerSession {
         connectionPSK = state.psk
         pairingIndex = 0
         status.paired = state.longTerm
+        activationOwed = true
         Log.debug("\(status.name ?? "?"): re-handshake done (\(state.longTerm ? "lt" : "pr"))")
         // The first message under the new keys is server/activate.
         switch state.then {
