@@ -22,7 +22,8 @@ fi
 
 restart_coreaudiod() {
     echo "Restarting coreaudiod…"
-    launchctl kickstart -k system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod
+    # launchd starts it again; since macOS 14.4 kickstart -k refuses it (Apple says to kill it).
+    killall -9 coreaudiod
 }
 
 if [[ "${1:-}" == "-u" ]]; then

@@ -41,7 +41,8 @@ enum AdminScript {
         "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Restarting coreaudiod loads or unloads drivers without restarting the Mac.
-    static let restartCoreAudio =
-        "{ launchctl kickstart -k system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod; }"
+    /// Restarting coreaudiod loads or unloads drivers without restarting the Mac. launchd starts it
+    /// again. Since macOS 14.4 `launchctl kickstart -k` refuses it, and Apple says to kill it
+    /// (Sonoma 14.4 release notes, Core Audio, 123028502).
+    static let restartCoreAudio = "killall -9 coreaudiod"
 }
