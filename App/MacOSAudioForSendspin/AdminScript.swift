@@ -44,5 +44,12 @@ enum AdminScript {
     /// Restarting coreaudiod loads or unloads drivers without restarting the Mac. launchd starts it
     /// again. Since macOS 14.4 `launchctl kickstart -k` refuses it, and Apple says to kill it
     /// (Sonoma 14.4 release notes, Core Audio, 123028502).
-    static let restartCoreAudio = "killall -9 coreaudiod"
+    ///
+    /// audiomxd goes first. Each coreaudiod restart since AirPlayXPCHelper started makes it
+    /// re-register AirPlay.driver twice as often as the last (2^n on the nth, a macOS bug), which
+    /// from about the 10th keeps coreaudiod busy for minutes (issue #1). AirPlayXPCHelper can't be
+    /// restarted itself, but it quits when audiomxd goes away and comes back with the count reset.
+    /// It quits at once and re-registers only a second after an interruption, so the old one is
+    /// gone before coreaudiod restarts.
+    static let restartCoreAudio = "{ killall -9 audiomxd; sleep 1; killall -9 coreaudiod; }"
 }

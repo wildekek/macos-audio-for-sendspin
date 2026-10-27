@@ -23,6 +23,10 @@ fi
 restart_coreaudiod() {
     echo "Restarting coreaudiod…"
     # launchd starts it again; since macOS 14.4 kickstart -k refuses it (Apple says to kill it).
+    # audiomxd first: AirPlayXPCHelper quits with it, which resets its re-registrations, which
+    # double with each coreaudiod restart otherwise (issue #1; AdminScript.restartCoreAudio).
+    killall -9 audiomxd || true
+    sleep 1
     killall -9 coreaudiod
 }
 
