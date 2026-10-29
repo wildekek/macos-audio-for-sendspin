@@ -1,6 +1,6 @@
-name: MacOSAudioForSendspin
+name: Sendspin
 options:
-  bundleIdPrefix: eu.vooijs
+  bundleIdPrefix: com.sendspin-audio
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -18,11 +18,11 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
-  MacOSAudioForSendspin:
+  Sendspin:
     type: application
     platform: macOS
     sources:
-      - path: MacOSAudioForSendspin
+      - path: Sendspin
     dependencies:
       - package: SendspinServerKit
         product: SendspinServerKit
@@ -48,10 +48,10 @@ targets:
           fi
           destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/Audio/Plug-Ins/HAL"
           mkdir -p "$destination"
-          rm -rf "$destination/MacOSAudioForSendspin.driver"
-          ditto "$build/MacOSAudioForSendspin.driver" "$destination/MacOSAudioForSendspin.driver"
+          rm -rf "$destination/Sendspin.driver"
+          ditto "$build/Sendspin.driver" "$destination/Sendspin.driver"
     info:
-      path: MacOSAudioForSendspin/Info.plist
+      path: Sendspin/Info.plist
       properties:
         CFBundleName: $(PRODUCT_NAME)
         CFBundleDisplayName: $(PRODUCT_NAME)
@@ -61,15 +61,15 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         NSHumanReadableCopyright: Licensed under the Apache License, Version 2.0
         NSLocalNetworkUsageDescription: >-
-          macOS Audio for Sendspin finds Sendspin speakers on your network and streams audio to them.
+          Sendspin finds speakers on your network and streams audio to them.
         NSCameraUsageDescription: >-
-          macOS Audio for Sendspin reads the pairing QR code printed on a speaker or its leaflet.
+          Sendspin reads the pairing QR code printed on a speaker or its leaflet.
         NSBonjourServices:
           - _sendspin._tcp
           - _sendspin-server._tcp
           - _mass._tcp
     entitlements:
-      path: MacOSAudioForSendspin/MacOSAudioForSendspin.entitlements
+      path: Sendspin/Sendspin.entitlements
       properties:
         # The hardened runtime allows the camera only with this: for a speaker's pairing QR code.
         com.apple.security.device.camera: true
@@ -78,9 +78,9 @@ targets:
       Release: Signing.xcconfig
     settings:
       base:
-        PRODUCT_NAME: macOS Audio for Sendspin
-        PRODUCT_MODULE_NAME: MacOSAudioForSendspin
-        PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin
+        PRODUCT_NAME: Sendspin
+        PRODUCT_MODULE_NAME: Sendspin
+        PRODUCT_BUNDLE_IDENTIFIER: com.sendspin-audio.mac
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # make-app-icon.swift draws it
         # The identity comes from Signing.xcconfig: ad-hoc unless Local.xcconfig says otherwise.
@@ -92,5 +92,5 @@ targets:
         # Dev builds are a separate app: own settings, permissions and privacy entries,
         # so they don't mix with an installed release. They share the one driver.
         Debug:
-          PRODUCT_NAME: macOS Audio for Sendspin (Dev)
-          PRODUCT_BUNDLE_IDENTIFIER: eu.vooijs.MacOSAudioForSendspin.dev
+          PRODUCT_NAME: Sendspin (Dev)
+          PRODUCT_BUNDLE_IDENTIFIER: com.sendspin-audio.mac.dev

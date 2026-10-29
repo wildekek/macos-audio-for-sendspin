@@ -1,4 +1,4 @@
-// Copyright (c) macOS Audio for Sendspin authors
+// Copyright (c) Sendspin for Mac authors
 // Licensed under the Apache License, Version 2.0
 
 #pragma once

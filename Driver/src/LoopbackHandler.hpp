@@ -1,4 +1,4 @@
-// Copyright (c) macOS Audio for Sendspin authors
+// Copyright (c) Sendspin for Mac authors
 // Licensed under the Apache License, Version 2.0
 
 #pragma once
@@ -12,7 +12,7 @@
 
 namespace sendspin {
 
-// Keeps the device's mixed output for the macOS Audio for Sendspin app to read.
+// Keeps the device's mixed output for the Sendspin app to read.
 //
 // Audio is kept in a ring buffer indexed by device sample time: output written for
 // sample time T is what the app reads for T. Frames that were never written (output

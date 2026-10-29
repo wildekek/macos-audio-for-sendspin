@@ -29,7 +29,7 @@ public struct AudioDevice: Hashable, Sendable {
     public let id: AudioObjectID
 
     /// UID of the device published by the Sendspin driver.
-    public static let sendspinUID = "eu.vooijs.MacOSAudioForSendspin.Device"
+    public static let sendspinUID = "com.sendspin-audio.mac.device"
     /// Custom driver property 'sslu': output presentation latency in µs.
     static let presentationLatencySelector: AudioObjectPropertySelector = 0x7373_6C75
 

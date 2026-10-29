@@ -20,7 +20,7 @@ def scanwin(inner, cancel=True):
 
 alert = ('<div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 250px; padding: 14px; box-sizing: border-box; border-radius: 12px; '
          'background: #ececee; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 8px; text-align: center; font-size: 12px; line-height: 16px; color: #1d1d1f">'
-         '<b>“macOS Audio for Sendspin” would like to access the camera.</b><span style="color: #3c3c43">macOS Audio for Sendspin reads the pairing QR code printed on a speaker or its leaflet.</span>'
+         '<b>“Sendspin” would like to access the camera.</b><span style="color: #3c3c43">Sendspin reads the pairing QR code printed on a speaker or its leaflet.</span>'
          '<div style="display: flex; gap: 8px"><span style="flex: 1; padding: 4px 0; border-radius: 6px; background: #ffffff">Don’t Allow</span><span style="flex: 1; padding: 4px 0; border-radius: 6px; background: #0a7aff; color: #ffffff">Allow</span></div></div>')
 asking = f'<div style="position: relative; width: 392px; height: 250px; border-radius: 10px; overflow: hidden; background: #2a2a2e">{alert}</div>'
 refused = ('<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 392px; height: 250px; box-sizing: border-box; padding: 24px; border-radius: 10px; background: rgba(60, 60, 67, 0.08); text-align: center">'

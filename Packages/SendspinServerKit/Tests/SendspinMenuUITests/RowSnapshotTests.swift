@@ -62,7 +62,7 @@ struct RowSnapshotTests {
     /// Music Assistant's mark, from the app's asset catalog.
     static let musicAssistantMark: NSImage? = {
         let url = URL(filePath: #filePath).deletingLastPathComponent()
-            .appending(path: "../../../../App/MacOSAudioForSendspin/Assets.xcassets/MusicAssistantIcon.imageset/music-assistant.svg")
+            .appending(path: "../../../../App/Sendspin/Assets.xcassets/MusicAssistantIcon.imageset/music-assistant.svg")
             .standardized
         let image = NSImage(contentsOf: url)
         image?.isTemplate = true

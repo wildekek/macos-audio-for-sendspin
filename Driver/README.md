@@ -2,7 +2,7 @@
 
 An Audio Server plug-in (HAL driver) built on [libASPL](https://github.com/gavv/libASPL)
 (MIT). It adds an output-only device named **Sendspin**: 48 kHz stereo float32, with volume
-and mute controls. Whatever is played into it, the macOS Audio for Sendspin app reads back
+and mute controls. Whatever is played into it, the Sendspin app reads back
 from the driver. There is no input stream: recording an input needs microphone permission,
 and this is a speaker.
 
@@ -19,7 +19,7 @@ and this is a speaker.
   build is, it can only go by their identifier, which an ad-hoc signature can claim. So
   `sendspin-bridge`, built ad hoc, only works with an ad-hoc driver (or sign it with the
   team). Refusals are logged: `log show --predicate 'subsystem ==
-  "eu.vooijs.MacOSAudioForSendspin.Driver"'`.
+  "com.sendspin-audio.mac.driver"'`.
 - Volume and mute are **not** applied to the audio. The app forwards them to the players.
 - The device can be the default output, but not the system-sounds device.
 - Custom property `'sslu'` (CFNumber, µs): the app sets the speakers' buffer here, and the

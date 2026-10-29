@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the disk image: the app, with the audio driver inside (it installs the driver itself
 # on first launch), next to an Applications shortcut to drag it to.
-# Output: build/release/macOS-Audio-for-Sendspin-<version>.dmg
+# Output: build/release/Sendspin-<version>.dmg
 #
 #   Release/build-dmg.sh
 #
@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/release"
-APP_NAME="macOS Audio for Sendspin"
+APP_NAME="Sendspin"
 
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' "$ROOT/App/project.yml")
 DRIVER_VERSION=$(sed -n 's/^set(DRIVER_VERSION "\(.*\)")/\1/p' "$ROOT/Driver/CMakeLists.txt")
@@ -40,12 +40,12 @@ if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
     team=$(sed -n 's/.*(\([A-Z0-9]*\))$/\1/p' <<<"$DEVELOPER_ID_APP")
     sign_settings+=(DEVELOPMENT_TEAM="$team" OTHER_CODE_SIGN_FLAGS=--timestamp)
 fi
-xcodebuild -project "$ROOT/App/MacOSAudioForSendspin.xcodeproj" -scheme MacOSAudioForSendspin \
+xcodebuild -project "$ROOT/App/Sendspin.xcodeproj" -scheme Sendspin \
     -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$OUT/app" \
     -quiet "${sign_settings[@]}" build
 
 APP="$OUT/app/Build/Products/Release/$APP_NAME.app"
-DRIVER="$APP/Contents/Library/Audio/Plug-Ins/HAL/MacOSAudioForSendspin.driver"
+DRIVER="$APP/Contents/Library/Audio/Plug-Ins/HAL/Sendspin.driver"
 # Catch broken signatures here rather than after a notarization round trip.
 codesign --verify --strict --deep "$APP"
 codesign --verify --strict "$DRIVER"
@@ -53,7 +53,7 @@ codesign --verify --strict "$DRIVER"
 echo "==> Disk image"
 mkdir -p "$OUT/dmg"
 ditto "$APP" "$OUT/dmg/$APP_NAME.app"
-DMG="$OUT/macOS-Audio-for-Sendspin-$VERSION.dmg"
+DMG="$OUT/Sendspin-$VERSION.dmg"
 create-dmg --volname "$APP_NAME" --window-size 540 340 --icon-size 128 \
     --icon "$APP_NAME.app" 140 150 --hide-extension "$APP_NAME.app" --app-drop-link 400 150 \
     --no-internet-enable "$DMG" "$OUT/dmg" >/dev/null

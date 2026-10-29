@@ -1,4 +1,4 @@
-// Copyright (c) macOS Audio for Sendspin authors
+// Copyright (c) Sendspin for Mac authors
 // Licensed under the Apache License, Version 2.0
 
 #include "ClientCheck.hpp"
@@ -29,14 +29,14 @@ constexpr uint32_t CsAdhoc = 0x00000002;
 constexpr uint32_t CsLinkerSigned = 0x00020000;
 
 constexpr const char* AllowedIdentifiers[] = {
-    "eu.vooijs.MacOSAudioForSendspin",
-    "eu.vooijs.MacOSAudioForSendspin.dev",
+    "com.sendspin-audio.mac",
+    "com.sendspin-audio.mac.dev",
     "sendspin-bridge",
 };
 
 os_log_t Log()
 {
-    static os_log_t log = os_log_create("eu.vooijs.MacOSAudioForSendspin.Driver", "ClientCheck");
+    static os_log_t log = os_log_create("com.sendspin-audio.mac.driver", "ClientCheck");
     return log;
 }
 

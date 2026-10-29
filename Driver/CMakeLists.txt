@@ -13,9 +13,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Codesign identity: "-" signs ad hoc (local use); pass a Developer ID for releases.
 set(CODESIGN_ID "-" CACHE STRING "Codesign identity")
 
-set(DRIVER_NAME "MacOSAudioForSendspin")
-set(DRIVER_VERSION "0.3.1")
-set(DRIVER_IDENTIFIER "eu.vooijs.MacOSAudioForSendspin.Driver")
+set(DRIVER_NAME "Sendspin")
+set(DRIVER_VERSION "0.4.0")
+set(DRIVER_IDENTIFIER "com.sendspin-audio.mac.driver")
 set(DRIVER_FACTORY_UUID "A82861F5-3A3A-4365-9F25-96577E9B97A8")
 set(DRIVER_ENTRYPOINT "SendspinDriverEntryPoint")
 

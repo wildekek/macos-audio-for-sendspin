@@ -397,6 +397,35 @@
       "w": 1808,
       "h": 660,
       "title": "A dynamic code the speaker shows only as a QR code: scanned in the same window"
+    },
+    "StatusStates.dc.html": {
+      "x": 0,
+      "y": 23960,
+      "w": 1316,
+      "h": 450,
+      "title": "The menu bar icon and the dot, as built, light and dark"
+    },
+    "AppIcons.dc.html": {
+      "x": 0,
+      "y": 24960,
+      "w": 1116,
+      "h": 808,
+      "title": "The app icon (and the Sendspin device\u2019s): options"
+    },
+    "MenuBarIcons.dc.html": {
+      "x": 0,
+      "y": 25868,
+      "w": 1340,
+      "h": 500,
+      "title": "The menu bar icon: options, idle and playing, light and dark"
+    },
+    "MenuBarMotion.dc.html": {
+      "x": 0,
+      "y": 26488,
+      "w": 920,
+      "h": 760,
+      "is_interactive": true,
+      "title": "The menu bar icon in motion: press Play and Stop (try it)"
     }
   },
   "createdOnFiles": {
@@ -535,6 +564,22 @@
       "w": 240,
       "x": 0,
       "y": 22660
+    },
+    "status": {
+      "kind": "title1",
+      "maxW": 1316,
+      "text": "The menu bar icon and the dot: every state, as built",
+      "w": 240,
+      "x": 0,
+      "y": 23700
+    },
+    "icons": {
+      "kind": "title1",
+      "maxW": 1340,
+      "w": 240,
+      "x": 0,
+      "y": 24700,
+      "text": "Sendspin, the OHF\u2019s app: the app icon and the menu bar icon"
     }
   },
   "order": [
@@ -593,7 +638,11 @@
     "SourcesMA5.dc.html",
     "TrustMenu.dc.html",
     "TrustSettings.dc.html",
-    "PairQRCode.dc.html"
+    "PairQRCode.dc.html",
+    "StatusStates.dc.html",
+    "AppIcons.dc.html",
+    "MenuBarIcons.dc.html",
+    "MenuBarMotion.dc.html"
   ],
   "pages": [],
   "title": "Sendspin menu redesign"

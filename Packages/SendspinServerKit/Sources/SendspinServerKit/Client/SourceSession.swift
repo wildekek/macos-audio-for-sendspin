@@ -417,7 +417,7 @@ actor SourceSession {
             heldAtLimit = true
             sendMessage("client/pair-pending", ClientPairPendingMessage(
                 pairingIndex: pairingIndex,
-                message: "Too many wrong codes. To try again, choose Allow Pairing in macOS Audio for Sendspin's Settings on the Mac."))
+                message: "Too many wrong codes. To try again, choose Allow Pairing in Sendspin's Settings on the Mac."))
             return
         }
         heldAtLimit = false

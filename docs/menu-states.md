@@ -1,7 +1,7 @@
 # Menu states
 
 What the menu bar menu shows, what each state means, and why. The menu is
-`App/MacOSAudioForSendspin/MenuView.swift`; the state behind it is `BridgeController`.
+`App/Sendspin/MenuView.swift`; the state behind it is `BridgeController`.
 
 How a speaker's or a server's row shows its state, and what a choice in the menu leads to, are
 `SpeakerMenu` in `Packages/SendspinServerKit`, and its rules are the tests in
@@ -21,9 +21,9 @@ These hold across the menu. A new state should follow them, or change them here 
    Assistant that goes away stays in the list as **Unavailable** and comes back by itself. A
    speaker out of the group, or a server that was never paired, leaves the list.
 2. **One word for gone: Unavailable.** For a speaker and for a server. Not "Offline".
-3. **Playing shows on the menu bar icon, not in the rows.** The icon fills while the Mac's
+3. **Playing shows on the menu bar icon, not in the rows.** Sendspin's S gets its waves while the Mac's
    sound is going out: to a connected Sendspin speaker, or through the server's open stream
-   (`isPlaying`: sound in the last 3 s). Otherwise it's the outline. Both are templates, in the
+   (`isPlaying`: sound in the last 3 s). Otherwise it's the S alone. Both are templates, in the
    menu bar's own colour (a coloured icon looked out of place on Liquid Glass). The rows don't say Playing or Idle: the Mac's own output couldn't (the app
    can't hear it), and a destination that works needs no word.
 4. **A row only says why it can't play.** "Unavailable" on the right, or a caption saying what
@@ -53,7 +53,7 @@ From top to bottom.
 
 | Row | Shown when |
 |---|---|
-| Sendspin, and the dot | Always. The dot is blue while Sendspin plays (when the menu bar icon is filled), grey while the Mac's output is Sendspin but nothing goes out (silence, or every speaker in the group unavailable), an empty ring while the Mac plays directly. Its help and VoiceOver say which: "Playing: the Mac's sound goes through Sendspin", "In use: the Mac plays through Sendspin, but nothing goes out now" or "Not in use: the Mac plays directly". |
+| Sendspin, and the dot | Always. The dot is blue while Sendspin plays (when the menu bar icon has its waves), grey while the Mac's output is Sendspin but nothing goes out (silence, or every speaker in the group unavailable), an empty ring while the Mac plays directly. Its help and VoiceOver say which: "Playing: the Mac's sound goes through Sendspin", "In use: the Mac plays through Sendspin, but nothing goes out now" or "Not in use: the Mac plays directly". |
 | Notice | The driver is missing or outdated, or Local Network access is denied. One at a time, in that order. Without the driver there are no rows below. |
 | The Mac's own output | Always (its built-in speakers when nothing else is there). First, as in AirPlay's list. |
 | The Sendspin speakers | Each speaker found or in the group. |
@@ -79,8 +79,10 @@ choosing a server) is in `SpeakerMenuTests`.
 
 | Shows | Means |
 |---|---|
-| Filled (`MenuBarIconPlaying`) | The Mac's sound is going out: to a connected Sendspin speaker (the Mac's own speakers alone don't count), or a server chosen with its stream open; and the Mac made sound in the last 3 s. The dot is blue then. VoiceOver: "Sendspin, playing". |
-| Outline (`MenuBarIcon`) | Anything else, including while the Mac plays directly. |
+| The S with its waves (`MenuBarIconPlaying`) | The Mac's sound is going out: to a connected Sendspin speaker (the Mac's own speakers alone don't count), or a server chosen with its stream open; and the Mac made sound in the last 3 s. The dot is blue then. VoiceOver: "Sendspin, playing". |
+| The S alone (`MenuBarIcon`) | Anything else, including while the Mac plays directly. |
+
+Between the two, the S turns a half turn clockwise as the inner, then the outer waves fade in (0.7 s), and back as they fade out (`MenuBarIcon.swift`). The S is the same after a half turn, so it lands where it started. With Reduce Motion it switches at once.
 
 ## A speaker
 

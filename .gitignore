@@ -14,7 +14,7 @@ wheels/
 .swiftpm/
 Driver/build/
 App/build/
-App/MacOSAudioForSendspin.xcodeproj/
+App/Sendspin.xcodeproj/
 App/Local.xcconfig
 
 # macOS

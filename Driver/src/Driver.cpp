@@ -1,8 +1,8 @@
-// Copyright (c) macOS Audio for Sendspin authors
+// Copyright (c) Sendspin for Mac authors
 // Licensed under the Apache License, Version 2.0
 //
 // Audio Server plug-in providing the "Sendspin" output device. Apps play into it; the
-// macOS Audio for Sendspin app reads the same audio back (device property 'ssau') and
+// Sendspin app reads the same audio back (device property 'ssau') and
 // streams it to Sendspin players.
 
 #include "LoopbackHandler.hpp"
@@ -23,14 +23,14 @@ constexpr UInt32 DefaultSampleRate = 48000;
 constexpr UInt32 ChannelCount = 2;
 
 // Custom device property 'sslu': output presentation latency in µs (CFNumber), set by the
-// macOS Audio for Sendspin app to the players' playback lead.
+// Sendspin app to the players' playback lead.
 constexpr AudioObjectPropertySelector PresentationLatencySelector = 'sslu';
 constexpr SInt32 MaxPresentationLatencyUs = 5'000'000;
 
 // This plug-in's bundle, wherever it's installed.
 CFBundleRef DriverBundle()
 {
-    return CFBundleGetBundleWithIdentifier(CFSTR("eu.vooijs.MacOSAudioForSendspin.Driver"));
+    return CFBundleGetBundleWithIdentifier(CFSTR("com.sendspin-audio.mac.driver"));
 }
 
 // file:// URL of the device icon inside this plug-in's bundle.
@@ -58,11 +58,11 @@ std::shared_ptr<aspl::Driver> CreateDriver()
 
     aspl::DeviceParameters deviceParams;
     deviceParams.Name = "Sendspin";
-    deviceParams.Manufacturer = "macOS Audio for Sendspin";
-    deviceParams.DeviceUID = "eu.vooijs.MacOSAudioForSendspin.Device";
-    deviceParams.ModelUID = "eu.vooijs.MacOSAudioForSendspin.Model";
+    deviceParams.Manufacturer = "Sendspin";
+    deviceParams.DeviceUID = "com.sendspin-audio.mac.device";
+    deviceParams.ModelUID = "com.sendspin-audio.mac.model";
     deviceParams.FirmwareVersion = DRIVER_VERSION;
-    deviceParams.ConfigurationApplicationBundleID = "eu.vooijs.MacOSAudioForSendspin";
+    deviceParams.ConfigurationApplicationBundleID = "com.sendspin-audio.mac";
     deviceParams.IconURL = IconURL();
     deviceParams.SampleRate = DefaultSampleRate;
     deviceParams.ChannelCount = ChannelCount;

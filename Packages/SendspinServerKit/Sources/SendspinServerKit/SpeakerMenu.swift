@@ -291,7 +291,7 @@ public enum SpeakerMenu {
 
     /// Sendspin plays: the Mac's sound reaches a Sendspin speaker, or the server's stream. The
     /// Mac's own speakers alone don't count, as they'd play it directly just the same. The menu
-    /// bar icon fills while it does, and the dot turns blue.
+    /// bar icon gets its waves while it does, and the dot turns blue.
     public static func sendspinPlays(hasSound: Bool, route: Route, speakerConnected: Bool,
                                      serverStreaming: Bool) -> Bool {
         guard hasSound else { return false }

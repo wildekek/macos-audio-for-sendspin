@@ -16,6 +16,9 @@ The canvas: https://claude.ai/artifact/RNVdDCaACSNvQbJHMe5azE (a Design artifact
   - `gen_sources_blue.py`: Source by the menu's own rule (P5, chosen).
   - `gen_macplayer.py`: the Mac as a speaker for another server, with Source.
   - `gen_sources_ma.py`: Source while Music Assistant is chosen (M1–M5).
+  - `gen_status.py`: the menu bar icon and the dot, as built.
+  - `gen_icons.py`: the app icon and the menu bar icon with the Sendspin mark (A1–A3, M1–M2), from `App/sendspin-logo.svg`. The speaker icons of 0.10.x are uploads on the canvas (`/_blob/…`): boards can't carry `data:` images.
+  - `gen_motion.py`: the menu bar icon in motion, with a Play/Stop button (interactive).
 
 Settled decisions are in the boards' titles ("chosen") and in `menu-states.md`.
 

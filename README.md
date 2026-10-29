@@ -1,23 +1,21 @@
 <p align="center">
-  <img src="App/MacOSAudioForSendspin/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" height="128" alt="App icon: a bookshelf speaker on a graphite tile">
+  <img src="App/Sendspin/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" height="128" alt="App icon: Sendspin's mark in cream on a coral tile">
 </p>
 
-<h1 align="center">macOS Audio for Sendspin</h1>
+<h1 align="center">Sendspin for Mac</h1>
 
 
 <p align="center">Like Airplay, but lossless, fast and open source using <a href="https://www.sendspin-audio.com/">Sendspin</a>.</p>
 
-> Sendspin is a protocol of the Open Home Foundation; this project is not affiliated with or endorsed by it.
+Sendspin enables wireless, lossless and hi-res music streaming to your speakers. With Sendspin for Mac, wireless and bit-perfect playback is finally possible on your Mac.
 
-Sendspin enables wireless, lossless and hi-res music streaming to your speakers. With macOS Audio for Sendspin, wireless and bit-perfect playback is finally possible on your Mac.
-
-macOS Audio for Sendspin adds an output device named **Sendspin**, plus a menu bar app to choose speakers and control their volume:
+The app adds an output device named **Sendspin**, plus a menu bar app to choose speakers and control their volume:
 
 <img src="docs/menu.png" width="442" alt="The speaker icon in the menu bar with its menu open: Sendspin with a blue dot, playing. The MacBook Pro Speakers, Kitchen and Living Room play, each with a volume slider and a blue check; Bedroom, Office and Home Assistant Connect AUX-2 have an empty check, to add them. Below a divider, Music Assistant.">
 
 ## What you need
 
-A Mac with macOS 14 or later. So far it's only been tested on macOS 27.0.1, on a MacBook Pro with Apple silicon; if you run it on an older macOS or an Intel Mac, please let us know how it goes in [Issues](https://github.com/wildekek/macos-audio-for-sendspin/issues).
+A Mac with macOS 14 or later. So far it's only been tested on macOS 27.0.1, on a MacBook Pro with Apple silicon; if you run it on an older macOS or an Intel Mac, please let us know how it goes in [Issues](https://github.com/Sendspin/sendspin-mac/issues).
 
 And speakers or players that speak **Sendspin 1**, the encrypted version of the protocol (still a release candidate in October 2026). Sendspin's own site keeps [the current list](https://www.sendspin-audio.com/#whole-room).
 
@@ -32,7 +30,7 @@ Then **Music Assistant** shows up in the menu, below the speakers. Set this Mac 
 
 ## Install
 
-Download the disk image from [Releases](https://github.com/wildekek/macos-audio-for-sendspin/releases), open it and drag the app to Applications. On first launch it installs its audio driver (your password once) and asks for local network access. Then click the + on your speakers in the menu bar app: that switches the Mac to Sendspin. The current release is a beta.
+Download the disk image from [Releases](https://github.com/Sendspin/sendspin-mac/releases), open it and drag the app to Applications. On first launch it installs its audio driver (your password once) and asks for local network access. Then click the + on your speakers in the menu bar app: that switches the Mac to Sendspin. The current release is a beta.
 
 ## Why not just AirPlay?
 
@@ -73,13 +71,13 @@ Requirements: macOS 14+, Xcode 26+, CMake, and [XcodeGen](https://github.com/yon
 
 ```sh
 cd App && xcodegen generate
-xcodebuild -project MacOSAudioForSendspin.xcodeproj -scheme MacOSAudioForSendspin -derivedDataPath build build
-open "build/Build/Products/Debug/macOS Audio for Sendspin (Dev).app"
+xcodebuild -project Sendspin.xcodeproj -scheme Sendspin -derivedDataPath build build
+open "build/Build/Products/Debug/Sendspin (Dev).app"
 ```
 
 The build compiles the driver with CMake and embeds it in the app (`Contents/Library/Audio/Plug-Ins/HAL`). On first launch the welcome window installs it, which restarts coreaudiod (audio drops for a moment), and asks for local network access (to find speakers). When working on the driver alone, `Driver/install.sh` installs a CMake build directly. Each install restarts coreaudiod; after many without a reboot, macOS can keep coreaudiod busy for minutes (driven by AirPlayXPCHelper). A reboot clears it.
 
-Debug builds are a separate app, "macOS Audio for Sendspin (Dev)" (`eu.vooijs.MacOSAudioForSendspin.dev`), with their own settings and permissions, so they don't mix with an installed release. Both use the same driver; don't run them at the same time. A build carrying another driver version offers to install its own (an older release would put its old driver back): decline it there. A dev build run from the build folder can't advertise itself to speakers: mDNSResponder can't read its Info.plist inside your home folder, and refuses the announcement (`NoAuth`). To test client-initiated connections, copy the dev app to /Applications and run it from there.
+Debug builds are a separate app, "Sendspin (Dev)" (`com.sendspin-audio.mac.dev`), with their own settings and permissions, so they don't mix with an installed release. Both use the same driver; don't run them at the same time. A build carrying another driver version offers to install its own (an older release would put its old driver back): decline it there. A dev build run from the build folder can't advertise itself to speakers: mDNSResponder can't read its Info.plist inside your home folder, and refuses the announcement (`NoAuth`). To test client-initiated connections, copy the dev app to /Applications and run it from there.
 
 Local builds are signed ad hoc, so each build is a new app to the Keychain, which asks again for the app's keys. With a signing certificate, create `App/Local.xcconfig` (git ignores it) and the Keychain keeps trusting your builds once you click *Always Allow*:
 
@@ -129,7 +127,7 @@ One-time setup, with a paid Apple Developer membership:
 
 ### Local builds
 
-`Release/build-dmg.sh` builds `build/release/macOS-Audio-for-Sendspin-<version>.dmg`; it needs [create-dmg](https://github.com/create-dmg/create-dmg) (`brew install create-dmg`). Without signing variables the app is signed ad hoc: fine on your own Mac, not for distribution. `DEVELOPER_ID_APP` alone signs it without notarizing, which is enough on your own Mac too. To sign and notarize, with the certificate from step 1 in your keychain and a notarytool profile (`xcrun notarytool store-credentials notary --key … --key-id … --issuer …`):
+`Release/build-dmg.sh` builds `build/release/Sendspin-<version>.dmg`; it needs [create-dmg](https://github.com/create-dmg/create-dmg) (`brew install create-dmg`). Without signing variables the app is signed ad hoc: fine on your own Mac, not for distribution. `DEVELOPER_ID_APP` alone signs it without notarizing, which is enough on your own Mac too. To sign and notarize, with the certificate from step 1 in your keychain and a notarytool profile (`xcrun notarytool store-credentials notary --key … --key-id … --issuer …`):
 
 ```sh
 DEVELOPER_ID_APP="Developer ID Application: <Name> (<TEAMID>)" \
@@ -149,7 +147,7 @@ Release/build-dmg.sh
 - **Volume.** Group volume is the speakers' average. Changing it shifts every speaker equally, so their relative balance is kept (the same algorithm as aiosendspin).
 - **Music Assistant.** The app is also a Sendspin client with the `source@v1` role: it advertises `_sendspin._tcp` (port 8928, or a free one) with its own Curve25519 identity, and Music Assistant connects to it. Pairing is by dynamic pairing code: the Mac shows six digits, derived from the Noise handshake and both sides' nonces, and CPace (X25519, SHA-512) proves the operator entered them. The Pairing PSK method, which every client must implement, is for automated pairing between systems: its token (`SP:0…`, the client key and the pairing PSK) isn't shown in the app, since a person never types it (`sendspin-bridge --source` prints it). The Mac offers no static code: a client offers one code method. The long-term keys of up to 5 servers are kept in the Keychain (Settings → Forget unpairs). Clock sync is the Sendspin time filter (a 2D Kalman filter) over bursts of `client/time`. When Music Assistant asks, the Mac streams FLAC at the device's rate in 16 bit, 20 ms chunks stamped with their capture time in the server's clock, and reports `signal: present` while there's sound, so Music Assistant can start it automatically. With Sendspin speakers chosen it sends silence instead: the stream stays open, like a quiet line-in, and resumes when Music Assistant is chosen again.
 
-Hidden settings (`defaults write eu.vooijs.MacOSAudioForSendspin …`, or `….dev` for a dev build):
+Hidden settings (`defaults write com.sendspin-audio.mac …`, or `….dev` for a dev build):
 - `manualPlayers`: an array of `ws://host:port/path` URLs, for speakers mDNS can't find;
 - `verboseLogging`: debug logs on stderr.
 

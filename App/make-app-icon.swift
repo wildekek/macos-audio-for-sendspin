@@ -1,8 +1,8 @@
-// Builds the app icon, which is also the driver's device icon: a bookshelf speaker on a graphite
-// tile. No Sendspin logo or colours: those are the Open Home Foundation's trademarks.
-// Each size is drawn at its own size, with the finer details left out where they'd be mush.
+// Builds the app icon, which is also the driver's device icon: Sendspin's mark in cream on a
+// coral tile, the brand colour, as the Music Assistant and Home Assistant apps do. The mark comes
+// from sendspin-logo.svg beside this script (Sendspin/sendspin-audio.com's logo).
 //
-//   swift App/make-app-icon.swift App/MacOSAudioForSendspin/Assets.xcassets/AppIcon.appiconset
+//   swift App/make-app-icon.swift App/Sendspin/Assets.xcassets/AppIcon.appiconset
 //   swift App/make-app-icon.swift Driver/resources/SendspinDevice.icns
 
 import AppKit
@@ -23,6 +23,38 @@ func color(_ hex: UInt32) -> NSColor {
             blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
 }
 
+// The logo's paths, in its own coordinates (115 × 94, y down). It only uses absolute M, L, H,
+// V, C and Z.
+let logo = try! String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appending(path: "sendspin-logo.svg"), encoding: .utf8)
+let logoSize = CGSize(width: 115, height: 94)
+let mark: CGPath = {
+    let path = CGMutablePath()
+    for match in logo.matches(of: #/<path d="([^"]+)"/#) {
+        let data = String(match.1)
+        var tokens: [String] = []
+        for token in data.matches(of: #/[MLHVCZ]|-?[0-9]*\.?[0-9]+/#) { tokens.append(String(token.0)) }
+        var i = 0, command = "M", current = CGPoint.zero
+        func number() -> CGFloat { defer { i += 1 }; return CGFloat(Double(tokens[i])!) }
+        func point() -> CGPoint { let x = number(); return CGPoint(x: x, y: number()) }
+        while i < tokens.count {
+            if tokens[i].first!.isLetter { command = tokens[i]; i += 1 }
+            switch command {
+            case "M": current = point(); path.move(to: current); command = "L"
+            case "L": current = point(); path.addLine(to: current)
+            case "H": current.x = number(); path.addLine(to: current)
+            case "V": current.y = number(); path.addLine(to: current)
+            case "C":
+                let c1 = point(), c2 = point()
+                current = point()
+                path.addCurve(to: current, control1: c1, control2: c2)
+            default: path.closeSubpath()
+            }
+        }
+    }
+    return path
+}()
+
 func render(pixels: Int) -> Data {
     let size = CGFloat(pixels)
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
@@ -32,9 +64,6 @@ func render(pixels: Int) -> Data {
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     // Drawn on a 100-unit grid, origin bottom left.
     let u = size / 100
-    func circle(_ x: CGFloat, _ y: CGFloat, _ r: CGFloat) -> NSBezierPath {
-        NSBezierPath(ovalIn: NSRect(x: (x - r) * u, y: (y - r) * u, width: 2 * r * u, height: 2 * r * u))
-    }
     // macOS icon grid: the tile is 80% of the canvas, corner radius 22.5% of the tile.
     let tile = NSBezierPath(roundedRect: NSRect(x: 10 * u, y: 10 * u, width: 80 * u, height: 80 * u),
                             xRadius: 18 * u, yRadius: 18 * u)
@@ -44,36 +73,18 @@ func render(pixels: Int) -> Data {
     shadow.shadowOffset = NSSize(width: 0, height: -0.8 * u)
     NSGraphicsContext.saveGraphicsState()
     shadow.set()
-    NSColor.black.setFill()
+    color(0xE25C4C).setFill()
     tile.fill()
     NSGraphicsContext.restoreGraphicsState()
-    NSGradient(starting: color(0x1D2025), ending: color(0x3A3F48))!.draw(in: tile, angle: 90)
 
-    let cone = color(0x262A30), accent = color(0xF2A541)
-    color(0xEEEBE4).setFill()
-    NSBezierPath(roundedRect: NSRect(x: 31 * u, y: 19 * u, width: 38 * u, height: 62 * u),
-                 xRadius: 7 * u, yRadius: 7 * u).fill()
-    // Tweeter above, woofer below; their centres and the woofer's surround only where they show.
-    if pixels >= 32 {
-        cone.setFill()
-        circle(50, 67, 6).fill()
-    }
-    if pixels >= 64 {
-        accent.setFill()
-        circle(50, 67, 2.2).fill()
-    }
-    cone.setFill()
-    circle(50, 40, 13.5).fill()
-    if pixels >= 128 {
-        color(0x4B515B).setStroke()
-        let surround = circle(50, 40, 9.5)
-        surround.lineWidth = 1.2 * u
-        surround.stroke()
-    }
-    if pixels >= 32 {
-        accent.setFill()
-        circle(50, 40, 4.2).fill()
-    }
+    // The mark 70% of the tile wide, centred, flipped to y up.
+    let context = NSGraphicsContext.current!.cgContext
+    let scale = 56 * u / logoSize.width
+    context.translateBy(x: 50 * u - 56 * u / 2, y: 50 * u + logoSize.height * scale / 2)
+    context.scaleBy(x: scale, y: -scale)
+    context.addPath(mark)
+    context.setFillColor(color(0xF5F4EC).cgColor)
+    context.fillPath()
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }

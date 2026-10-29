@@ -15,7 +15,7 @@ func address(_ selector: AudioObjectPropertySelector,
 }
 
 func sendspinDevice() -> AudioObjectID? {
-    var uid = "eu.vooijs.MacOSAudioForSendspin.Device" as CFString
+    var uid = "com.sendspin-audio.mac.device" as CFString
     var device = AudioObjectID(0)
     var size = UInt32(MemoryLayout<AudioObjectID>.size)
     var addr = address(kAudioHardwarePropertyTranslateUIDToDevice)

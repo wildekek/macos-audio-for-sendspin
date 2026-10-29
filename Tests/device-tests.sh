@@ -12,11 +12,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if pgrep -f "macOS Audio for Sendspin.*\.app/Contents/MacOS/" >/dev/null; then
-    echo "Quit macOS Audio for Sendspin (and its dev build) first" >&2
+if pgrep -f "/Sendspin( \(Dev\))?\.app/Contents/MacOS/" >/dev/null; then
+    echo "Quit Sendspin (and its dev build) first" >&2
     exit 1
 fi
-driver=/Library/Audio/Plug-Ins/HAL/MacOSAudioForSendspin.driver
+driver=/Library/Audio/Plug-Ins/HAL/Sendspin.driver
 [[ -d $driver ]] || { echo "The Sendspin driver isn't installed (Driver/install.sh)" >&2; exit 1; }
 
 swift build -c release --product sendspin-bridge --package-path Packages/SendspinServerKit >/dev/null
@@ -38,7 +38,7 @@ fi
 # Any other program is refused the audio.
 refuses_others() {
     cp "$bridge" "$work/other"
-    codesign -f -s - -i eu.vooijs.not-allowed "$work/other" 2>/dev/null
+    codesign -f -s - -i com.sendspin-audio.not-allowed "$work/other" 2>/dev/null
     local output
     output=$("$work/other" --check-loopback 2>&1 || true)
     grep -q "refused" <<<"$output"

@@ -136,7 +136,7 @@ func parseOptions() -> Options {
 func requireQuietDevice(_ device: AudioDevice) {
     guard device.isRunningSomewhere else { return }
     FileHandle.standardError.write(Data("""
-        error: something else is playing into the Sendspin device. Quit macOS Audio for Sendspin, \
+        error: something else is playing into the Sendspin device. Quit the Sendspin app, \
         and pause other audio or switch the Mac's output away from Sendspin.
 
         """.utf8))
