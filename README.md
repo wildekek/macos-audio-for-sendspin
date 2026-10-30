@@ -17,7 +17,7 @@ The app adds an output device named **Sendspin**, plus a menu bar app to choose 
 
 A Mac with macOS 14 or later. So far it's only been tested on macOS 27.0.1, on a MacBook Pro with Apple silicon; if you run it on an older macOS or an Intel Mac, please let us know how it goes in [Issues](https://github.com/Sendspin/sendspin-mac/issues).
 
-And speakers or players that speak **Sendspin 1**, the encrypted version of the protocol (still a release candidate in October 2026). Sendspin's own site keeps [the current list](https://www.sendspin-audio.com/#whole-room).
+And speakers or players that speak **Sendspin 1**, the encrypted version of the protocol (still a release candidate in October 2026). Sendspin's own site keeps [the current list](https://www.sendspin-audio.com/#speakers).
 
 - **[Home Assistant Voice Preview Edition](https://www.home-assistant.io/voice-pe/)** ($59). Plugs into any powered speaker, amplifier or receiver (3.5 mm). Needs firmware built on ESPHome 2026.10 or later.
 - **[Apollo CAST-1](https://apolloautomation.com/blogs/news/meet-cast-1-audio-casting)** ($30). A small adapter with a PCM5122 DAC for powered speakers, amplifiers and receivers. Runs ESPHome, with the same requirement.
@@ -97,6 +97,8 @@ swift build --package-path Packages/SendspinServerKit --product sendspin-bridge 
                                                        # the Mac as a source, against scripted servers; also run by CI
 uv run Tests/interop/test_client.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
                                                        # the server side, against scripted players; also run by CI
+uv run Tests/interop/test_roles.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge
+                                                       # visualizer, artwork, color, metadata, controller; also run by CI
 uv run Tests/interop/test_cpp.py --bridge Packages/SendspinServerKit/.build/debug/sendspin-bridge \
   --sendspin-cli PATH                                  # the server side, against sendspin-cpp-cli; also run by CI
 ```
@@ -108,6 +110,8 @@ The device tests check that the driver hands back its audio sample-exact, at the
 `Tests/interop/test_server.py` tests the Mac as a source (the client side of the protocol) against scripted servers: aiosendspin's handshakes, then exactly the messages a scenario calls for, including the wrong ones no real server sends, such as an activation the client must refuse after a re-handshake, or two servers activating at the same moment. It runs `sendspin-bridge --source` with a fresh `--config-dir` and `--no-advertise`, so nothing shows up on the network and the app is left alone. `Tests/interop/test_client.py` does the same for the server side, with scripted players that `sendspin-bridge` dials by URL: a malformed handshake, a goodbye to reconnect after, connections that close at once, a re-handshake that's never answered.
 
 `Tests/interop/test_cpp.py` tests the server side against [sendspin-cpp-cli](https://github.com/Sendspin/sendspin-cpp-cli), the reference player, which runs the library ESPHome speakers run: pairing by its dynamic code (after a wrong one), its static code and its token, staying paired and unpairing, refusing to play unpaired unless it allows that, its controller's group volume and mute, its input as a source, and a second server taking it over. `PATH` is its `sendspin-cli` binary, from a release's macOS tarball; CI uses 0.4.0.
+
+`Tests/interop/test_roles.py` tests the roles a speaker with a screen or lights uses against aiosendspin's client, set up as [sendspin-python-cli](https://github.com/Sendspin/sendspin-python-cli)'s terminal player sets it up (its headless daemon offers none of them): visualizer frames ahead of their timestamps, within the rate asked for and with the test tone's frequency, stopping when asked for none; artwork at the channel's size, also after the channel changes; the metadata and color states; and the controller's group volume and mute, round trip.
 
 ## Release
 
